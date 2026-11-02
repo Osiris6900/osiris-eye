@@ -12,7 +12,7 @@ client = TestClient(app)
 def test_platform_registry_exposes_forty_four_modules():
     response = client.get("/platform/modules")
     assert response.status_code == 200
-    assert response.json()["count"] == 44
+    assert response.json()["count"] == 50
     assert response.json()["execution_enabled"] is False
 
 

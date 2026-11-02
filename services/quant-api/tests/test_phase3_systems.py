@@ -6,7 +6,7 @@ client = TestClient(app)
 
 
 def test_phase3_registers_twelve_systems_and_contracts():
-    assert client.get("/platform/modules").json()["count"] == 44
+    assert client.get("/platform/modules").json()["count"] == 50
     assert client.get("/health").json()["live_execution"] is False
     assert client.post("/platform/connectors/contract-audit", json={
         "provider": "demo", "dataset": "bars", "timestamp": "2026-11-02T10:00:00Z",
