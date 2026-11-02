@@ -13,7 +13,7 @@ def test_health_is_research_only():
         "mode": "research_only",
         "live_execution": False,
         "data_store": "sqlite",
-        "module_count": 63,
+        "module_count": 71,
     }
 
 
@@ -116,7 +116,7 @@ def test_options_surface_duplicate_is_reported():
 
 
 def test_advanced_systems_9_to_20_api_contracts():
-    assert len(client.get("/platform/modules").json()["modules"]) == 63
+    assert len(client.get("/platform/modules").json()["modules"]) == 71
     book=client.post("/research/microstructure/order-book",json={"bids":[{"price":99,"quantity":10}],"asks":[{"price":101,"quantity":8}]})
     assert book.status_code == 200 and book.json()["spread_bps"] > 0
     sim=client.post("/research/execution/simulate",json={"quantity":10,"arrival_price":100,"fills":[{"quantity":4,"price":101}]})
