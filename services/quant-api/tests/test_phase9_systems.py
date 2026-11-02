@@ -61,11 +61,17 @@ def test_benchmark_metrics_and_routes():
         assert response.status_code == 200, (path, response.text)
 
 
-def test_phase9_rejects_naive_times_and_invalid_numeric_inputs():
-    with pytest.raises(ValueError):
-        audit_global_instruments([{"instrument_id":"F","asset_class":"future",
-            "currency":"USD","exchange":"X","calendar":"X","timezone":"UTC",
-            "contract_multiplier":1,"expiry":"2026-01-01T00:00:00"}])
+def test_phase9_validates_contract_expiry_and_invalid_numeric_inputs():
+    valid = audit_global_instruments([{"instrument_id":"F","asset_class":"future",
+        "currency":"USD","exchange":"X","calendar":"X","timezone":"UTC",
+        "contract_multiplier":1,"expiry":"2026-01-01"}])
+    assert valid["status"] == "pass"
+    invalid = audit_global_instruments([{"instrument_id":"F","asset_class":"future",
+        "currency":"USD","exchange":"X","calendar":"X","timezone":"UTC",
+        "contract_multiplier":1,"expiry":"2026-01-01T00:00:00"}])
+    assert invalid["status"] == "blocked"
+    assert any("expiry" in issue for issue in invalid["issues"])
+    assert simulate_disaster_recovery([])["status"] == "blocked"
     with pytest.raises(ValueError):
         analyze_counterparty_risk([], 0)
     with pytest.raises(ValueError):

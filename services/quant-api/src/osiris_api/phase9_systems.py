@@ -6,7 +6,7 @@ probability forecasts, production failover, or live execution are provided.
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from math import isfinite
 from statistics import mean, pstdev
 from typing import Any
@@ -50,10 +50,20 @@ def audit_global_instruments(instruments: list[dict[str, Any]]) -> dict[str, Any
             seen.add(ident)
         else:
             issues.append(f"row {i}: instrument_id must be a string")
-        if item.get("asset_class") in ("future", "option") and not item.get("contract_multiplier"):
-            issues.append(f"row {i}: derivative requires contract_multiplier")
-        if item.get("asset_class") in ("future", "option") and not item.get("expiry"):
-            issues.append(f"row {i}: derivative requires expiry")
+        if item.get("asset_class") in ("future", "option"):
+            try:
+                multiplier = _number(item.get("contract_multiplier"), "contract_multiplier", minimum=0)
+                if multiplier <= 0:
+                    raise ValueError("contract_multiplier must be positive")
+            except ValueError:
+                issues.append(f"row {i}: derivative requires a positive contract_multiplier")
+            try:
+                expiry = item.get("expiry")
+                if not isinstance(expiry, str):
+                    raise ValueError("expiry must be an ISO date")
+                date.fromisoformat(expiry)
+            except ValueError:
+                issues.append(f"row {i}: derivative expiry must be an ISO-8601 date (YYYY-MM-DD)")
     return {"status": "pass" if not issues else "blocked", "instrument_count": len(instruments),
             "issues": issues, "new_risk_allowed": not issues,
             "calendar_and_timezone_verified_externally": False}
@@ -68,6 +78,8 @@ def analyze_counterparty_risk(exposures: list[dict[str, Any]], nav: float,
     totals: dict[str, float] = defaultdict(float)
     categories: dict[str, set[str]] = defaultdict(set)
     for row in exposures:
+        if not isinstance(row, dict):
+            raise ValueError("each exposure must be an object")
         name = row.get("counterparty")
         if not isinstance(name, str) or not name:
             raise ValueError("counterparty is required")
@@ -88,6 +100,9 @@ def process_corporate_actions(actions: list[dict[str, Any]],
     normalized = []
     issues = []
     for i, action in enumerate(actions):
+        if not isinstance(action, dict):
+            issues.append(f"action {i}: must be an object")
+            continue
         kind = action.get("type")
         if kind not in valid_types:
             issues.append(f"action {i}: unsupported type")
@@ -107,6 +122,8 @@ def process_corporate_actions(actions: list[dict[str, Any]],
         normalized.append(item)
     lot_totals: dict[str, float] = defaultdict(float)
     for lot in tax_lots:
+        if not isinstance(lot, dict):
+            raise ValueError("each tax lot must be an object")
         instrument = lot.get("instrument_id")
         if not instrument:
             raise ValueError("tax lot instrument_id is required")
@@ -128,6 +145,8 @@ def estimate_portfolio_capacity(positions: list[dict[str, Any]],
         raise ValueError("participation_rate must be in (0,1] and haircut in [0,1]")
     rows = []
     for row in positions:
+        if not isinstance(row, dict):
+            raise ValueError("each position must be an object")
         asset = row.get("asset")
         if not isinstance(asset, str) or not asset:
             raise ValueError("asset is required")
@@ -147,6 +166,8 @@ def aggregate_derivatives_exposure(positions: list[dict[str, Any]]) -> dict[str,
     by_underlying: dict[str, dict[str, float]] = {}
     issues = []
     for i, row in enumerate(positions):
+        if not isinstance(row, dict):
+            raise ValueError("each derivatives position must be an object")
         underlying = row.get("underlying")
         if not isinstance(underlying, str) or not underlying:
             raise ValueError("underlying is required")
@@ -167,13 +188,19 @@ def aggregate_derivatives_exposure(positions: list[dict[str, Any]]) -> dict[str,
 
 def audit_financial_graph(nodes: list[dict[str, Any]],
                           edges: list[dict[str, Any]]) -> dict[str, Any]:
+    if any(not isinstance(node, dict) for node in nodes):
+        raise ValueError("each graph node must be an object")
     ids = [node.get("id") for node in nodes]
     known = {ident for ident in ids if isinstance(ident, str) and ident}
     issues = []
     if len(known) != len(ids):
         issues.append("node ids missing, invalid, or duplicated")
     for i, edge in enumerate(edges):
-        if edge.get("source") not in known or edge.get("target") not in known:
+        if not isinstance(edge, dict):
+            issues.append(f"edge {i}: must be an object")
+            continue
+        source, target = edge.get("source"), edge.get("target")
+        if not isinstance(source, str) or not isinstance(target, str) or source not in known or target not in known:
             issues.append(f"edge {i}: endpoint not found")
         if not edge.get("relationship"):
             issues.append(f"edge {i}: relationship missing")
@@ -185,8 +212,14 @@ def audit_financial_graph(nodes: list[dict[str, Any]],
 
 
 def simulate_disaster_recovery(services: list[dict[str, Any]]) -> dict[str, Any]:
+    if not services:
+        return {"status": "blocked", "services": [],
+                "issues": ["at least one service recovery test is required"],
+                "production_failover_executed": False}
     results = []
     for row in services:
+        if not isinstance(row, dict):
+            raise ValueError("each service recovery result must be an object")
         name = row.get("service")
         if not isinstance(name, str) or not name:
             raise ValueError("service name is required")
