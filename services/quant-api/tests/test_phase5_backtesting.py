@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 from osiris_api.main import app
+from osiris_api.phase5_backtesting import run_portfolio_backtest
 
 client = TestClient(app)
 
@@ -54,7 +55,13 @@ def test_phase5_rejects_leverage_and_universe_mismatch():
 def test_phase5_rejects_nonfinite_returns_and_bad_costs():
     payload = sample_payload()
     payload["asset_returns"][1]["A"] = float("nan")
-    assert client.post("/research/backtest/portfolio", json=payload).status_code == 422
+    with pytest.raises(ValueError, match="asset returns must be finite"):
+        run_portfolio_backtest(payload["asset_returns"], payload["target_weights"],
+            commission_bps=payload["commission_bps"], spread_bps=payload["spread_bps"],
+            slippage_bps=payload["slippage_bps"], impact_bps=payload["impact_bps"],
+            periods_per_year=payload["periods_per_year"],
+            max_gross_leverage=payload["max_gross_leverage"],
+            initial_capital=payload["initial_capital"])
     payload = sample_payload()
     payload["slippage_bps"] = -1
     assert client.post("/research/backtest/portfolio", json=payload).status_code == 422
