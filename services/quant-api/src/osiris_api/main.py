@@ -7,6 +7,7 @@ from .data_store import ResearchStore
 from .data_intelligence import audit_observations
 from .backtesting import simulate_signals
 from .phase5_backtesting import run_portfolio_backtest
+from .phase6_intelligence import (walk_forward_validation, portfolio_risk_diagnostics, execution_intelligence, model_validation, macro_intelligence, rank_strategies)
 from .institutional_modules import portfolio_risk, options_surface_audit, cross_market_correlation, alternative_data_intake, agent_research_proposal, command_center_snapshot
 from .advanced_systems import order_book, execution_sim, model_governance, knowledge_graph, strategy_discovery, regime_change, monte_carlo, news_audit, security_audit, attribution, compute_plan, incident_assessment
 from .phase3_systems import connector_contract, market_replay, portfolio_optimizer, paper_order_lifecycle, factor_diagnostics, derivatives_risk, event_calendar_audit, experiment_manifest, portfolio_stress, sre_health, rbac_audit, workflow_gate
@@ -157,6 +158,43 @@ def backtest_simulate(request: BacktestIn):
                    cost_bps_per_unit_turnover=request.cost_bps_per_unit_turnover)
 
 
+
+
+@app.post("/research/validation/walk-forward")
+def phase6_walk_forward(p: dict[str, Any] = Body(...)):
+    return guarded(walk_forward_validation, p.get("returns", []), p.get("train_size", 0),
+                   p.get("test_size", 0), p.get("step"))
+
+
+@app.post("/research/portfolio/advanced-risk")
+def phase6_portfolio_risk(p: dict[str, Any] = Body(...)):
+    return guarded(portfolio_risk_diagnostics, p.get("returns", {}), p.get("weights", {}),
+                   p.get("periods_per_year", 252))
+
+
+@app.post("/research/execution/intelligence")
+def phase6_execution_intelligence(p: dict[str, Any] = Body(...)):
+    return guarded(execution_intelligence, p.get("quantity", 0), p.get("adv", 0),
+                   p.get("half_spread_bps", 0), p.get("volatility", 0),
+                   p.get("impact_coefficient", 1.0), p.get("max_participation", 0.1))
+
+
+@app.post("/research/models/advanced-validation")
+def phase6_model_validation(p: dict[str, Any] = Body(...)):
+    return guarded(model_validation, p.get("reference", []), p.get("current", []),
+                   p.get("reference_accuracy", 0), p.get("current_accuracy", 0),
+                   p.get("psi_threshold", 0.2), p.get("max_accuracy_drop", 0.05))
+
+
+@app.post("/research/macro/intelligence")
+def phase6_macro_intelligence(p: dict[str, Any] = Body(...)):
+    return guarded(macro_intelligence, p.get("inflation_change", 0), p.get("rates_change", 0),
+                   p.get("growth_change", 0), p.get("volatility_change", 0))
+
+
+@app.post("/research/strategies/rank")
+def phase6_strategy_ranking(p: dict[str, Any] = Body(...)):
+    return guarded(rank_strategies, p.get("candidates", []), p.get("multiple_testing_penalty", 0.01))
 
 @app.get("/platform/command-center")
 def command_center():
