@@ -1,205 +1,137 @@
-"""Unauthenticated, read-only public market-data adapters.
-
-No adapter in this module submits orders or requires broker credentials.
-"""
-from __future__ import annotations
-
 from datetime import datetime, timezone
-import csv
-import io
 import json
-import math
-import re
-from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
-from typing import Any
+from unittest.mock import patch
 
-_ALLOWED_GRANULARITIES = frozenset({60, 300, 900, 3600, 21600, 86400})
+import pytest
+
+from osiris_api.public_market_data import CoinbasePublicMarketDataAdapter
 
 
-def _time_range(start: str, end: str) -> tuple[datetime, datetime]:
-    try:
-        first = datetime.fromisoformat(start.replace("Z", "+00:00"))
-        last = datetime.fromisoformat(end.replace("Z", "+00:00"))
-    except (TypeError, ValueError) as exc:
-        raise ValueError("invalid_market_data_time_range") from exc
-    if first.tzinfo is None or last.tzinfo is None or last <= first:
-        raise ValueError("invalid_market_data_time_range")
-    return first.astimezone(timezone.utc), last.astimezone(timezone.utc)
+class FakeResponse:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def read(self):
+        return json.dumps(self.payload).encode()
 
 
-def _get(url: str, *, timeout: float = 8.0) -> bytes:
-    request = Request(url, headers={
-        "Accept": "application/json,text/csv",
-        "User-Agent": "Osiris-Eye/0.2 public-market-data",
-    })
-    try:
-        with urlopen(request, timeout=timeout) as response:
-            return response.read()
-    except (HTTPError, URLError, TimeoutError, OSError) as exc:
-        raise RuntimeError("public_market_data_upstream_unavailable") from exc
+def test_coinbase_public_adapter_normalizes_candle_shape():
+    adapter = CoinbasePublicMarketDataAdapter()
+    timestamp = int(datetime(2026, 11, 2, tzinfo=timezone.utc).timestamp())
+    with patch("osiris_api.public_market_data._get", return_value=json.dumps([[timestamp, 99, 102, 100, 101, 12.5]]).encode()):
+        bars = adapter.fetch_bars(
+            "BTC-USD", "2026-11-02T00:00:00Z", "2026-11-02T00:05:00Z"
+        )
+    assert bars[0]["symbol"] == "BTC-USD"
+    assert bars[0]["open"] == 100
+    assert bars[0]["high"] == 102
+    assert bars[0]["low"] == 99
+    assert bars[0]["close"] == 101
+    assert bars[0]["volume"] == 12.5
+    assert bars[0]["available_at"]
 
 
-def _bar(symbol: str, timestamp: datetime, available_at: str,
-         open_price: Any, high: Any, low: Any, close: Any, volume: Any) -> dict[str, Any]:
-    if not isinstance(timestamp, datetime) or timestamp.tzinfo is None:
-        raise ValueError("invalid_market_data_timestamp")
-    try:
-        values = [float(value) for value in (open_price, high, low, close, volume)]
-    except (TypeError, ValueError, OverflowError) as exc:
-        raise ValueError("invalid_market_data_ohlcv") from exc
-    if not all(math.isfinite(value) for value in values):
-        raise ValueError("invalid_market_data_ohlcv")
-    open_value, high_value, low_value, close_value, volume_value = values
-    if (min(open_value, high_value, low_value, close_value) <= 0
-            or volume_value < 0
-            or high_value < max(open_value, close_value, low_value)
-            or low_value > min(open_value, close_value, high_value)):
-        raise ValueError("inconsistent_market_data_ohlcv")
-    return {
-        "symbol": symbol,
-        "event_time": timestamp.astimezone(timezone.utc).isoformat(),
-        "available_at": available_at,
-        "open": open_value, "high": high_value, "low": low_value,
-        "close": close_value, "volume": volume_value,
-    }
+def test_coinbase_adapter_rejects_invalid_product_and_large_range():
+    adapter = CoinbasePublicMarketDataAdapter()
+    with pytest.raises(ValueError, match="BASE-QUOTE"):
+        adapter.fetch_bars("BTCUSD", "2026-11-02T00:00:00Z", "2026-11-02T00:01:00Z")
+    with pytest.raises(ValueError, match="300_candles"):
+        adapter.fetch_bars("BTC-USD", "2026-11-01T00:00:00Z", "2026-11-02T00:00:00Z")
 
 
-class CoinbasePublicMarketDataAdapter:
-    """Fetch public Coinbase Exchange OHLCV candles without API credentials."""
-
-    name = "Coinbase Exchange public market data"
-    mode = "public"
-
-    def __init__(self, *, granularity: int = 60, timeout_seconds: float = 8.0) -> None:
-        if granularity not in _ALLOWED_GRANULARITIES:
-            raise ValueError("unsupported_candle_granularity")
-        if not 1 <= timeout_seconds <= 30:
-            raise ValueError("invalid_http_timeout")
-        self.granularity, self.timeout_seconds = granularity, timeout_seconds
-
-    def fetch_bars(self, symbol: str, start: str, end: str) -> list[dict[str, Any]]:
-        product_id = symbol.strip().upper()
-        if not re.fullmatch(r"[A-Z0-9]{2,15}-[A-Z0-9]{2,15}", product_id):
-            raise ValueError("coinbase_symbol_must_be_BASE-QUOTE")
-        first, last = _time_range(start, end)
-        if (last - first).total_seconds() > self.granularity * 300:
-            raise ValueError("requested_range_exceeds_300_candles")
-        query = urlencode({
-            "granularity": self.granularity,
-            "start": first.isoformat(), "end": last.isoformat(),
-        })
-        try:
-            payload = json.loads(_get(
-                f"https://api.exchange.coinbase.com/products/{product_id}/candles?{query}",
-                timeout=self.timeout_seconds,
-            ).decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise ValueError("invalid_coinbase_candles_response") from exc
-        if not isinstance(payload, list) or len(payload) > 300:
-            raise ValueError("invalid_coinbase_candles_response")
-        available = datetime.now(timezone.utc).isoformat()
-        bars = []
-        for candle in payload:
-            if not isinstance(candle, list) or len(candle) != 6:
-                raise ValueError("invalid_coinbase_candle")
-            timestamp, low, high, open_price, close, volume = candle
-            bars.append(_bar(product_id, datetime.fromtimestamp(timestamp, timezone.utc),
-                             available, open_price, high, low, close, volume))
-        return bars
+def test_coinbase_adapter_rejects_bad_upstream_payload():
+    adapter = CoinbasePublicMarketDataAdapter()
+    with patch("osiris_api.public_market_data._get", return_value=json.dumps({"bad": True}).encode()):
+        with pytest.raises(ValueError, match="invalid_coinbase_candles_response"):
+            adapter.fetch_bars(
+                "BTC-USD", "2026-11-02T00:00:00Z", "2026-11-02T00:05:00Z"
+            )
 
 
-class BinancePublicMarketDataAdapter:
-    """Fetch public Binance Spot klines; no API key or trading permission is used."""
-
-    name = "Binance public spot market data"
-    mode = "public"
-
-    def __init__(self, *, interval: str = "1m", timeout_seconds: float = 8.0) -> None:
-        if interval not in {"1m", "5m", "15m", "1h", "4h", "1d"}:
-            raise ValueError("unsupported_binance_interval")
-        if not 1 <= timeout_seconds <= 30:
-            raise ValueError("invalid_http_timeout")
-        self.interval, self.timeout_seconds = interval, timeout_seconds
-
-    def fetch_bars(self, symbol: str, start: str, end: str) -> list[dict[str, Any]]:
-        product = symbol.strip().upper()
-        if not re.fullmatch(r"[A-Z0-9]{5,20}", product):
-            raise ValueError("invalid_binance_symbol")
-        first, last = _time_range(start, end)
-        interval_seconds = {
-            "1m": 60, "5m": 300, "15m": 900,
-            "1h": 3600, "4h": 14400, "1d": 86400,
-        }[self.interval]
-        if (last - first).total_seconds() > interval_seconds * 1000:
-            raise ValueError("requested_range_exceeds_binance_limit")
-        query = urlencode({
-            "symbol": product, "interval": self.interval,
-            "startTime": int(first.timestamp() * 1000),
-            "endTime": int(last.timestamp() * 1000), "limit": 1000,
-        })
-        payload = json.loads(_get(
-            f"https://api.binance.com/api/v3/klines?{query}",
-            timeout=self.timeout_seconds,
-        ).decode("utf-8"))
-        if not isinstance(payload, list) or len(payload) > 1000:
-            raise ValueError("invalid_binance_klines_response")
-        available = datetime.now(timezone.utc).isoformat()
-        bars = []
-        for row in payload:
-            if not isinstance(row, list) or len(row) != 12:
-                raise ValueError("invalid_binance_kline")
-            try:
-                if isinstance(row[0], bool) or not isinstance(row[0], (int, float)):
-                    raise ValueError("invalid_binance_kline_timestamp")
-                timestamp = datetime.fromtimestamp(row[0] / 1000, timezone.utc)
-                bar = _bar(product, timestamp, available, row[1], row[2],
-                           row[3], row[4], row[5])
-                close_time = row[6]
-                if isinstance(close_time, bool) or not isinstance(close_time, (int, float)):
-                    raise ValueError("invalid_binance_kline_timestamp")
-                if close_time < row[0] or timestamp < first or timestamp >= last:
-                    raise ValueError("binance_kline_outside_requested_range")
-            except (OverflowError, OSError) as exc:
-                raise ValueError("invalid_binance_kline_timestamp") from exc
-            bars.append(bar)
-        return bars
+from osiris_api.public_market_data import BinancePublicMarketDataAdapter, StooqDailyMarketDataAdapter
 
 
-class StooqDailyMarketDataAdapter:
-    """Fetch best-effort daily historical OHLCV CSV from Stooq; not a real-time feed."""
+def test_binance_public_adapter_maps_spot_klines():
+    timestamp = int(datetime(2026, 11, 2, tzinfo=timezone.utc).timestamp() * 1000)
+    row = [timestamp, "100", "110", "95", "105", "12.5", timestamp + 59999,
+           "1300", 10, "6", "600", "0"]
+    with patch("osiris_api.public_market_data._get", return_value=json.dumps([row]).encode()):
+        bars = BinancePublicMarketDataAdapter().fetch_bars(
+            "BTCUSDT", "2026-11-02T00:00:00Z", "2026-11-02T00:05:00Z"
+        )
+    assert bars[0]["symbol"] == "BTCUSDT"
+    assert bars[0]["open"] == 100
+    assert bars[0]["high"] == 110
+    assert bars[0]["low"] == 95
+    assert bars[0]["close"] == 105
+    assert bars[0]["volume"] == 12.5
 
-    name = "Stooq daily historical market data"
-    mode = "public"
 
-    def __init__(self, *, timeout_seconds: float = 10.0) -> None:
-        if not 1 <= timeout_seconds <= 30:
-            raise ValueError("invalid_http_timeout")
-        self.timeout_seconds = timeout_seconds
+def test_binance_rejects_invalid_symbol_and_unsupported_interval():
+    with pytest.raises(ValueError, match="invalid_binance_symbol"):
+        BinancePublicMarketDataAdapter().fetch_bars(
+            "BTC/USDT", "2026-11-02T00:00:00Z", "2026-11-02T00:05:00Z"
+        )
+    with pytest.raises(ValueError, match="unsupported_binance_interval"):
+        BinancePublicMarketDataAdapter(interval="3m")
 
-    def fetch_bars(self, symbol: str, start: str, end: str) -> list[dict[str, Any]]:
-        ticker = symbol.strip().lower()
-        if not re.fullmatch(r"[a-z0-9.^_-]{1,24}", ticker):
-            raise ValueError("invalid_stooq_symbol")
-        first, last = _time_range(start, end)
-        query = urlencode({
-            "s": ticker, "d1": first.strftime("%Y%m%d"),
-            "d2": last.strftime("%Y%m%d"), "i": "d",
-        })
-        raw = _get(f"https://stooq.com/q/d/l/?{query}", timeout=self.timeout_seconds)
-        try:
-            reader = csv.DictReader(io.StringIO(raw.decode("utf-8")))
-            if not reader.fieldnames or not {"Date", "Open", "High", "Low", "Close", "Volume"}.issubset(reader.fieldnames):
-                raise ValueError("invalid_stooq_csv_header")
-            available = datetime.now(timezone.utc).isoformat()
-            bars = []
-            for row in reader:
-                day = datetime.strptime(row["Date"], "%Y-%m-%d").replace(tzinfo=timezone.utc)
-                bars.append(_bar(ticker.upper(), day, available, row["Open"], row["High"],
-                                 row["Low"], row["Close"], row["Volume"]))
-                if len(bars) > 5000:
-                    raise ValueError("stooq_response_exceeds_limit")
-            return bars
-        except (UnicodeDecodeError, KeyError, TypeError) as exc:
-            raise ValueError("invalid_stooq_csv_response") from exc
+
+def test_stooq_daily_adapter_parses_csv_as_daily_bars():
+    payload = bytes([10]).join([b"Date,Open,High,Low,Close,Volume", b"2026-11-02,10,12,9,11,1000"])
+    with patch("osiris_api.public_market_data._get", return_value=payload):
+        bars = StooqDailyMarketDataAdapter().fetch_bars(
+            "aapl.us", "2026-11-02T00:00:00Z", "2026-11-03T00:00:00Z"
+        )
+    assert bars[0]["symbol"] == "AAPL.US"
+    assert bars[0]["close"] == 11
+    assert bars[0]["volume"] == 1000
+
+
+def test_stooq_rejects_invalid_symbol():
+    with pytest.raises(ValueError, match="invalid_stooq_symbol"):
+        StooqDailyMarketDataAdapter().fetch_bars(
+            "../../etc/passwd", "2026-11-02T00:00:00Z", "2026-11-03T00:00:00Z"
+        )
+
+
+def test_binance_rejects_malformed_kline_instead_of_silently_dropping_it():
+    timestamp = int(datetime(2026, 11, 2, tzinfo=timezone.utc).timestamp() * 1000)
+    valid = [timestamp, "100", "110", "95", "105", "12.5", timestamp + 59999,
+             "1300", 10, "6", "600", "0"]
+    with patch("osiris_api.public_market_data._get", return_value=json.dumps([valid, ["bad"]]).encode()):
+        with pytest.raises(ValueError, match="invalid_binance_kline"):
+            BinancePublicMarketDataAdapter().fetch_bars(
+                "BTCUSDT", "2026-11-02T00:00:00Z", "2026-11-02T00:05:00Z"
+            )
+
+
+def test_binance_rejects_inconsistent_ohlcv_and_interval_excess_range():
+    timestamp = int(datetime(2026, 11, 2, tzinfo=timezone.utc).timestamp() * 1000)
+    invalid = [timestamp, "100", "90", "95", "105", "12.5", timestamp + 59999,
+               "1300", 10, "6", "600", "0"]
+    with patch("osiris_api.public_market_data._get", return_value=json.dumps([invalid]).encode()):
+        with pytest.raises(ValueError, match="inconsistent_market_data_ohlcv"):
+            BinancePublicMarketDataAdapter().fetch_bars(
+                "BTCUSDT", "2026-11-02T00:00:00Z", "2026-11-02T00:05:00Z"
+            )
+    with pytest.raises(ValueError, match="requested_range_exceeds_binance_limit"):
+        BinancePublicMarketDataAdapter(interval="1m").fetch_bars(
+            "BTCUSDT", "2026-11-01T00:00:00Z", "2026-11-02T00:00:00Z"
+        )
+
+
+def test_public_bar_rejects_non_finite_ohlcv():
+    timestamp = int(datetime(2026, 11, 2, tzinfo=timezone.utc).timestamp() * 1000)
+    invalid = [timestamp, "NaN", "110", "95", "105", "12.5", timestamp + 59999,
+               "1300", 10, "6", "600", "0"]
+    with patch("osiris_api.public_market_data._get", return_value=json.dumps([invalid]).encode()):
+        with pytest.raises(ValueError, match="invalid_market_data_ohlcv"):
+            BinancePublicMarketDataAdapter().fetch_bars(
+                "BTCUSDT", "2026-11-02T00:00:00Z", "2026-11-02T00:05:00Z"
+            )
