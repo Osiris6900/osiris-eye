@@ -9,10 +9,10 @@ from osiris_api.main import app
 client = TestClient(app)
 
 
-def test_platform_registry_exposes_thirty_two_modules():
+def test_platform_registry_exposes_forty_four_modules():
     response = client.get("/platform/modules")
     assert response.status_code == 200
-    assert response.json()["count"] == 32
+    assert response.json()["count"] == 44
     assert response.json()["execution_enabled"] is False
 
 
