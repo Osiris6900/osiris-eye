@@ -23,12 +23,11 @@ Implement `name`, `mode` (`synthetic` or `sandbox`), and
 operator-supplied entitlement references into `MarketDataGateway`.
 Never put API keys in source code or return them from status endpoints.
 
-## API
+## Integration status
 
-- `GET /platform/market-data/providers` — configured adapter status.
-- `GET /market-data/bars?provider=...&symbol=...&start=...&end=...` —
-  normalized historical bars. By default, no provider is registered, so requests
-  fail closed with HTTP 503.
+The gateway is currently a tested Python service layer. Its FastAPI routes are
+not yet mounted in `main.py`; the next integration step is to expose provider
+status and historical-bar retrieval through authenticated API endpoints.
 
 ## Not yet implemented
 
