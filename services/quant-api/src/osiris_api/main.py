@@ -677,3 +677,20 @@ def api_phase13_data_to_risk(p: dict[str, Any] = Body(...)):
         p.get("current_drawdown", 0.0), p.get("max_drawdown", 0.2),
         p.get("manual_halt", False),
     )
+
+
+from .phase14_operations import audit_data_quality, evaluate_recovery_gate
+
+
+@app.post("/platform/operations/data-quality-audit")
+def api_phase14_data_quality(p: dict[str, Any] = Body(...)):
+    return guarded(audit_data_quality, p.get("observations", []),
+                   p.get("as_of", ""), p.get("max_age_seconds", 60.0))
+
+
+@app.post("/platform/operations/recovery-gate")
+def api_phase14_recovery_gate(p: dict[str, Any] = Body(...)):
+    return guarded(evaluate_recovery_gate, p.get("service_checks", []),
+                   p.get("data_quality_pass", False), p.get("risk_reconciled", False),
+                   p.get("manual_approval", False), p.get("consecutive_healthy_checks", 0),
+                   p.get("required_healthy_checks", 3))
