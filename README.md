@@ -96,3 +96,8 @@ Eight research/control prototypes extend the platform: global instrument coverag
 ### Phase 10 — Institutional Intelligence & Capital Protection
 
 Eight additional prototype systems cover portfolio risk monitoring, fail-closed vendor selection, alpha experiment ranking, risk-budget allocation, AI-agent governance, execution TCA, systemic stress scenarios, and independent strategy approval gates. See [Phase 10 documentation](docs/PHASE10_INSTITUTIONAL_INTELLIGENCE.md). These are caller-supplied-data diagnostics and do not enable live execution or deployment.
+
+
+## Phase 15 — Tamper-evident audit evidence
+
+Deterministic SHA-256 hash-chain construction and verification now detect edits, reordering, missing links, and inconsistent chain heads in caller-supplied audit evidence. This is not durable immutable storage, actor authentication, a digital signature system, or proof of event truth. See [Phase 15 documentation](docs/PHASE15_TAMPER_EVIDENT_AUDIT.md).
