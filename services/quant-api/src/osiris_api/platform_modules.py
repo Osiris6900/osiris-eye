@@ -6,7 +6,7 @@ All inputs must be point-in-time and sourced from authorized data providers.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import isfinite, sqrt
+from math import ceil, isfinite, sqrt
 from statistics import mean
 from typing import Iterable, Sequence
 
@@ -54,13 +54,19 @@ def inverse_volatility_weights(volatilities: Sequence[float]) -> list[float]:
 
 
 def historical_var_es(returns: Sequence[float], confidence: float = 0.95) -> tuple[float, float]:
-    """Historical loss VaR and expected shortfall as positive fractions."""
+    """Nearest-rank historical loss VaR and tail-mean ES, as positive fractions.
+
+    VaR uses rank ceil(confidence * n), with ranks counted from one. Expected
+    shortfall is the arithmetic mean of observed losses at or beyond that VaR.
+    This finite-sample convention is explicit and intentionally does not
+    interpolate between observations.
+    """
     values = _finite(returns, "returns")
     if not 0.0 < confidence < 1.0:
         raise ValueError("confidence must be between 0 and 1")
     losses = sorted(-v for v in values)
-    index = min(len(losses) - 1, max(0, int(confidence * len(losses))))
-    var = max(0.0, losses[index])
+    rank = max(1, ceil(confidence * len(losses)))
+    var = max(0.0, losses[rank - 1])
     tail = [loss for loss in losses if loss >= var]
     return var, mean(tail) if tail else var
 
