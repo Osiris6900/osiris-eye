@@ -6,7 +6,7 @@ OSIRIS EYE is a research-first, multi-asset quantitative trading platform scaffo
 
 ## Architecture
 
-- `services/quant-api`: FastAPI service, shared SQLite point-in-time observation store, 57-module registry, research endpoints, risk checks, and tests.
+- `services/quant-api`: FastAPI service, shared SQLite point-in-time observation store, 63-module registry, research endpoints, risk checks, and tests.
 - `crates/risk-kernel`: Rust pre-trade risk primitives.
 - `apps/web`: TypeScript + Vite dashboard foundation.
 - `docs`: architecture, data contracts, shared API integration guide, module catalog, advanced intelligence specification, master engineering blueprint, and phased roadmap.
@@ -15,6 +15,10 @@ OSIRIS EYE is a research-first, multi-asset quantitative trading platform scaffo
 ## Platform module catalog
 
 The platform now registers 57 research and infrastructure capability foundations; registry status indicates implementation maturity, not production readiness. Deterministic Python primitives now cover alternative-event validation, order-flow imbalance, baseline portfolio weights, historical VaR/ES, model drift, strategy diagnostics, execution-cost estimation, macro regime labels, component health, and approval-gated AI task contracts. These are not complete services or validated trading signals.
+
+## Phase 7 institutional alpha & market intelligence
+
+Six prototype research systems add cross-asset correlation/lead-lag hypothesis scans, options-flow premium aggregation, heuristic liquidity forecasts, robust market-anomaly alerts, offline reinforcement-learning policy evaluation, and trade-surveillance review indicators. These are not live data integrations, calibrated forecasts, autonomous policy training, or misconduct determinations. See [Phase 7 documentation](docs/PHASE7_INSTITUTIONAL_ALPHA_MARKET_INTELLIGENCE.md).
 
 ## Phase 6 advanced quant intelligence
 
