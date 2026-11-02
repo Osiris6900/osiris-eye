@@ -13,7 +13,7 @@ def test_health_is_research_only():
         "mode": "research_only",
         "live_execution": False,
         "data_store": "sqlite",
-        "module_count": 10,
+        "module_count": 12,
     }
 
 
