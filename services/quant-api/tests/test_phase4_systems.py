@@ -5,7 +5,7 @@ from osiris_api.data_store import ResearchStore
 client = TestClient(app)
 
 def test_phase4_registry_and_market_data_contracts():
-    assert client.get("/platform/modules").json()["count"] == 87
+    assert client.get("/platform/modules").json()["count"] == 95
     records = [{"symbol": "abc", "record_key": "abc-1", "event_time": "2026-11-02T10:00:00Z",
                 "available_at": "2026-11-02T10:00:01Z", "bid": 99, "ask": 100, "close": 99.5}]
     audit = client.post("/platform/data/market-batch-audit", json={
