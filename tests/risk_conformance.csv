@@ -1,0 +1,11 @@
+# quantity,price,position,daily_pnl,max_order,max_position,max_daily_loss,expected
+2,100,0,0,1000,2000,100,approved
+20,100,0,0,1000,2000,100,order_limit
+2,100,1900,0,1000,2000,100,position_limit
+1,100,0,-100,1000,2000,100,daily_loss_limit
+0,100,0,0,1000,2000,100,invalid_order
+1,100,-1,0,1000,2000,100,invalid_order
+1,100,0,0,0,2000,100,invalid_order
+nan,100,0,0,1000,2000,100,non_finite_input
+1e308,1e308,0,0,1.7e308,1.7e308,100,non_finite_input
+1e308,1,1e308,0,1.7e308,1.7e308,100,non_finite_input
