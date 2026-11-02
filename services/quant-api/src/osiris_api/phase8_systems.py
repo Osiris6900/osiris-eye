@@ -65,15 +65,22 @@ def portfolio_risk_governor(positions, max_gross_exposure, max_single_name_weigh
     name_limit = _num(max_single_name_weight, "max_single_name_weight", 0, 1)
     dd = _num(current_drawdown, "current_drawdown", 0, 1)
     dd_limit = _num(max_drawdown, "max_drawdown", 0, 1)
-    values = []
+    nav_values = []
+    asset_values = {}
     for p in positions:
         if not isinstance(p, dict) or not p.get("asset"):
             raise ValueError("each position requires asset")
-        values.append(_num(p.get("market_value"), "market_value", 0))
-    nav = _num(sum(_num(p.get("nav"), "nav", 0) for p in positions), "total nav", 0)
-    if nav <= 0:
-        raise ValueError("total nav must be positive")
-    gross, largest = sum(values) / nav, (max(values) / sum(values) if sum(values) else 0)
+        nav_values.append(_num(p.get("nav"), "nav", 0))
+        market_value = _num(p.get("market_value"), "market_value", 0)
+        asset_values[p["asset"]] = asset_values.get(p["asset"], 0.0) + market_value
+    if not nav_values or nav_values[0] <= 0:
+        raise ValueError("portfolio nav must be positive")
+    nav = nav_values[0]
+    if any(abs(value - nav) > max(1e-8, nav * 1e-8) for value in nav_values[1:]):
+        raise ValueError("all position rows must reference the same portfolio nav")
+    gross_value = sum(asset_values.values())
+    gross = gross_value / nav
+    largest = max(asset_values.values()) / nav if asset_values else 0.0
     breaches = []
     if gross > gross_limit: breaches.append("gross_exposure_limit")
     if largest > name_limit: breaches.append("single_name_concentration_limit")
@@ -106,12 +113,14 @@ def observe_model_health(reference, current, max_mean_shift=0.5, max_std_ratio=2
     mr, mc = sum(ref)/len(ref), sum(cur)/len(cur)
     sr = (sum((x-mr)**2 for x in ref)/len(ref))**0.5
     sc = (sum((x-mc)**2 for x in cur)/len(cur))**0.5
-    ratio = sc/sr if sr > 1e-12 else (1.0 if sc <= 1e-12 else float("inf"))
+    ratio = sc/sr if sr > 1e-12 else (1.0 if sc <= 1e-12 else None)
     alerts = []
     if abs(mc-mr) > limit: alerts.append("mean_shift")
-    if ratio > ratio_limit: alerts.append("volatility_shift")
+    if ratio is None or ratio > ratio_limit: alerts.append("volatility_shift")
     return {"status": "alert" if alerts else "nominal", "alerts": alerts,
-            "mean_shift": abs(mc-mr), "std_ratio": ratio, "deployment_authorized": False}
+            "mean_shift": abs(mc-mr), "std_ratio": ratio,
+            "std_ratio_status": "undefined_zero_reference_variance" if ratio is None else "defined",
+            "deployment_authorized": False}
 
 
 def reconcile_paper_trades(orders, fills, positions):
