@@ -4,6 +4,11 @@ from fastapi import Body, FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from .data_store import ResearchStore
+from .data_intelligence import audit_observations
+from .backtesting import simulate_signals
+from .institutional_modules import portfolio_risk, options_surface_audit, cross_market_correlation, alternative_data_intake, agent_research_proposal, command_center_snapshot
+from .advanced_systems import order_book, execution_sim, model_governance, knowledge_graph, strategy_discovery, regime_change, monte_carlo, news_audit, security_audit, attribution, compute_plan, incident_assessment
+from .phase3_systems import connector_contract, market_replay, portfolio_optimizer, paper_order_lifecycle, factor_diagnostics, derivatives_risk, event_calendar_audit, experiment_manifest, portfolio_stress, sre_health, rbac_audit, workflow_gate
 from .module_registry import MODULES
 from .platform_modules import (
     AgentTask, AlternativeEvent, HealthCheck, system_health,
@@ -31,6 +36,18 @@ app = FastAPI(
     description="Shared research API and point-in-time data store; no live execution.",
 )
 store = ResearchStore()
+
+
+class DataAuditIn(BaseModel):
+    records: list[dict[str, Any]] = Field(min_length=1, max_length=10000)
+    as_of: str
+    max_age_seconds: float = Field(default=300.0, ge=0)
+
+
+class BacktestIn(BaseModel):
+    signals: list[float] = Field(min_length=2, max_length=100000)
+    asset_returns: list[float] = Field(min_length=2, max_length=100000)
+    cost_bps_per_unit_turnover: float = Field(default=0.0, ge=0)
 
 
 class OrderCheck(BaseModel):
@@ -107,9 +124,9 @@ class ExecutionCostIn(BaseModel):
     impact_bps: float = Field(default=0, ge=0)
 
 
-def guarded(fn, *args):
+def guarded(fn, *args, **kwargs):
     try:
-        return fn(*args)
+        return fn(*args, **kwargs)
     except (ValueError, TypeError, OverflowError) as exc:
         raise HTTPException(422, str(exc)) from exc
 
@@ -124,6 +141,49 @@ def health():
 def platform_modules():
     return {"count": len(MODULES), "modules": MODULES,
             "execution_enabled": False}
+
+
+@app.post("/data/audit")
+def audit_data(request: DataAuditIn):
+    return guarded(audit_observations, request.records, as_of=request.as_of,
+                   max_age_seconds=request.max_age_seconds)
+
+
+@app.post("/research/backtest/simulate")
+def backtest_simulate(request: BacktestIn):
+    return guarded(simulate_signals, request.signals, request.asset_returns,
+                   cost_bps_per_unit_turnover=request.cost_bps_per_unit_turnover)
+
+
+
+@app.get("/platform/command-center")
+def command_center():
+    return command_center_snapshot(MODULES)
+
+
+@app.post("/platform/agents/propose-research")
+def propose_research(payload: dict[str, Any] = Body(...)):
+    return guarded(agent_research_proposal, payload.get("objective", ""), payload.get("roles", []))
+
+
+@app.post("/research/portfolio/risk-diagnostics")
+def portfolio_risk_diagnostics(payload: dict[str, list[float]] = Body(...)):
+    return guarded(portfolio_risk, payload)
+
+
+@app.post("/research/options/surface-audit")
+def options_surface_audit_endpoint(points: list[dict[str, Any]] = Body(...)):
+    return guarded(options_surface_audit, points)
+
+
+@app.post("/research/global/cross-market-correlation")
+def global_cross_market_correlation(series: dict[str, list[float]] = Body(...)):
+    return guarded(cross_market_correlation, series)
+
+
+@app.post("/research/alternative-data/hypothesis-intake")
+def alternative_hypothesis_intake(payload: dict[str, Any] = Body(...)):
+    return guarded(alternative_data_intake, payload.get("events", []), payload.get("outcome_returns", []))
 
 
 @app.post("/data/observations")
@@ -231,3 +291,101 @@ def regime(realized_vol: float, spread_bps: float):
 def risk_check(order: OrderCheck):
     ok, reason = check_order(**order.model_dump())
     return {"allowed": ok, "reason": reason, "execution": "disabled"}
+
+
+@app.post("/research/microstructure/order-book")
+def api_order_book(p: dict[str, Any] = Body(...)):
+    return guarded(order_book, p.get("bids", []), p.get("asks", []))
+
+@app.post("/research/execution/simulate")
+def api_execution_sim(p: dict[str, Any] = Body(...)):
+    return guarded(execution_sim, p.get("quantity", 0), p.get("arrival_price", 0), p.get("fills", []), p.get("fee_bps", 0))
+
+@app.post("/research/models/governance")
+def api_model_governance(p: dict[str, Any] = Body(...)):
+    return guarded(model_governance, p.get("reference", []), p.get("current", []), p.get("threshold", 1))
+
+@app.post("/research/knowledge-graph/audit")
+def api_knowledge_graph(p: dict[str, Any] = Body(...)):
+    return guarded(knowledge_graph, p.get("nodes", []), p.get("edges", []))
+
+@app.post("/research/strategies/discover")
+def api_strategy_discovery(p: dict[str, Any] = Body(...)):
+    return guarded(strategy_discovery, p.get("signals", []), p.get("returns", []))
+
+@app.post("/research/regime/change-point")
+def api_regime_change(p: dict[str, Any] = Body(...)):
+    return guarded(regime_change, p.get("values", []), p.get("window", 20), p.get("threshold", 2))
+
+@app.post("/research/scenarios/monte-carlo")
+def api_monte_carlo(p: dict[str, Any] = Body(...)):
+    return guarded(monte_carlo, p.get("mean_return", 0), p.get("volatility", 0), p.get("periods", 20), p.get("paths", 1000), p.get("seed", 7))
+
+@app.post("/research/news/audit")
+def api_news_audit(p: dict[str, Any] = Body(...)):
+    return guarded(news_audit, p.get("items", []))
+
+@app.post("/platform/security/policy-audit")
+def api_security_audit(p: dict[str, Any] = Body(...)):
+    return guarded(security_audit, p.get("permissions", []))
+
+@app.post("/research/portfolio/attribution")
+def api_attribution(p: dict[str, Any] = Body(...)):
+    return guarded(attribution, p.get("asset_returns", {}), p.get("weights", {}))
+
+@app.post("/platform/compute/plan")
+def api_compute_plan(p: dict[str, Any] = Body(...)):
+    return guarded(compute_plan, p.get("tasks", 0), p.get("workers", 1))
+
+@app.post("/platform/incidents/assess")
+def api_incident_assessment(p: dict[str, Any] = Body(...)):
+    return guarded(incident_assessment, p.get("checks", []))
+
+
+@app.post("/platform/connectors/contract-audit")
+def api_connector_contract(p: dict[str, Any] = Body(...)):
+    return guarded(connector_contract, p)
+
+@app.post("/research/market/replay")
+def api_market_replay(p: dict[str, Any] = Body(...)):
+    return guarded(market_replay, p.get("events", []))
+
+@app.post("/research/portfolio/optimize")
+def api_portfolio_optimizer(p: dict[str, Any] = Body(...)):
+    return guarded(portfolio_optimizer, p.get("volatilities", []), p.get("max_weight", 1.0))
+
+@app.post("/paper/orders/lifecycle")
+def api_paper_order(p: dict[str, Any] = Body(...)):
+    return guarded(paper_order_lifecycle, p)
+
+@app.post("/research/factors/diagnostics")
+def api_factor_diagnostics(p: dict[str, Any] = Body(...)):
+    return guarded(factor_diagnostics, p.get("asset_returns", {}), p.get("factor_returns", {}))
+
+@app.post("/research/options/greeks-aggregate")
+def api_derivatives_risk(p: dict[str, Any] = Body(...)):
+    return guarded(derivatives_risk, p.get("positions", []))
+
+@app.post("/research/events/calendar-audit")
+def api_event_calendar(p: dict[str, Any] = Body(...)):
+    return guarded(event_calendar_audit, p.get("events", []))
+
+@app.post("/research/experiments/manifest")
+def api_experiment_manifest(p: dict[str, Any] = Body(...)):
+    return guarded(experiment_manifest, p)
+
+@app.post("/research/portfolio/stress")
+def api_portfolio_stress(p: dict[str, Any] = Body(...)):
+    return guarded(portfolio_stress, p.get("returns", {}), p.get("weights", {}), p.get("shocks", {}))
+
+@app.post("/platform/sre/health")
+def api_sre_health(p: dict[str, Any] = Body(...)):
+    return guarded(sre_health, p.get("services", []))
+
+@app.post("/platform/security/rbac-audit")
+def api_rbac_audit(p: dict[str, Any] = Body(...)):
+    return guarded(rbac_audit, p.get("grants", []))
+
+@app.post("/platform/workflow/gate")
+def api_workflow_gate(p: dict[str, Any] = Body(...)):
+    return guarded(workflow_gate, p)
