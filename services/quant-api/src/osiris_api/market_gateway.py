@@ -72,8 +72,6 @@ class MarketDataGateway:
         credentials = credential_references or {}
         classes = supported_asset_classes or {}
         for name, adapter in (adapters or {}).items():
-            # Compatibility defaults keep existing test/sandbox adapters working;
-            # production registrations should declare their exact asset coverage.
             self.registry.register(
                 name, adapter,
                 supported_asset_classes=classes.get(name, tuple(SUPPORTED_ASSET_CLASSES)),
@@ -85,7 +83,6 @@ class MarketDataGateway:
                          supported_asset_classes: list[str] | tuple[str, ...],
                          entitlement_reference: str | None,
                          credential_reference: str | None = None) -> None:
-        """Register an adapter using secret references, never raw credential values."""
         self.registry.register(
             provider_id, adapter,
             supported_asset_classes=supported_asset_classes,
@@ -104,7 +101,7 @@ class MarketDataGateway:
         adapter = registration.adapter
         if not registration.entitlement_reference:
             raise MarketDataUnavailable("provider_entitlement_reference_missing")
-        if adapter.mode not in {"synthetic", "sandbox"}:
+        if adapter.mode not in {"synthetic", "sandbox", "public"}:
             raise MarketDataUnavailable("live_provider_mode_disabled")
         if asset_class is not None and asset_class not in registration.supported_asset_classes:
             raise MarketDataUnavailable("provider_asset_class_not_supported")
@@ -132,12 +129,9 @@ class MarketDataGateway:
                 raise ValueError("bar_outside_requested_range")
         bars.sort(key=lambda item: item["event_time"])
         return {
-            "provider": provider,
-            "mode": adapter.mode,
-            "asset_class": asset_class,
-            "symbol": normalized_symbol,
-            "bars_returned": len(bars),
-            "bars": bars,
-            "entitlement": "operator_reference_present_not_independently_verified",
+            "provider": provider, "mode": adapter.mode, "asset_class": asset_class,
+            "symbol": normalized_symbol, "bars_returned": len(bars), "bars": bars,
+            "entitlement": "public_data_no_broker_entitlement" if adapter.mode == "public"
+            else "operator_reference_present_not_independently_verified",
             "live_execution": False,
         }
