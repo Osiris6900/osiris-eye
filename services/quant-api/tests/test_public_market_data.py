@@ -48,7 +48,7 @@ def test_coinbase_adapter_rejects_invalid_product_and_large_range():
 
 def test_coinbase_adapter_rejects_bad_upstream_payload():
     adapter = CoinbasePublicMarketDataAdapter()
-    with patch("osiris_api.public_market_data.urlopen", return_value=FakeResponse({"bad": True})):
+    with patch("osiris_api.public_market_data._get", return_value=json.dumps({"bad": True}).encode()):
         with pytest.raises(ValueError, match="invalid_coinbase_candles_response"):
             adapter.fetch_bars(
                 "BTC-USD", "2026-11-02T00:00:00Z", "2026-11-02T00:05:00Z"
