@@ -56,8 +56,8 @@ def test_point_in_time_store_rejects_naive_timestamps_and_non_json_numbers(tmp_p
                   payload={"bad": float("nan")})
 
 
-def test_store_uses_utc_not_machine_local_timezone():
-    store = ResearchStore(":memory:")
+def test_store_uses_utc_not_machine_local_timezone(tmp_path):
+    store = ResearchStore(str(tmp_path / "utc.sqlite3"))
     row = store.put(dataset="macro", record_key="1", source="test",
                     event_time="2026-01-01T10:00:00+05:30",
                     available_at="2026-01-01T10:01:00Z", payload={"value": 1})
