@@ -776,3 +776,8 @@ def api_phase18_audit_bundle_export(p: dict[str, Any] = Body(...)):
 @app.post("/platform/audit/bundle-verify")
 def api_phase18_audit_bundle_verify(p: dict[str, Any] = Body(...)):
     return guarded(verify_audit_bundle, p.get("bundle", {}))
+
+
+from .market_routes import router as market_data_router
+
+app.include_router(market_data_router)
