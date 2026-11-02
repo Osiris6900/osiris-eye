@@ -722,3 +722,17 @@ def api_phase16_audit_append(p: dict[str, Any] = Body(...)):
 @app.get("/platform/audit/durable-verify")
 def api_phase16_audit_verify():
     return durable_audit_store.verify()
+
+
+from .phase17_audit_checkpoint import create_audit_checkpoint, verify_audit_checkpoint
+
+
+@app.post("/platform/audit/checkpoint-create")
+def api_phase17_checkpoint_create(p: dict[str, Any] = Body(...)):
+    return guarded(create_audit_checkpoint, durable_audit_store, p.get("anchor_id", ""),
+                   p.get("anchored_at"))
+
+
+@app.post("/platform/audit/checkpoint-verify")
+def api_phase17_checkpoint_verify(p: dict[str, Any] = Body(...)):
+    return guarded(verify_audit_checkpoint, durable_audit_store, p.get("checkpoint", {}))
