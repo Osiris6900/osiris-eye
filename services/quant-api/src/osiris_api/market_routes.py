@@ -57,3 +57,45 @@ def market_data_bars(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except (ValueError, TypeError, OverflowError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+# Multi-provider routing is opt-in and remains sandbox/synthetic-only.
+import os
+from .provider_router import MultiProviderMarketDataRouter
+
+_provider_order = [
+    item.strip() for item in os.getenv("OSIRIS_MARKET_PROVIDER_ORDER", "").split(",")
+    if item.strip()
+]
+try:
+    multi_provider_router = MultiProviderMarketDataRouter(market_data_gateway, _provider_order) if _provider_order else None
+except ValueError:
+    # Invalid deployment configuration must not silently select a different order.
+    multi_provider_router = None
+
+
+@router.get("/market-data/routing/providers")
+def market_data_routing_providers():
+    if multi_provider_router is None:
+        return {
+            "providers": [],
+            "routing_policy": "not_configured",
+            "live_market_data_enabled": False,
+        }
+    return multi_provider_router.providers()
+
+
+@router.get("/market-data/routing/bars")
+def market_data_routed_bars(
+    symbol: str = Query(..., min_length=1, max_length=64),
+    start: str = Query(..., min_length=20, max_length=64),
+    end: str = Query(..., min_length=20, max_length=64),
+):
+    if multi_provider_router is None:
+        raise HTTPException(status_code=503, detail="multi_provider_routing_not_configured")
+    try:
+        return multi_provider_router.fetch_bars(symbol, start, end)
+    except MarketDataUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except (ValueError, TypeError, OverflowError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
