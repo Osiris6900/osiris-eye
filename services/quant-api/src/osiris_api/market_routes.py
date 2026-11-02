@@ -6,15 +6,40 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
+from .ibkr_adapter import IBKRPaperMarketDataAdapter, IBKRConfigurationError
 from .market_gateway import MarketDataGateway, MarketDataUnavailable
 from .market_universe import ASSET_CLASSES, audit_instruments
 from .provider_bootstrap import provider_readiness
 from .provider_router import MultiProviderMarketDataRouter
 
 router = APIRouter(tags=["market-data"])
-# Deliberately empty by default. Operators must register an adapter and entitlement
-# reference in the running application before any provider can serve data.
 market_data_gateway = MarketDataGateway()
+
+
+def _register_ibkr_paper_adapter() -> None:
+    """Register only explicitly configured IBKR paper access; never live accounts."""
+    env = os.environ
+    required = (
+        "OSIRIS_IBKR_MODE", "OSIRIS_IBKR_PORT", "OSIRIS_IBKR_CLIENT_ID",
+        "OSIRIS_IBKR_ACCOUNT", "OSIRIS_IBKR_ENTITLEMENT_REFERENCE",
+    )
+    if env.get("OSIRIS_IBKR_MODE", "").lower() != "paper" or any(not env.get(k, "").strip() for k in required):
+        return
+    try:
+        adapter = IBKRPaperMarketDataAdapter.from_environment()
+        market_data_gateway.register_adapter(
+            "interactive_brokers",
+            adapter,
+            supported_asset_classes=["equity", "fx", "future", "option", "index"],
+            entitlement_reference=env["OSIRIS_IBKR_ENTITLEMENT_REFERENCE"],
+            credential_reference="env:OSIRIS_IBKR_ACCOUNT",
+        )
+    except (IBKRConfigurationError, ValueError):
+        # Invalid operator configuration leaves the provider unregistered.
+        return
+
+
+_register_ibkr_paper_adapter()
 
 
 @router.get("/market-data/asset-classes")
@@ -71,7 +96,6 @@ _provider_order = [
 try:
     multi_provider_router = MultiProviderMarketDataRouter(market_data_gateway, _provider_order) if _provider_order else None
 except ValueError:
-    # Invalid deployment configuration must not silently select a different order.
     multi_provider_router = None
 
 
