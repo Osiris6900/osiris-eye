@@ -45,13 +45,14 @@ pub fn check_order(
     }
 
     let notional = qty * price;
-    if !notional.is_finite() {
+    let projected_position = position + notional;
+    if !notional.is_finite() || !projected_position.is_finite() {
         return Err(RejectReason::NonFiniteInput);
     }
     if notional > limits.max_order_notional {
         return Err(RejectReason::OrderLimit);
     }
-    if position + notional > limits.max_position_notional {
+    if projected_position > limits.max_position_notional {
         return Err(RejectReason::PositionLimit);
     }
     if daily_pnl <= -limits.max_daily_loss {
@@ -65,39 +66,49 @@ pub fn check_order(
 mod tests {
     use super::*;
 
-    fn limits() -> Limits {
-        Limits {
-            max_order_notional: 1_000.0,
-            max_position_notional: 2_000.0,
-            max_daily_loss: 100.0,
+    fn reason_code(result: Result<f64, RejectReason>) -> &'static str {
+        match result {
+            Ok(_) => "approved",
+            Err(RejectReason::NonFiniteInput) => "non_finite_input",
+            Err(RejectReason::InvalidOrder) => "invalid_order",
+            Err(RejectReason::OrderLimit) => "order_limit",
+            Err(RejectReason::PositionLimit) => "position_limit",
+            Err(RejectReason::DailyLossLimit) => "daily_loss_limit",
         }
     }
 
     #[test]
-    fn allow_small_simulated_order() {
-        assert_eq!(check_order(2.0, 100.0, 0.0, 0.0, limits()), Ok(200.0));
+    fn shared_python_rust_conformance_vectors() {
+        let vectors = include_str!("../../../tests/risk_conformance.csv");
+        let mut cases = 0;
+        for line in vectors.lines().filter(|line| !line.is_empty() && !line.starts_with('#')) {
+            let fields: Vec<&str> = line.split(',').collect();
+            assert_eq!(fields.len(), 8, "bad conformance vector: {line}");
+            let n: Vec<f64> = fields[..7]
+                .iter()
+                .map(|value| value.parse().expect("numeric conformance field"))
+                .collect();
+            let limits = Limits {
+                max_order_notional: n[4],
+                max_position_notional: n[5],
+                max_daily_loss: n[6],
+            };
+            let result = check_order(n[0], n[1], n[2], n[3], limits);
+            assert_eq!(reason_code(result), fields[7], "vector mismatch: {line}");
+            cases += 1;
+        }
+        assert!(cases >= 10, "conformance fixture unexpectedly incomplete");
     }
 
     #[test]
-    fn reject_large_order() {
+    fn rejects_non_finite_projected_position() {
+        let limits = Limits {
+            max_order_notional: 1.7e308,
+            max_position_notional: 1.7e308,
+            max_daily_loss: 100.0,
+        };
         assert_eq!(
-            check_order(20.0, 100.0, 0.0, 0.0, limits()),
-            Err(RejectReason::OrderLimit)
-        );
-    }
-
-    #[test]
-    fn reject_nan_input() {
-        assert_eq!(
-            check_order(f64::NAN, 1.0, 0.0, 0.0, limits()),
-            Err(RejectReason::NonFiniteInput)
-        );
-    }
-
-    #[test]
-    fn reject_overflowed_notional() {
-        assert_eq!(
-            check_order(f64::MAX, 2.0, 0.0, 0.0, limits()),
+            check_order(1.0e308, 1.0, 1.0e308, 0.0, limits),
             Err(RejectReason::NonFiniteInput)
         );
     }
