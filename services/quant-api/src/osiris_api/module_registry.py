@@ -1,5 +1,17 @@
 """Central catalog for research-platform module foundations."""
 MODULES = [
+    {"id": "order_book_microstructure_ai", "name": "Order Book & Market Microstructure AI", "status": "foundation", "capabilities": ["multi-level depth, spread and imbalance diagnostics"]},
+    {"id": "smart_execution_simulator", "name": "Smart Execution Simulator", "status": "foundation", "capabilities": ["partial fills, fees and implementation shortfall simulation"]},
+    {"id": "model_governance_drift", "name": "AI Model Governance & Drift Lab", "status": "foundation", "capabilities": ["distribution shift diagnostics and deployment review"]},
+    {"id": "financial_knowledge_graph", "name": "Financial Knowledge Graph", "status": "foundation", "capabilities": ["node and edge integrity audit"]},
+    {"id": "strategy_discovery_genetic", "name": "Strategy Discovery & Genetic Research Lab", "status": "foundation", "capabilities": ["lagged candidate diagnostics; multiple-testing warning"]},
+    {"id": "market_regime_change", "name": "Market Regime & Change-Point Engine", "status": "foundation", "capabilities": ["two-window change heuristic"]},
+    {"id": "monte_carlo_scenarios", "name": "Monte Carlo & Scenario Simulation", "status": "foundation", "capabilities": ["seeded iid Gaussian scenario distributions"]},
+    {"id": "news_filings_sentiment", "name": "News, Filings & Sentiment Intelligence", "status": "foundation", "capabilities": ["source and publication-time intake audit"]},
+    {"id": "security_permission_intelligence", "name": "Security & Permission Intelligence", "status": "foundation", "capabilities": ["permission allowlist and privileged-role diagnostics"]},
+    {"id": "portfolio_attribution", "name": "Portfolio Attribution & Performance Lab", "status": "foundation", "capabilities": ["arithmetic asset contribution attribution"]},
+    {"id": "distributed_data_compute", "name": "Distributed Data & Compute Infrastructure", "status": "foundation", "capabilities": ["worker allocation plan only"]},
+    {"id": "autonomous_monitoring_incident", "name": "Autonomous Monitoring & Incident Response", "status": "foundation", "capabilities": ["critical incident aggregation blocks new risk"]},
     {"id": "market_data_intelligence", "name": "Market Data Intelligence Engine", "status": "foundation", "capabilities": ["point-in-time batch audit", "freshness and provenance checks"]},
     {"id": "institutional_backtesting", "name": "Institutional Backtesting Engine", "status": "prototype", "capabilities": ["lagged signal simulation", "turnover costs"]},
     {"id": "multi_agent_research", "name": "Multi-Agent AI Research Lab", "status": "contract", "capabilities": ["read-only role proposals", "human approval"]},

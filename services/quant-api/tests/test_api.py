@@ -13,7 +13,7 @@ def test_health_is_research_only():
         "mode": "research_only",
         "live_execution": False,
         "data_store": "sqlite",
-        "module_count": 20,
+        "module_count": 32,
     }
 
 
@@ -113,3 +113,31 @@ def test_options_surface_duplicate_is_reported():
     response = client.post("/research/options/surface-audit", json=[p, p])
     assert response.status_code == 200
     assert response.json()["issues"][0]["code"] == "duplicate_expiry_strike"
+
+
+def test_advanced_systems_9_to_20_api_contracts():
+    assert len(client.get("/platform/modules").json()["modules"]) == 32
+    book=client.post("/research/microstructure/order-book",json={"bids":[{"price":99,"quantity":10}],"asks":[{"price":101,"quantity":8}]})
+    assert book.status_code == 200 and book.json()["spread_bps"] > 0
+    sim=client.post("/research/execution/simulate",json={"quantity":10,"arrival_price":100,"fills":[{"quantity":4,"price":101}]})
+    assert sim.status_code == 200 and sim.json()["live_execution"] is False
+    gov=client.post("/research/models/governance",json={"reference":[0,1,2],"current":[10,11,12],"threshold":1})
+    assert gov.status_code == 200 and gov.json()["deployment_authorized"] is False
+    graph=client.post("/research/knowledge-graph/audit",json={"nodes":[{"id":"a"}],"edges":[{"source":"a","target":"b","relation":"owns"}]})
+    assert graph.status_code == 200 and graph.json()["integrity"] == "degraded"
+    strat=client.post("/research/strategies/discover",json={"signals":[[0,1,1,0]],"returns":[0,.01,-.02,.03]})
+    assert strat.status_code == 200 and strat.json()["out_of_sample_validated"] is False
+    regime=client.post("/research/regime/change-point",json={"values":[0,0,0,0,2,2,2,2],"window":4})
+    assert regime.status_code == 200 and regime.json()["change_flag"] is True
+    mc=client.post("/research/scenarios/monte-carlo",json={"mean_return":.001,"volatility":.02,"paths":100})
+    assert mc.status_code == 200 and mc.json()["forecast_or_guarantee"] is False
+    news=client.post("/research/news/audit",json={"items":[{"source":"wire","published_at":"2026-01-01T00:00:00Z","event_time":"2026-01-01T00:00:00Z","headline":"sample","sentiment":.2}]})
+    assert news.status_code == 200 and news.json()["sentiment_is_signal"] is False
+    sec=client.post("/platform/security/policy-audit",json={"permissions":[{"role":"bot","permissions":["approve_release"]}]})
+    assert sec.status_code == 200 and sec.json()["status"] == "review_required"
+    attr=client.post("/research/portfolio/attribution",json={"asset_returns":{"A":[.1,.2],"B":[0,.1]},"weights":{"A":.5,"B":.5}})
+    assert attr.status_code == 200 and attr.json()["weight_sum"] == 1
+    plan=client.post("/platform/compute/plan",json={"tasks":10,"workers":3})
+    assert plan.status_code == 200 and plan.json()["tasks_per_worker_ceiling"] == 4
+    incident=client.post("/platform/incidents/assess",json={"checks":[{"component":"feed","status":"down","critical":True}]})
+    assert incident.status_code == 200 and incident.json()["new_risk_allowed"] is False

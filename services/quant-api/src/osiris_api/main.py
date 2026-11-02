@@ -7,6 +7,7 @@ from .data_store import ResearchStore
 from .data_intelligence import audit_observations
 from .backtesting import simulate_signals
 from .institutional_modules import portfolio_risk, options_surface_audit, cross_market_correlation, alternative_data_intake, agent_research_proposal, command_center_snapshot
+from .advanced_systems import order_book, execution_sim, model_governance, knowledge_graph, strategy_discovery, regime_change, monte_carlo, news_audit, security_audit, attribution, compute_plan, incident_assessment
 from .module_registry import MODULES
 from .platform_modules import (
     AgentTask, AlternativeEvent, HealthCheck, system_health,
@@ -289,3 +290,52 @@ def regime(realized_vol: float, spread_bps: float):
 def risk_check(order: OrderCheck):
     ok, reason = check_order(**order.model_dump())
     return {"allowed": ok, "reason": reason, "execution": "disabled"}
+
+
+@app.post("/research/microstructure/order-book")
+def api_order_book(p: dict[str, Any] = Body(...)):
+    return guarded(order_book, p.get("bids", []), p.get("asks", []))
+
+@app.post("/research/execution/simulate")
+def api_execution_sim(p: dict[str, Any] = Body(...)):
+    return guarded(execution_sim, p.get("quantity", 0), p.get("arrival_price", 0), p.get("fills", []), p.get("fee_bps", 0))
+
+@app.post("/research/models/governance")
+def api_model_governance(p: dict[str, Any] = Body(...)):
+    return guarded(model_governance, p.get("reference", []), p.get("current", []), p.get("threshold", 1))
+
+@app.post("/research/knowledge-graph/audit")
+def api_knowledge_graph(p: dict[str, Any] = Body(...)):
+    return guarded(knowledge_graph, p.get("nodes", []), p.get("edges", []))
+
+@app.post("/research/strategies/discover")
+def api_strategy_discovery(p: dict[str, Any] = Body(...)):
+    return guarded(strategy_discovery, p.get("signals", []), p.get("returns", []))
+
+@app.post("/research/regime/change-point")
+def api_regime_change(p: dict[str, Any] = Body(...)):
+    return guarded(regime_change, p.get("values", []), p.get("window", 20), p.get("threshold", 2))
+
+@app.post("/research/scenarios/monte-carlo")
+def api_monte_carlo(p: dict[str, Any] = Body(...)):
+    return guarded(monte_carlo, p.get("mean_return", 0), p.get("volatility", 0), p.get("periods", 20), p.get("paths", 1000), p.get("seed", 7))
+
+@app.post("/research/news/audit")
+def api_news_audit(p: dict[str, Any] = Body(...)):
+    return guarded(news_audit, p.get("items", []))
+
+@app.post("/platform/security/policy-audit")
+def api_security_audit(p: dict[str, Any] = Body(...)):
+    return guarded(security_audit, p.get("permissions", []))
+
+@app.post("/research/portfolio/attribution")
+def api_attribution(p: dict[str, Any] = Body(...)):
+    return guarded(attribution, p.get("asset_returns", {}), p.get("weights", {}))
+
+@app.post("/platform/compute/plan")
+def api_compute_plan(p: dict[str, Any] = Body(...)):
+    return guarded(compute_plan, p.get("tasks", 0), p.get("workers", 1))
+
+@app.post("/platform/incidents/assess")
+def api_incident_assessment(p: dict[str, Any] = Body(...)):
+    return guarded(incident_assessment, p.get("checks", []))
