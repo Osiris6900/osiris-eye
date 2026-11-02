@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +20,7 @@ def _utc_timestamp(value: str) -> str:
         raise ValueError("timestamp must be ISO-8601 with timezone") from exc
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise ValueError("timestamp must include timezone")
-    return parsed.astimezone().isoformat()
+    return parsed.astimezone(timezone.utc).isoformat()
 
 
 class ResearchStore:
