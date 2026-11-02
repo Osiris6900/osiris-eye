@@ -111,3 +111,13 @@ Audit events can now be appended transactionally to the configured SQLite databa
 ## Phase 17 — External audit checkpoints
 
 Operator-held SHA-256 checkpoints record a durable journal sequence and head hash, allowing later verification to detect missing/truncated history and checkpoint mismatches. Copy checkpoints to independently controlled storage; a checkpoint kept only beside SQLite is not an external trust anchor. This is not a signature, trusted timestamp, WORM guarantee, or proof of event truth. See [Phase 17 documentation](docs/PHASE17_EXTERNAL_AUDIT_CHECKPOINTS.md).
+
+
+## Phase 18 — Portable audit evidence bundles
+
+Phase 18 adds offline-verifiable JSON exports of the durable audit journal,
+optionally including a Phase 17 checkpoint. Verification checks bundle digest,
+event sequence/hash links, unique event IDs, head hash, and checkpoint mapping.
+The bundle is not signed and does not provide trusted timestamps, independent
+custody, WORM retention, or proof of source-event truth. See
+[Phase 18 documentation](docs/PHASE18_PORTABLE_AUDIT_BUNDLES.md).
