@@ -121,9 +121,9 @@ class ExecutionCostIn(BaseModel):
     impact_bps: float = Field(default=0, ge=0)
 
 
-def guarded(fn, *args):
+def guarded(fn, *args, **kwargs):
     try:
-        return fn(*args)
+        return fn(*args, **kwargs)
     except (ValueError, TypeError, OverflowError) as exc:
         raise HTTPException(422, str(exc)) from exc
 
