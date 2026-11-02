@@ -98,3 +98,40 @@ def test_stooq_rejects_invalid_symbol():
         StooqDailyMarketDataAdapter().fetch_bars(
             "../../etc/passwd", "2026-11-02T00:00:00Z", "2026-11-03T00:00:00Z"
         )
+
+
+def test_binance_rejects_malformed_kline_instead_of_silently_dropping_it():
+    timestamp = int(datetime(2026, 11, 2, tzinfo=timezone.utc).timestamp() * 1000)
+    valid = [timestamp, "100", "110", "95", "105", "12.5", timestamp + 59999,
+             "1300", 10, "6", "600", "0"]
+    with patch("osiris_api.public_market_data._get", return_value=json.dumps([valid, ["bad"]]).encode()):
+        with pytest.raises(ValueError, match="invalid_binance_kline"):
+            BinancePublicMarketDataAdapter().fetch_bars(
+                "BTCUSDT", "2026-11-02T00:00:00Z", "2026-11-02T00:05:00Z"
+            )
+
+
+def test_binance_rejects_inconsistent_ohlcv_and_interval_excess_range():
+    timestamp = int(datetime(2026, 11, 2, tzinfo=timezone.utc).timestamp() * 1000)
+    invalid = [timestamp, "100", "90", "95", "105", "12.5", timestamp + 59999,
+               "1300", 10, "6", "600", "0"]
+    with patch("osiris_api.public_market_data._get", return_value=json.dumps([invalid]).encode()):
+        with pytest.raises(ValueError, match="inconsistent_market_data_ohlcv"):
+            BinancePublicMarketDataAdapter().fetch_bars(
+                "BTCUSDT", "2026-11-02T00:00:00Z", "2026-11-02T00:05:00Z"
+            )
+    with pytest.raises(ValueError, match="requested_range_exceeds_binance_limit"):
+        BinancePublicMarketDataAdapter(interval="1m").fetch_bars(
+            "BTCUSDT", "2026-11-01T00:00:00Z", "2026-11-02T00:00:00Z"
+        )
+
+
+def test_public_bar_rejects_non_finite_ohlcv():
+    timestamp = int(datetime(2026, 11, 2, tzinfo=timezone.utc).timestamp() * 1000)
+    invalid = [timestamp, "NaN", "110", "95", "105", "12.5", timestamp + 59999,
+               "1300", 10, "6", "600", "0"]
+    with patch("osiris_api.public_market_data._get", return_value=json.dumps([invalid]).encode()):
+        with pytest.raises(ValueError, match="invalid_market_data_ohlcv"):
+            BinancePublicMarketDataAdapter().fetch_bars(
+                "BTCUSDT", "2026-11-02T00:00:00Z", "2026-11-02T00:05:00Z"
+            )
