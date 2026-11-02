@@ -10,7 +10,7 @@ from .market_gateway import MarketDataGateway, MarketDataUnavailable
 from .market_universe import ASSET_CLASSES, audit_instruments
 from .provider_bootstrap import provider_readiness
 from .provider_router import MultiProviderMarketDataRouter
-from .public_market_data import CoinbasePublicMarketDataAdapter
+from .public_market_data import (\n    BinancePublicMarketDataAdapter, CoinbasePublicMarketDataAdapter,\n    StooqDailyMarketDataAdapter,\n)
 
 router = APIRouter(tags=["market-data"])
 market_data_gateway = MarketDataGateway()
@@ -24,6 +24,24 @@ if os.getenv("OSIRIS_PUBLIC_COINBASE_ENABLED", "true").strip().lower() in {"1", 
         entitlement_reference="public-data:coinbase-exchange",
     )
 
+
+
+# Public adapters are independently switchable. No broker credentials are required.
+if os.getenv("OSIRIS_PUBLIC_BINANCE_ENABLED", "true").strip().lower() in {"1", "true", "yes"}:
+    market_data_gateway.register_adapter(
+        "binance-public", BinancePublicMarketDataAdapter(
+            interval=os.getenv("OSIRIS_PUBLIC_BINANCE_INTERVAL", "1m")
+        ),
+        supported_asset_classes=["crypto"],
+        entitlement_reference="public-data:binance-spot",
+    )
+
+if os.getenv("OSIRIS_PUBLIC_STOOQ_ENABLED", "true").strip().lower() in {"1", "true", "yes"}:
+    market_data_gateway.register_adapter(
+        "stooq-daily", StooqDailyMarketDataAdapter(),
+        supported_asset_classes=["equity"],
+        entitlement_reference="public-data:stooq-daily",
+    )
 
 @router.get("/market-data/asset-classes")
 def market_data_asset_classes():
