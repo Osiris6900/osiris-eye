@@ -1,0 +1,8 @@
+[package]
+name="osiris-risk-kernel"
+version="0.1.0"
+edition="2021"
+license="UNLICENSED"
+[lib]
+name="osiris_risk_kernel"
+path="src/lib.rs"
