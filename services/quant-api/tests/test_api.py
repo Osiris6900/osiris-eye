@@ -73,7 +73,8 @@ def test_backtest_applies_previous_period_signal_and_costs():
     result = response.json()
     assert result["signal_alignment"] == "signal[t-1]_applied_to_return[t]"
     assert result["periods"] == 2
-    assert result["strategy_returns"][0] == 0.099
+    assert result["strategy_returns"][0] == 0.0
+    assert result["strategy_returns"][1] == 0.099
     assert result["execution"] == "not_simulated"
 
 
