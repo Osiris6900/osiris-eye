@@ -48,7 +48,7 @@ def test_phase6_api_contracts_and_validation():
     assert client.post("/research/validation/walk-forward",
                        json={"returns": [0.01] * 10, "train_size": 5, "test_size": 2}).status_code == 200
     assert client.post("/research/portfolio/advanced-risk",
-                       json={"returns": {"A": [0.1, -0.1]}, "weights": {"A": 1}}).status_code == 200
+                       json={"returns": {"A": [0.1, -0.1, 0.02]}, "weights": {"A": 1}}).status_code == 200
     assert client.post("/research/execution/intelligence",
                        json={"quantity": 10, "adv": 1000, "half_spread_bps": 1, "volatility": 0.02}).json()["execution_enabled"] is False
     assert client.post("/research/models/advanced-validation",
