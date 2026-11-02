@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 import csv
 import io
 import json
+import math
 import re
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -42,12 +43,26 @@ def _get(url: str, *, timeout: float = 8.0) -> bytes:
 
 def _bar(symbol: str, timestamp: datetime, available_at: str,
          open_price: Any, high: Any, low: Any, close: Any, volume: Any) -> dict[str, Any]:
+    if not isinstance(timestamp, datetime) or timestamp.tzinfo is None:
+        raise ValueError("invalid_market_data_timestamp")
+    try:
+        values = [float(value) for value in (open_price, high, low, close, volume)]
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("invalid_market_data_ohlcv") from exc
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError("invalid_market_data_ohlcv")
+    open_value, high_value, low_value, close_value, volume_value = values
+    if (min(open_value, high_value, low_value, close_value) <= 0
+            or volume_value < 0
+            or high_value < max(open_value, close_value, low_value)
+            or low_value > min(open_value, close_value, high_value)):
+        raise ValueError("inconsistent_market_data_ohlcv")
     return {
         "symbol": symbol,
         "event_time": timestamp.astimezone(timezone.utc).isoformat(),
         "available_at": available_at,
-        "open": float(open_price), "high": float(high), "low": float(low),
-        "close": float(close), "volume": float(volume),
+        "open": open_value, "high": high_value, "low": low_value,
+        "close": close_value, "volume": volume_value,
     }
 
 
@@ -75,10 +90,13 @@ class CoinbasePublicMarketDataAdapter:
             "granularity": self.granularity,
             "start": first.isoformat(), "end": last.isoformat(),
         })
-        payload = json.loads(_get(
-            f"https://api.exchange.coinbase.com/products/{product_id}/candles?{query}",
-            timeout=self.timeout_seconds,
-        ).decode("utf-8"))
+        try:
+            payload = json.loads(_get(
+                f"https://api.exchange.coinbase.com/products/{product_id}/candles?{query}",
+                timeout=self.timeout_seconds,
+            ).decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("invalid_coinbase_candles_response") from exc
         if not isinstance(payload, list) or len(payload) > 300:
             raise ValueError("invalid_coinbase_candles_response")
         available = datetime.now(timezone.utc).isoformat()
@@ -110,7 +128,11 @@ class BinancePublicMarketDataAdapter:
         if not re.fullmatch(r"[A-Z0-9]{5,20}", product):
             raise ValueError("invalid_binance_symbol")
         first, last = _time_range(start, end)
-        if (last - first).total_seconds() > 1000 * 86400:
+        interval_seconds = {
+            "1m": 60, "5m": 300, "15m": 900,
+            "1h": 3600, "4h": 14400, "1d": 86400,
+        }[self.interval]
+        if (last - first).total_seconds() > interval_seconds * 1000:
             raise ValueError("requested_range_exceeds_binance_limit")
         query = urlencode({
             "symbol": product, "interval": self.interval,
@@ -124,11 +146,25 @@ class BinancePublicMarketDataAdapter:
         if not isinstance(payload, list) or len(payload) > 1000:
             raise ValueError("invalid_binance_klines_response")
         available = datetime.now(timezone.utc).isoformat()
-        return [
-            _bar(product, datetime.fromtimestamp(row[0] / 1000, timezone.utc),
-                 available, row[1], row[2], row[3], row[4], row[5])
-            for row in payload if isinstance(row, list) and len(row) >= 6
-        ]
+        bars = []
+        for row in payload:
+            if not isinstance(row, list) or len(row) != 12:
+                raise ValueError("invalid_binance_kline")
+            try:
+                if isinstance(row[0], bool) or not isinstance(row[0], (int, float)):
+                    raise ValueError("invalid_binance_kline_timestamp")
+                timestamp = datetime.fromtimestamp(row[0] / 1000, timezone.utc)
+                bar = _bar(product, timestamp, available, row[1], row[2],
+                           row[3], row[4], row[5])
+                close_time = row[6]
+                if isinstance(close_time, bool) or not isinstance(close_time, (int, float)):
+                    raise ValueError("invalid_binance_kline_timestamp")
+                if close_time < row[0] or timestamp < first or timestamp >= last:
+                    raise ValueError("binance_kline_outside_requested_range")
+            except (OverflowError, OSError) as exc:
+                raise ValueError("invalid_binance_kline_timestamp") from exc
+            bars.append(bar)
+        return bars
 
 
 class StooqDailyMarketDataAdapter:
