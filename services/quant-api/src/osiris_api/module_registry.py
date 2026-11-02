@@ -84,4 +84,12 @@ MODULES = [
     {"id": "paper_trade_reconciliation", "name": "Paper Trade Reconciliation Engine", "status": "prototype", "capabilities": ["fill and position quantity reconciliation"]},
     {"id": "security_resilience_governance", "name": "Security & Operational Resilience", "status": "prototype", "capabilities": ["MFA, secrets, backup and kill-switch control checks"]},
     {"id": "research_experiment_orchestrator", "name": "Research Experiment Orchestrator", "status": "prototype", "capabilities": ["explicit research gates and human approval"]},
+    {"id": "global_multi_asset_coverage", "name": "Global Multi-Asset Coverage Engine", "status": "prototype", "capabilities": ["instrument metadata completeness", "derivative contract field checks"]},
+    {"id": "counterparty_systemic_risk", "name": "Counterparty & Systemic Risk Engine", "status": "prototype", "capabilities": ["counterparty exposure concentration", "role aggregation"]},
+    {"id": "corporate_actions_tax_lots", "name": "Corporate Actions & Tax-Lot Intelligence", "status": "prototype", "capabilities": ["split and dividend event validation", "supplied tax-lot basis aggregation"]},
+    {"id": "portfolio_capacity_crowding", "name": "Portfolio Capacity & Crowding Engine", "status": "prototype", "capabilities": ["ADV participation and stressed exit-day estimates"]},
+    {"id": "cross_asset_derivatives_intelligence", "name": "Cross-Asset Derivatives Intelligence", "status": "prototype", "capabilities": ["multiplier-adjusted aggregate Greeks"]},
+    {"id": "financial_knowledge_graph_v2", "name": "Financial Knowledge Graph 2.0", "status": "prototype", "capabilities": ["node and relationship integrity", "timestamp validation"]},
+    {"id": "disaster_recovery_failover_simulator", "name": "Disaster Recovery & Failover Simulator", "status": "prototype", "capabilities": ["caller-reported RTO and RPO target checks"]},
+    {"id": "institutional_benchmark_performance", "name": "Institutional Performance & Benchmark Intelligence", "status": "prototype", "capabilities": ["portfolio and benchmark compound returns", "tracking error and information ratio"]},
 ]
