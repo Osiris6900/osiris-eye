@@ -694,3 +694,16 @@ def api_phase14_recovery_gate(p: dict[str, Any] = Body(...)):
                    p.get("data_quality_pass", False), p.get("risk_reconciled", False),
                    p.get("manual_approval", False), p.get("consecutive_healthy_checks", 0),
                    p.get("required_healthy_checks", 3))
+
+
+from .phase15_audit_chain import build_audit_chain, verify_audit_chain
+
+
+@app.post("/platform/audit/chain-build")
+def api_phase15_audit_chain_build(p: dict[str, Any] = Body(...)):
+    return guarded(build_audit_chain, p.get("events", []))
+
+
+@app.post("/platform/audit/chain-verify")
+def api_phase15_audit_chain_verify(p: dict[str, Any] = Body(...)):
+    return guarded(verify_audit_chain, p.get("chain", {}))
