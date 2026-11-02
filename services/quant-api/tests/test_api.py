@@ -46,3 +46,39 @@ def test_risk_endpoint_never_enables_execution():
     assert response.status_code == 200
     assert response.json()["allowed"] is True
     assert response.json()["execution"] == "disabled"
+
+
+
+def test_data_audit_blocks_duplicate_and_stale_records():
+    record = {
+        "dataset": "prices", "record_key": "A-1", "source": "vendor",
+        "event_time": "2026-11-02T10:00:00Z",
+        "available_at": "2026-11-02T10:00:01Z", "payload": {"close": 100},
+    }
+    response = client.post("/data/audit", json={
+        "records": [record, record], "as_of": "2026-11-02T10:00:10Z",
+        "max_age_seconds": 30,
+    })
+    assert response.status_code == 200
+    assert response.json()["status"] == "blocked"
+    assert response.json()["new_risk_allowed"] is False
+
+
+def test_backtest_applies_previous_period_signal_and_costs():
+    response = client.post("/research/backtest/simulate", json={
+        "signals": [0, 1, 1], "asset_returns": [0, 0.1, 0.1],
+        "cost_bps_per_unit_turnover": 10,
+    })
+    assert response.status_code == 200
+    result = response.json()
+    assert result["signal_alignment"] == "signal[t-1]_applied_to_return[t]"
+    assert result["periods"] == 2
+    assert result["strategy_returns"][0] == 0.099
+    assert result["execution"] == "not_simulated"
+
+
+def test_backtest_rejects_misaligned_series():
+    response = client.post("/research/backtest/simulate", json={
+        "signals": [0, 1], "asset_returns": [0.1, 0.2, 0.3],
+    })
+    assert response.status_code == 422
