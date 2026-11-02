@@ -1,0 +1,23 @@
+"""Central catalog for the ten research-platform modules."""
+MODULES = [
+    {"id": "alternative_data", "name": "Alternative Data Engine", "status": "foundation",
+     "capabilities": ["event metadata validation", "publication-time tracking"]},
+    {"id": "microstructure", "name": "Market Microstructure", "status": "foundation",
+     "capabilities": ["displayed bid/ask volume imbalance"]},
+    {"id": "portfolio", "name": "Portfolio Optimization", "status": "foundation",
+     "capabilities": ["inverse-volatility baseline weights"]},
+    {"id": "risk", "name": "Risk Intelligence", "status": "foundation",
+     "capabilities": ["historical VaR", "expected shortfall", "pre-trade risk gate"]},
+    {"id": "model_factory", "name": "AI Model Factory", "status": "foundation",
+     "capabilities": ["population stability drift diagnostic"]},
+    {"id": "strategy_lab", "name": "Strategy Discovery Lab", "status": "foundation",
+     "capabilities": ["return", "Sharpe", "drawdown diagnostics"]},
+    {"id": "execution", "name": "Execution Intelligence", "status": "foundation",
+     "capabilities": ["estimated spread, slippage and impact cost"]},
+    {"id": "macro_regime", "name": "Macro & Regime Engine", "status": "foundation",
+     "capabilities": ["volatility, inflation and rates heuristic"]},
+    {"id": "reliability", "name": "System Reliability Center", "status": "foundation",
+     "capabilities": ["component health aggregation"]},
+    {"id": "agent_team", "name": "AI Agent Research Team", "status": "foundation",
+     "capabilities": ["typed roles", "mandatory human approval contract"]},
+]
