@@ -11,7 +11,7 @@ from typing import Mapping
 # These are onboarding profiles, not claims of a working vendor adapter.
 # Asset coverage must be checked against provider product and exchange entitlements.
 PROVIDER_PROFILES: tuple[dict[str, object], ...] = (
-    {"provider": "interactive_brokers", "label": "Interactive Brokers", "asset_classes": ["equity", "fx", "future", "option", "commodity", "index", "fixed_income"], "required_env": ["OSIRIS_IBKR_HOST", "OSIRIS_IBKR_PORT", "OSIRIS_IBKR_CLIENT_ID"], "integration_status": "adapter_not_implemented"},
+    {"provider": "interactive_brokers", "label": "Interactive Brokers", "asset_classes": ["equity", "fx", "future", "option", "index"], "required_env": ["OSIRIS_IBKR_MODE", "OSIRIS_IBKR_HOST", "OSIRIS_IBKR_PORT", "OSIRIS_IBKR_CLIENT_ID", "OSIRIS_IBKR_ACCOUNT", "OSIRIS_IBKR_ENTITLEMENT_REFERENCE"], "integration_status": "read_only_paper_adapter_implemented"},
     {"provider": "alpaca", "label": "Alpaca", "asset_classes": ["equity", "crypto", "option"], "required_env": ["OSIRIS_ALPACA_API_KEY", "OSIRIS_ALPACA_API_SECRET"], "integration_status": "adapter_not_implemented"},
     {"provider": "binance", "label": "Binance", "asset_classes": ["crypto"], "required_env": ["OSIRIS_BINANCE_API_KEY", "OSIRIS_BINANCE_API_SECRET"], "integration_status": "adapter_not_implemented"},
     {"provider": "coinbase", "label": "Coinbase", "asset_classes": ["crypto"], "required_env": ["OSIRIS_COINBASE_API_KEY", "OSIRIS_COINBASE_API_SECRET"], "integration_status": "adapter_not_implemented"},
