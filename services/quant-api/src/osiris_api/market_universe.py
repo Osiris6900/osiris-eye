@@ -58,7 +58,7 @@ def normalize_instrument(record: dict[str, Any]) -> dict[str, Any]:
     except ZoneInfoNotFoundError:
         raise ValueError("invalid_timezone") from None
     session_type = _text(record.get("session_type", "exchange"), "session_type", max_length=16).lower()
-    if session_type not in {"exchange", "continuous", " otc"} and session_type != "otc":
+    if session_type not in {"exchange", "continuous", "otc"}:
         raise ValueError("invalid_session_type")
     result = {
         "instrument_id": f"{asset_class}:{venue}:{symbol}",
