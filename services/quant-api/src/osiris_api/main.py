@@ -1,6 +1,9 @@
 from typing import Any
+import hmac
+import os
 
-from fastapi import Body, FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from .data_store import ResearchStore
@@ -45,6 +48,29 @@ app = FastAPI(
     description="Shared research API and point-in-time data store; no live execution.",
 )
 store = ResearchStore()
+
+
+@app.middleware("http")
+async def require_api_token(request: Request, call_next):
+    """Protect API routes when configured; production fails closed without a token."""
+    if request.url.path == "/health":
+        return await call_next(request)
+
+    configured_token = os.getenv("OSIRIS_API_TOKEN", "")
+    production = os.getenv("OSIRIS_ENV", "development").lower() in {"production", "prod"}
+    if not configured_token:
+        if production:
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "API unavailable: OSIRIS_API_TOKEN must be configured in production"},
+            )
+        return await call_next(request)
+
+    supplied = request.headers.get("authorization", "")
+    expected = f"Bearer {configured_token}"
+    if not hmac.compare_digest(supplied, expected):
+        return JSONResponse(status_code=401, content={"detail": "Invalid or missing bearer token"})
+    return await call_next(request)
 
 
 class DataAuditIn(BaseModel):

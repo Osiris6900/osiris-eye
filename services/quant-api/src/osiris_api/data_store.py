@@ -56,6 +56,20 @@ class ResearchStore:
                 CREATE INDEX IF NOT EXISTS idx_observations_dataset_time
                 ON observations(dataset, available_at, event_time)
             """)
+            connection.execute("""
+                CREATE TRIGGER IF NOT EXISTS observations_no_update
+                BEFORE UPDATE ON observations
+                BEGIN
+                    SELECT RAISE(ABORT, 'observations are immutable; append a new record_key for corrections');
+                END
+            """)
+            connection.execute("""
+                CREATE TRIGGER IF NOT EXISTS observations_no_delete
+                BEFORE DELETE ON observations
+                BEGIN
+                    SELECT RAISE(ABORT, 'observations are immutable; deletion is disabled');
+                END
+            """)
 
     def put(self, *, dataset: str, record_key: str, source: str,
             event_time: str, available_at: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -66,19 +80,22 @@ class ResearchStore:
             raise ValueError("dataset, record_key or source exceeds length limit")
         event_time = _utc_timestamp(event_time)
         available_at = _utc_timestamp(available_at)
+        if datetime.fromisoformat(available_at) < datetime.fromisoformat(event_time):
+            raise ValueError("available_at cannot precede event_time")
         if not isinstance(payload, dict):
             raise ValueError("payload must be a JSON object")
         encoded = json.dumps(payload, allow_nan=False, separators=(",", ":"))
         with self._connect() as connection:
-            cursor = connection.execute("""
-                INSERT INTO observations
-                    (dataset, record_key, source, event_time, available_at, payload_json)
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(dataset, source, record_key) DO UPDATE SET
-                    event_time=excluded.event_time,
-                    available_at=excluded.available_at,
-                    payload_json=excluded.payload_json
-            """, (dataset, record_key, source, event_time, available_at, encoded))
+            try:
+                connection.execute("""
+                    INSERT INTO observations
+                        (dataset, record_key, source, event_time, available_at, payload_json)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (dataset, record_key, source, event_time, available_at, encoded))
+            except sqlite3.IntegrityError as exc:
+                raise ValueError(
+                    "duplicate observation key; records are immutable, use a new record_key for a correction"
+                ) from exc
             row = connection.execute("""
                 SELECT id, dataset, record_key, source, event_time, available_at,
                        ingested_at, payload_json
