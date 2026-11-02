@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from .data_store import ResearchStore
 from .data_intelligence import audit_observations
 from .backtesting import simulate_signals
+from .institutional_modules import portfolio_risk, options_surface_audit, cross_market_correlation, alternative_data_intake, agent_research_proposal, command_center_snapshot
 from .module_registry import MODULES
 from .platform_modules import (
     AgentTask, AlternativeEvent, HealthCheck, system_health,
@@ -150,6 +151,37 @@ def audit_data(request: DataAuditIn):
 def backtest_simulate(request: BacktestIn):
     return guarded(simulate_signals, request.signals, request.asset_returns,
                    cost_bps_per_unit_turnover=request.cost_bps_per_unit_turnover)
+
+
+
+@app.get("/platform/command-center")
+def command_center():
+    return command_center_snapshot(MODULES)
+
+
+@app.post("/platform/agents/propose-research")
+def propose_research(payload: dict[str, Any] = Body(...)):
+    return guarded(agent_research_proposal, payload.get("objective", ""), payload.get("roles", []))
+
+
+@app.post("/research/portfolio/risk-diagnostics")
+def portfolio_risk_diagnostics(payload: dict[str, list[float]] = Body(...)):
+    return guarded(portfolio_risk, payload)
+
+
+@app.post("/research/options/surface-audit")
+def options_surface_audit_endpoint(points: list[dict[str, Any]] = Body(...)):
+    return guarded(options_surface_audit, points)
+
+
+@app.post("/research/global/cross-market-correlation")
+def global_cross_market_correlation(series: dict[str, list[float]] = Body(...)):
+    return guarded(cross_market_correlation, series)
+
+
+@app.post("/research/alternative-data/hypothesis-intake")
+def alternative_hypothesis_intake(payload: dict[str, Any] = Body(...)):
+    return guarded(alternative_data_intake, payload.get("events", []), payload.get("outcome_returns", []))
 
 
 @app.post("/data/observations")

@@ -1,5 +1,13 @@
 """Central catalog for research-platform module foundations."""
 MODULES = [
+    {"id": "market_data_intelligence", "name": "Market Data Intelligence Engine", "status": "foundation", "capabilities": ["point-in-time batch audit", "freshness and provenance checks"]},
+    {"id": "institutional_backtesting", "name": "Institutional Backtesting Engine", "status": "prototype", "capabilities": ["lagged signal simulation", "turnover costs"]},
+    {"id": "multi_agent_research", "name": "Multi-Agent AI Research Lab", "status": "contract", "capabilities": ["read-only role proposals", "human approval"]},
+    {"id": "portfolio_risk_intelligence", "name": "Portfolio Risk Intelligence", "status": "foundation", "capabilities": ["equal-weight risk diagnostic", "historical VaR and ES"]},
+    {"id": "options_intelligence", "name": "Options Intelligence Engine", "status": "foundation", "capabilities": ["IV point validation", "duplicate expiry-strike detection"]},
+    {"id": "global_macro_cross_market", "name": "Global Macro & Cross-Market Intelligence", "status": "foundation", "capabilities": ["cross-market correlation diagnostics"]},
+    {"id": "alternative_data_lab", "name": "Alternative Data Research Lab", "status": "foundation", "capabilities": ["event provenance intake", "hypothesis intake"]},
+    {"id": "osiris_command_center", "name": "OSIRIS Command Center", "status": "foundation", "capabilities": ["module snapshot", "research-only operating state"]},
     {"id": "data_intelligence", "name": "Data Intelligence Engine", "status": "foundation",
      "capabilities": ["point-in-time quality audit", "staleness and duplicate detection", "fail-closed readiness"]},
     {"id": "backtesting", "name": "Backtesting & Simulation", "status": "prototype",
