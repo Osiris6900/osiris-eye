@@ -21,7 +21,7 @@ def export_audit_bundle(store: DurableAuditStore, bundle_id: str,
     if verified["status"] != "valid":
         raise ValueError("cannot export an invalid audit journal")
     if verified["event_count"] == 0:
-        raise ValueError("cannot export an empty audit journal")
+        raise ValueError("cannot export an invalid empty audit journal")
     with store._connect() as db:
         rows = db.execute(
             "SELECT sequence,event_id,previous_hash,event_json,event_hash "
