@@ -1,5 +1,5 @@
-"""Central catalog for the ten research-platform modules."""
-MODULES = [
+"""Central catalog for research-platform module foundations."""
+MODULES = [\n    {"id": "data_intelligence", "name": "Data Intelligence Engine", "status": "foundation",\n     "capabilities": ["point-in-time quality audit", "staleness and duplicate detection", "fail-closed readiness"]},\n    {"id": "backtesting", "name": "Backtesting & Simulation", "status": "prototype",\n     "capabilities": ["lagged signal alignment", "turnover costs", "equity and drawdown diagnostics"]},
     {"id": "alternative_data", "name": "Alternative Data Engine", "status": "foundation",
      "capabilities": ["event metadata validation", "publication-time tracking"]},
     {"id": "microstructure", "name": "Market Microstructure", "status": "foundation",
