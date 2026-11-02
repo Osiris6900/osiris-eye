@@ -57,7 +57,7 @@ def test_offline_rl_and_surveillance_are_review_only():
 
 
 def test_phase7_api_contracts_and_registry():
-    assert client.get("/platform/modules").json()["count"] == 95
+    assert client.get("/platform/modules").json()["count"] == 97
     assert client.post("/research/alpha/cross-asset-discovery",
                        json={"returns": {"A": [1, 2, 3, 4], "B": [2, 1, 4, 3]}, "max_lag": 1}).status_code == 200
     assert client.post("/research/options/flow-intelligence",
