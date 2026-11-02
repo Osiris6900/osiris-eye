@@ -1,5 +1,9 @@
 """Central catalog for research-platform module foundations."""
-MODULES = [\n    {"id": "data_intelligence", "name": "Data Intelligence Engine", "status": "foundation",\n     "capabilities": ["point-in-time quality audit", "staleness and duplicate detection", "fail-closed readiness"]},\n    {"id": "backtesting", "name": "Backtesting & Simulation", "status": "prototype",\n     "capabilities": ["lagged signal alignment", "turnover costs", "equity and drawdown diagnostics"]},
+MODULES = [
+    {"id": "data_intelligence", "name": "Data Intelligence Engine", "status": "foundation",
+     "capabilities": ["point-in-time quality audit", "staleness and duplicate detection", "fail-closed readiness"]},
+    {"id": "backtesting", "name": "Backtesting & Simulation", "status": "prototype",
+     "capabilities": ["lagged signal alignment", "turnover costs", "equity and drawdown diagnostics"]},
     {"id": "alternative_data", "name": "Alternative Data Engine", "status": "foundation",
      "capabilities": ["event metadata validation", "publication-time tracking"]},
     {"id": "microstructure", "name": "Market Microstructure", "status": "foundation",
