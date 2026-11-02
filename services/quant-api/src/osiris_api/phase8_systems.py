@@ -113,10 +113,11 @@ def observe_model_health(reference, current, max_mean_shift=0.5, max_std_ratio=2
     mr, mc = sum(ref)/len(ref), sum(cur)/len(cur)
     sr = (sum((x-mr)**2 for x in ref)/len(ref))**0.5
     sc = (sum((x-mc)**2 for x in cur)/len(cur))**0.5
-    ratio = sc/sr if sr > 1e-12 else (1.0 if sc <= 1e-12 else None)
+    ratio = sc/sr if sr > 1e-12 else None
     alerts = []
     if abs(mc-mr) > limit: alerts.append("mean_shift")
-    if ratio is None or ratio > ratio_limit: alerts.append("volatility_shift")
+    if (ratio is not None and ratio > ratio_limit) or (ratio is None and sc > 1e-12):
+        alerts.append("volatility_shift")
     return {"status": "alert" if alerts else "nominal", "alerts": alerts,
             "mean_shift": abs(mc-mr), "std_ratio": ratio,
             "std_ratio_status": "undefined_zero_reference_variance" if ratio is None else "defined",
