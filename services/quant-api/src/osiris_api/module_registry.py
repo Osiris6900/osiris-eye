@@ -69,5 +69,11 @@ MODULES = [
     {"id": "model_validation_drift", "name": "AI Model Validation & Drift Engine", "status": "prototype", "capabilities": ["feature PSI and accuracy degradation checks", "deployment never auto-authorized"]},
     {"id": "global_macro_intelligence", "name": "Global Macro Intelligence Engine", "status": "prototype", "capabilities": ["transparent rule-based macro regime classification", "no connected macro feeds"]},
     {"id": "strategy_intelligence_ranking", "name": "Strategy Intelligence & Ranking Engine", "status": "prototype", "capabilities": ["OOS Sharpe and drawdown ranking", "turnover and multiple-testing penalty"]},
+    {"id": "cross_asset_alpha_discovery", "name": "Cross-Asset Alpha Discovery Engine", "status": "prototype", "capabilities": ["aligned cross-asset correlation and lead-lag hypotheses", "exploratory only; multiple-testing warning"]},
+    {"id": "options_flow_volatility_intelligence", "name": "Options Flow & Volatility Intelligence", "status": "prototype", "capabilities": ["signed call/put premium and volume aggregation", "unusual activity flags; no vendor feed"]},
+    {"id": "liquidity_forecasting", "name": "Liquidity Forecasting Engine", "status": "prototype", "capabilities": ["recent spread, volume and volatility liquidity heuristic", "uncalibrated horizon diagnostics"]},
+    {"id": "real_time_market_anomaly_detection", "name": "Real-Time Market Anomaly Detection", "status": "prototype", "capabilities": ["robust median/MAD outlier flags", "alert-only; no automated action"]},
+    {"id": "offline_reinforcement_learning_lab", "name": "Reinforcement Learning Research Lab", "status": "prototype", "capabilities": ["offline clipped importance-sampling evaluation", "no policy training or deployment"]},
+    {"id": "trade_surveillance_market_abuse", "name": "Trade Surveillance & Market Abuse Detection", "status": "prototype", "capabilities": ["cancel/submit and event-burst review indicators", "human review; no misconduct determination"]},
     {"id": "institutional_portfolio_backtesting", "name": "Institutional Portfolio Backtesting Engine", "status": "prototype", "capabilities": ["lagged multi-asset portfolio simulation", "commission, spread, slippage and impact costs", "equity, volatility, Sharpe and drawdown diagnostics"]},
 ]
