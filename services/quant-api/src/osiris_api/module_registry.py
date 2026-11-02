@@ -44,4 +44,17 @@ MODULES = [
      "capabilities": ["component health aggregation"]},
     {"id": "agent_team", "name": "AI Agent Research Team", "status": "foundation",
      "capabilities": ["typed roles", "mandatory human approval contract"]},
+
+    {"id": "global_data_connector_hub", "name": "Global Data Connector Hub", "status": "contract", "capabilities": ["licensed source contract audit", "adapter readiness; no vendor connection"]},
+    {"id": "tick_market_replay", "name": "Tick-by-Tick Market Replay", "status": "foundation", "capabilities": ["timezone-aware deterministic event ordering"]},
+    {"id": "portfolio_construction_optimizer", "name": "Portfolio Construction & Optimizer", "status": "foundation", "capabilities": ["capped inverse-volatility allocation baseline"]},
+    {"id": "paper_trading_oms", "name": "Paper Trading Order Management", "status": "simulation", "capabilities": ["simulated order lifecycle and partial-fill state"]},
+    {"id": "factor_intelligence", "name": "Factor Intelligence Engine", "status": "foundation", "capabilities": ["historical single-factor exposure diagnostics"]},
+    {"id": "advanced_derivatives_risk", "name": "Advanced Derivatives Risk Engine", "status": "foundation", "capabilities": ["aggregated position Greeks"]},
+    {"id": "event_earnings_intelligence", "name": "Event & Earnings Intelligence", "status": "foundation", "capabilities": ["event metadata and timezone audit"]},
+    {"id": "ml_experiment_reproducibility", "name": "ML Experiment & Reproducibility Platform", "status": "foundation", "capabilities": ["canonical experiment manifest hashing"]},
+    {"id": "portfolio_stress_liquidity", "name": "Portfolio Stress & Liquidity Lab", "status": "foundation", "capabilities": ["deterministic user-supplied portfolio shock analysis"]},
+    {"id": "production_observability_sre", "name": "Production Observability & SRE", "status": "foundation", "capabilities": ["service health aggregation and fail-closed risk readiness"]},
+    {"id": "institutional_security_audit", "name": "Institutional Security & Audit Layer", "status": "foundation", "capabilities": ["privileged permission audit; no policy enforcement"]},
+    {"id": "research_execution_control_plane", "name": "Unified Research-to-Execution Control Plane", "status": "foundation", "capabilities": ["data, OOS, paper and approval gates; no live routing"]},
 ]
