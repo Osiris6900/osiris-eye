@@ -1,12 +1,15 @@
 """Authenticated HTTP routes for the provider-neutral market-data gateway."""
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
 from .market_gateway import MarketDataGateway, MarketDataUnavailable
 from .market_universe import ASSET_CLASSES, audit_instruments
+from .provider_bootstrap import provider_readiness
+from .provider_router import MultiProviderMarketDataRouter
 
 router = APIRouter(tags=["market-data"])
 # Deliberately empty by default. Operators must register an adapter and entitlement
@@ -61,9 +64,6 @@ def market_data_bars(
 
 
 # Multi-provider routing is opt-in and remains sandbox/synthetic-only.
-import os
-from .provider_router import MultiProviderMarketDataRouter
-
 _provider_order = [
     item.strip() for item in os.getenv("OSIRIS_MARKET_PROVIDER_ORDER", "").split(",")
     if item.strip()
@@ -100,3 +100,9 @@ def market_data_routed_bars(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except (ValueError, TypeError, OverflowError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/market-data/provider-readiness")
+def market_data_provider_readiness():
+    """Show onboarding configuration presence without claiming connectivity."""
+    return provider_readiness()
