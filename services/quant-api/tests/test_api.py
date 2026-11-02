@@ -227,3 +227,61 @@ def test_phase13_data_to_risk_pipeline_blocks_portfolio_breach():
     assert result.status_code == 200
     assert result.json()["new_risk_allowed"] is False
     assert "gross_exposure_limit" in result.json()["portfolio_risk"]["breaches"]
+
+
+def test_phase14_data_quality_audit_detects_duplicates_and_stale_data():
+    payload = {
+        "as_of": "2026-11-02T20:00:00Z", "max_age_seconds": 30,
+        "observations": [
+            {"record_key": "x", "event_time": "2026-11-02T19:59:00Z", "available_at": "2026-11-02T19:59:01Z"},
+            {"record_key": "x", "event_time": "2026-11-02T19:59:00Z", "available_at": "2026-11-02T19:59:01Z"},
+        ],
+    }
+    result = client.post("/platform/operations/data-quality-audit", json=payload)
+    assert result.status_code == 200
+    body = result.json()
+    assert body["status"] == "blocked"
+    assert "duplicate_record_key" in body["issue_codes"]
+    assert "stale_event_data" in body["issue_codes"]
+    assert body["new_risk_allowed"] is False
+
+
+def test_phase14_data_quality_audit_passes_clean_fresh_data():
+    result = client.post("/platform/operations/data-quality-audit", json={
+        "as_of": "2026-11-02T20:00:10Z", "max_age_seconds": 30,
+        "observations": [{"record_key": "x", "event_time": "2026-11-02T20:00:00Z",
+                          "available_at": "2026-11-02T20:00:01Z"}],
+    })
+    assert result.status_code == 200
+    assert result.json()["new_risk_allowed"] is True
+
+
+def test_phase14_recovery_gate_requires_all_gates_and_manual_approval():
+    payload = {
+        "service_checks": [{"service": "api", "healthy": True},
+                           {"service": "store", "healthy": True}],
+        "data_quality_pass": True, "risk_reconciled": True,
+        "manual_approval": False, "consecutive_healthy_checks": 5,
+        "required_healthy_checks": 3,
+    }
+    blocked = client.post("/platform/operations/recovery-gate", json=payload)
+    assert blocked.status_code == 200
+    assert blocked.json()["new_risk_allowed"] is False
+    payload["manual_approval"] = True
+    allowed = client.post("/platform/operations/recovery-gate", json=payload)
+    assert allowed.status_code == 200
+    assert allowed.json()["new_risk_allowed"] is True
+    assert allowed.json()["live_execution_enabled"] is False
+
+
+def test_phase14_recovery_gate_blocks_unhealthy_service_and_short_window():
+    result = client.post("/platform/operations/recovery-gate", json={
+        "service_checks": [{"service": "api", "healthy": False}],
+        "data_quality_pass": True, "risk_reconciled": True,
+        "manual_approval": True, "consecutive_healthy_checks": 1,
+        "required_healthy_checks": 3,
+    })
+    assert result.status_code == 200
+    body = result.json()
+    assert body["new_risk_allowed"] is False
+    assert body["unhealthy_services"] == ["api"]
