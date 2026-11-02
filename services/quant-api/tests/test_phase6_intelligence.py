@@ -44,7 +44,7 @@ def test_macro_and_strategy_triage_are_transparent():
 
 
 def test_phase6_api_contracts_and_validation():
-    assert client.get("/platform/modules").json()["count"] == 79
+    assert client.get("/platform/modules").json()["count"] == 87
     assert client.post("/research/validation/walk-forward",
                        json={"returns": [0.01] * 10, "train_size": 5, "test_size": 2}).status_code == 200
     risk_response = client.post("/research/portfolio/advanced-risk",
