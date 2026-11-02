@@ -92,4 +92,12 @@ MODULES = [
     {"id": "financial_knowledge_graph_v2", "name": "Financial Knowledge Graph 2.0", "status": "prototype", "capabilities": ["node and relationship integrity", "timestamp validation"]},
     {"id": "disaster_recovery_failover_simulator", "name": "Disaster Recovery & Failover Simulator", "status": "prototype", "capabilities": ["caller-reported RTO and RPO target checks"]},
     {"id": "institutional_benchmark_performance", "name": "Institutional Performance & Benchmark Intelligence", "status": "prototype", "capabilities": ["portfolio and benchmark compound returns", "tracking error and information ratio"]},
+    {"id": "real_time_portfolio_risk_monitor", "name": "Real-Time Portfolio Risk Monitor", "status": "prototype", "capabilities": ["gross leverage, concentration and historical VaR/ES diagnostics"]},
+    {"id": "global_vendor_failover_governance", "name": "Global Data Vendor Failover Governance", "status": "prototype", "capabilities": ["authorized, healthy, fresh vendor selection and price-conflict block"]},
+    {"id": "alpha_research_factory", "name": "Alpha Research Factory", "status": "prototype", "capabilities": ["OOS hypothesis ranking, reproducibility and trial-count penalty"]},
+    {"id": "dynamic_capital_allocation", "name": "Dynamic Capital Allocation Engine", "status": "prototype", "capabilities": ["risk-budget allocation with per-strategy caps"]},
+    {"id": "ai_agent_governance_security", "name": "AI Agent Governance & Security", "status": "prototype", "capabilities": ["tool allowlists, human approval, audit logging and risk-gate prohibition"]},
+    {"id": "execution_quality_tca", "name": "Execution Quality & Transaction Cost Analysis", "status": "prototype", "capabilities": ["implementation shortfall from arrival and average fill prices"]},
+    {"id": "systemic_crisis_contagion_simulator", "name": "Systemic Crisis & Contagion Simulator", "status": "prototype", "capabilities": ["caller-defined factor shocks and exposure-based stress loss"]},
+    {"id": "independent_strategy_approval_board", "name": "Independent Strategy Approval Board", "status": "prototype", "capabilities": ["evidence gates for holdout, risk signoff, paper trading and human review"]},
 ]
