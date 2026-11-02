@@ -9,7 +9,7 @@ from osiris_api.main import app
 client = TestClient(app)
 
 
-def test_platform_registry_exposes_forty_four_modules():
+def test_platform_registry_exposes_fifty_modules():
     response = client.get("/platform/modules")
     assert response.status_code == 200
     assert response.json()["count"] == 50
