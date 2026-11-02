@@ -12,6 +12,10 @@ OSIRIS EYE is a research-first, multi-asset quantitative trading platform scaffo
 - `docs`: architecture, data contracts, and phased roadmap.
 - `.github/workflows/ci.yml`: Python, Rust, and TypeScript CI.
 
+## Ten platform modules
+
+The ten-module foundation is documented in [docs/PLATFORM_MODULES.md](docs/PLATFORM_MODULES.md). Deterministic Python primitives now cover alternative-event validation, order-flow imbalance, baseline portfolio weights, historical VaR/ES, model drift, strategy diagnostics, execution-cost estimation, macro regime labels, component health, and approval-gated AI task contracts. These are not complete services or validated trading signals.
+
 ## Quick start
 
 ### Python API
@@ -52,4 +56,4 @@ Options IV peer z-score, liquidity cost estimate, expiry/gamma exposure feature,
 5. Paper trading and kill-switch validation before any live execution work.
 6. Every order path must enforce risk limits independently of the strategy model.
 
-See [docs/ROADMAP.md](docs/ROADMAP.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+See [docs/ROADMAP.md](docs/ROADMAP.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), and [docs/PLATFORM_MODULES.md](docs/PLATFORM_MODULES.md).
