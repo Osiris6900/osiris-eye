@@ -108,4 +108,6 @@ MODULES = [
     {"id":"portfolio_liquidity_exit_planner","name":"Portfolio Liquidity & Exit Planner","status":"prototype","capabilities":["ADV participation and stressed exit-day estimates"]},
     {"id":"model_deployment_rollback","name":"Model Deployment & Rollback Controller","status":"prototype","capabilities":["shadow, drift, risk and human approval gates","no production deployment"]},
     {"id":"trading_kill_switch_recovery","name":"Trading Kill-Switch & Recovery System","status":"prototype","capabilities":["fail-closed new-risk block on health, data or risk failures","no live order cancellation"]},
+    {"id":"operational_data_quality_monitor","name":"Operational Data Quality Monitor","status":"prototype","capabilities":["duplicate, timestamp, freshness and malformed-record audit","fail-closed data readiness"]},
+    {"id":"controlled_recovery_gate","name":"Controlled Recovery Gate","status":"prototype","capabilities":["service, data, risk, consecutive-health and human approval gates","no live execution"]},
 ]
