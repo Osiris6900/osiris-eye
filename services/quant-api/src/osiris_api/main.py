@@ -7,7 +7,8 @@ from .data_store import ResearchStore
 from .data_intelligence import audit_observations
 from .backtesting import simulate_signals
 from .phase5_backtesting import run_portfolio_backtest
-from .phase7_market_intelligence import (cross_asset_alpha, options_flow_intelligence, liquidity_forecast, detect_market_anomalies, offline_rl_evaluation, trade_surveillance)\nfrom .phase6_intelligence import (walk_forward_validation, portfolio_risk_diagnostics as phase6_portfolio_risk_diagnostics, execution_intelligence, model_validation, macro_intelligence, rank_strategies)
+from .phase7_market_intelligence import (cross_asset_alpha, options_flow_intelligence, liquidity_forecast, detect_market_anomalies, offline_rl_evaluation, trade_surveillance)
+from .phase6_intelligence import (walk_forward_validation, portfolio_risk_diagnostics as phase6_portfolio_risk_diagnostics, execution_intelligence, model_validation, macro_intelligence, rank_strategies)
 from .institutional_modules import portfolio_risk, options_surface_audit, cross_market_correlation, alternative_data_intake, agent_research_proposal, command_center_snapshot
 from .advanced_systems import order_book, execution_sim, model_governance, knowledge_graph, strategy_discovery, regime_change, monte_carlo, news_audit, security_audit, attribution, compute_plan, incident_assessment
 from .phase3_systems import connector_contract, market_replay, portfolio_optimizer, paper_order_lifecycle, factor_diagnostics, derivatives_risk, event_calendar_audit, experiment_manifest, portfolio_stress, sre_health, rbac_audit, workflow_gate
