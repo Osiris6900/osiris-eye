@@ -661,3 +661,19 @@ def api_phase11_model_rollout(p: dict[str, Any] = Body(...)):
 def api_phase11_kill_switch(p: dict[str, Any] = Body(...)):
     return guarded(evaluate_kill_switch, p.get("health", {}), p.get("risk_breaches", 0),
                    p.get("data_critical"), p.get("manual_halt", False))
+
+
+from .phase13_integration import evaluate_data_to_risk_pipeline
+
+
+@app.post("/platform/integration/data-to-risk")
+def api_phase13_data_to_risk(p: dict[str, Any] = Body(...)):
+    observations = guarded(store.list_as_of, p.get("dataset", ""), p.get("as_of", ""),
+                           p.get("limit", 100))
+    return guarded(
+        evaluate_data_to_risk_pipeline, observations, p.get("as_of", ""),
+        p.get("max_age_seconds", 60.0), p.get("positions", []),
+        p.get("max_gross_exposure", 1.0), p.get("max_single_name_weight", 0.5),
+        p.get("current_drawdown", 0.0), p.get("max_drawdown", 0.2),
+        p.get("manual_halt", False),
+    )
