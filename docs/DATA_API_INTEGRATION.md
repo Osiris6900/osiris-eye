@@ -30,8 +30,8 @@ The Vite development proxy maps browser requests from `/api/*` to the API root.
 | Endpoint | Purpose |
 |---|---|
 | `GET /health` | API health, mode and module count |
-| `GET /platform/modules` | Central ten-module catalog |
-| `POST /data/observations` | Upsert a point-in-time observation |
+| `GET /platform/modules` | Central module catalog |
+| `POST /data/observations` | Upsert a point-in-time observation |\n| `POST /data/audit` | Audit batch quality, freshness, duplicates and timestamp ordering |\n| `POST /research/backtest/simulate` | Lagged signal/return simulation with turnover costs |
 | `GET /data/observations?dataset=...` | Read latest observations for a dataset |
 | `POST /research/microstructure/imbalance` | Normalized displayed-volume imbalance |
 | `POST /research/portfolio/weights` | Inverse-volatility baseline weights |
@@ -57,3 +57,10 @@ Timestamps must include a timezone and are normalized to UTC. Re-sending the sam
 ## Limitations
 
 SQLite is for local development and early integration, not concurrent institutional production workloads. No licensed market-data adapters, raw immutable object store, vendor entitlement checks, broker connections, or live execution are included. Historical research must join on `available_at` to avoid look-ahead bias. Do not put secrets or personal data in observation payloads.
+
+
+## New research foundations
+
+The data audit endpoint evaluates caller-supplied records at an explicit `as_of` timestamp. It reports missing fields, malformed or timezone-naive timestamps, duplicate identities, future availability, event/availability ordering and stale observations. Any blocking issue or stale record sets `new_risk_allowed=false`. This is a quality gate over supplied records, not a live feed monitor or vendor connector.
+
+The backtest simulator applies `signals[t-1]` to `asset_returns[t]`, subtracts a configurable turnover cost, and reports period returns, cumulative return, drawdown and turnover. It is intentionally a minimal research prototype: it does not model orders, fills, spread dynamics, market impact, borrow, funding, corporate actions, contract rolls, exchange calendars or capacity. Do not treat its output as a validated strategy result.
