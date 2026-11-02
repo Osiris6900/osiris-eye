@@ -63,5 +63,11 @@ MODULES = [
     {"id": "data_entitlement_guard", "name": "Data Entitlement Guard", "status": "foundation", "capabilities": ["operator-declared license gate", "unverified source rejection"]},
     {"id": "point_in_time_query_engine", "name": "Point-in-Time Query Engine", "status": "foundation", "capabilities": ["event-time and availability-time cutoff queries"]},
     {"id": "market_data_normalization", "name": "Market Data Normalization Layer", "status": "foundation", "capabilities": ["UTC normalization", "canonical symbol normalization"]},
+    {"id": "walk_forward_validation", "name": "Walk-Forward Validation Engine", "status": "prototype", "capabilities": ["chronological rolling train/test folds", "no random shuffling"]},
+    {"id": "advanced_portfolio_risk", "name": "Advanced Portfolio Risk Engine", "status": "prototype", "capabilities": ["weighted multi-asset return diagnostics", "annualized volatility, drawdown and concentration"]},
+    {"id": "execution_intelligence", "name": "Execution Intelligence Engine", "status": "prototype", "capabilities": ["participation and square-root impact heuristic", "capacity threshold diagnostics"]},
+    {"id": "model_validation_drift", "name": "AI Model Validation & Drift Engine", "status": "prototype", "capabilities": ["feature PSI and accuracy degradation checks", "deployment never auto-authorized"]},
+    {"id": "global_macro_intelligence", "name": "Global Macro Intelligence Engine", "status": "prototype", "capabilities": ["transparent rule-based macro regime classification", "no connected macro feeds"]},
+    {"id": "strategy_intelligence_ranking", "name": "Strategy Intelligence & Ranking Engine", "status": "prototype", "capabilities": ["OOS Sharpe and drawdown ranking", "turnover and multiple-testing penalty"]},
     {"id": "institutional_portfolio_backtesting", "name": "Institutional Portfolio Backtesting Engine", "status": "prototype", "capabilities": ["lagged multi-asset portfolio simulation", "commission, spread, slippage and impact costs", "equity, volatility, Sharpe and drawdown diagnostics"]},
 ]
