@@ -106,3 +106,8 @@ Deterministic SHA-256 hash-chain construction and verification now detect edits,
 ## Phase 16 — Durable SQLite audit journal
 
 Audit events can now be appended transactionally to the configured SQLite database and verified as a persistent hash chain. Duplicate event IDs are rejected and row tampering is detected. This is not WORM storage or protection against a privileged database rewrite; see [Phase 16 documentation](docs/PHASE16_DURABLE_AUDIT_JOURNAL.md).
+
+
+## Phase 17 — External audit checkpoints
+
+Operator-held SHA-256 checkpoints record a durable journal sequence and head hash, allowing later verification to detect missing/truncated history and checkpoint mismatches. Copy checkpoints to independently controlled storage; a checkpoint kept only beside SQLite is not an external trust anchor. This is not a signature, trusted timestamp, WORM guarantee, or proof of event truth. See [Phase 17 documentation](docs/PHASE17_EXTERNAL_AUDIT_CHECKPOINTS.md).
