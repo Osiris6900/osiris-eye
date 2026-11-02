@@ -95,7 +95,7 @@ def attribution(asset_returns,weights):
     w={k:float(v) for k,v in weights.items()}
     if not all(isfinite(v) for v in w.values()) or abs(sum(w.values())-1)>1e-6: raise ValueError("weights must sum to one")
     c={k:w[k]*mean(rows[k]) for k in rows}
-    return {"contributions":c,"portfolio_mean_return":sum(c.values()),"method":"arithmetic_contribution"}
+    return {"contributions":c,"portfolio_mean_return":sum(c.values()),"weight_sum":sum(w.values()),"method":"arithmetic_contribution"}
 
 def compute_plan(tasks,workers):
     n,w=int(tasks),int(workers)
