@@ -13,7 +13,7 @@ SUPPORTED_ASSET_CLASSES = frozenset({
     "equity", "crypto", "fx", "future", "option",
     "commodity", "index", "fixed_income",
 })
-SUPPORTED_MODES = frozenset({"synthetic", "sandbox", "live"})
+SUPPORTED_MODES = frozenset({"synthetic", "sandbox", "public", "live"})
 _PROVIDER_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 
 
@@ -42,13 +42,9 @@ class ProviderRegistry:
         self._providers: dict[str, ProviderRegistration] = {}
 
     def register(
-        self,
-        provider_id: str,
-        adapter: BarProviderAdapter,
-        *,
+        self, provider_id: str, adapter: BarProviderAdapter, *,
         supported_asset_classes: tuple[str, ...] | list[str],
-        entitlement_reference: str | None,
-        credential_reference: str | None = None,
+        entitlement_reference: str | None, credential_reference: str | None = None,
     ) -> ProviderRegistration:
         if not isinstance(provider_id, str) or not _PROVIDER_ID.fullmatch(provider_id):
             raise ValueError("invalid_provider_id")
@@ -68,8 +64,7 @@ class ProviderRegistry:
             ):
                 raise ValueError("invalid_secret_reference")
         registration = ProviderRegistration(
-            provider_id=provider_id,
-            adapter=adapter,
+            provider_id=provider_id, adapter=adapter,
             supported_asset_classes=classes,
             entitlement_reference=entitlement_reference.strip() if entitlement_reference else None,
             credential_reference=credential_reference.strip() if credential_reference else None,
@@ -86,13 +81,11 @@ class ProviderRegistry:
             mode = registration.adapter.mode
             entitled = bool(registration.entitlement_reference)
             result.append({
-                "provider": provider_id,
-                "mode": mode,
-                "configured": True,
+                "provider": provider_id, "mode": mode, "configured": True,
                 "supported_asset_classes": list(registration.supported_asset_classes),
                 "credential_reference_present": bool(registration.credential_reference),
                 "operator_entitlement_reference_present": entitled,
-                "available": entitled and mode in {"synthetic", "sandbox"},
+                "available": entitled and mode in {"synthetic", "sandbox", "public"},
             })
         return {
             "providers": result,
