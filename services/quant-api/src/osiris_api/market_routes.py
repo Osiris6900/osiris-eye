@@ -10,7 +10,10 @@ from .market_gateway import MarketDataGateway, MarketDataUnavailable
 from .market_universe import ASSET_CLASSES, audit_instruments
 from .provider_bootstrap import provider_readiness
 from .provider_router import MultiProviderMarketDataRouter
-from .public_market_data import (\n    BinancePublicMarketDataAdapter, CoinbasePublicMarketDataAdapter,\n    StooqDailyMarketDataAdapter,\n)
+from .public_market_data import (
+    BinancePublicMarketDataAdapter, CoinbasePublicMarketDataAdapter,
+    StooqDailyMarketDataAdapter,
+)
 
 router = APIRouter(tags=["market-data"])
 market_data_gateway = MarketDataGateway()
