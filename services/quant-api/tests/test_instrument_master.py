@@ -14,12 +14,24 @@ def test_persistence_and_point_in_time_versions(tmp_path):
     assert store.get("equity:NSE:RELIANCE",as_of="2025-05-01T00:00:00Z")["instrument"]["tick_size"]=="0.1"
     assert len(store.search(venue="NSE",as_of="2025-05-01T00:00:00Z"))==1
 
-def test_duplicate_version_and_bad_tick_rejected(tmp_path):
-    store=InstrumentMasterStore(str(tmp_path/"master.sqlite")); store.put(instrument())
-    for record in (instrument(),instrument(tick_size=0)):
-        try: store.put(record)
-        except ValueError: pass
-        else: raise AssertionError("invalid write was accepted")
+def test_duplicate_version_rejected(tmp_path):
+    store=InstrumentMasterStore(str(tmp_path/"master.sqlite"))
+    store.put(instrument(),effective_at="2025-01-01T00:00:00Z")
+    try:
+        store.put(instrument(),effective_at="2025-01-01T00:00:00Z")
+    except ValueError as exc:
+        assert "already_exists" in str(exc)
+    else:
+        raise AssertionError("duplicate version was accepted")
+
+def test_bad_tick_rejected(tmp_path):
+    store=InstrumentMasterStore(str(tmp_path/"master.sqlite"))
+    try:
+        store.put(instrument(tick_size=0))
+    except ValueError as exc:
+        assert "invalid_tick_size" in str(exc)
+    else:
+        raise AssertionError("zero tick size was accepted")
 
 def test_provider_mapping_requires_canonical_instrument(tmp_path):
     store=InstrumentMasterStore(str(tmp_path/"master.sqlite"))
