@@ -707,3 +707,18 @@ def api_phase15_audit_chain_build(p: dict[str, Any] = Body(...)):
 @app.post("/platform/audit/chain-verify")
 def api_phase15_audit_chain_verify(p: dict[str, Any] = Body(...)):
     return guarded(verify_audit_chain, p.get("chain", {}))
+
+
+from .phase16_durable_audit import DurableAuditStore
+
+durable_audit_store = DurableAuditStore(store.database_path)
+
+
+@app.post("/platform/audit/durable-append")
+def api_phase16_audit_append(p: dict[str, Any] = Body(...)):
+    return guarded(durable_audit_store.append, p.get("event", {}))
+
+
+@app.get("/platform/audit/durable-verify")
+def api_phase16_audit_verify():
+    return durable_audit_store.verify()
