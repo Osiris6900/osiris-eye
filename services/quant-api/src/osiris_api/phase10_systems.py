@@ -202,4 +202,4 @@ def evaluate_strategy_approval(evidence: dict[str, Any]) -> dict[str, Any]:
     missing = [key for key in gates if evidence.get(key) is not True]
     return {"status": "eligible_for_review" if not missing else "rejected",
             "failed_gates": missing, "live_deployment_authorized": False,
-            "final_authorization_requires_separate_security_and_operations_review"}
+            "final_authorization_requires_separate_security_and_operations_review": True}
