@@ -140,6 +140,18 @@ def platform_modules():
             "execution_enabled": False}
 
 
+@app.post("/data/audit")
+def audit_data(request: DataAuditIn):
+    return guarded(audit_observations, request.records, as_of=request.as_of,
+                   max_age_seconds=request.max_age_seconds)
+
+
+@app.post("/research/backtest/simulate")
+def backtest_simulate(request: BacktestIn):
+    return guarded(simulate_signals, request.signals, request.asset_returns,
+                   cost_bps_per_unit_turnover=request.cost_bps_per_unit_turnover)
+
+
 @app.post("/data/observations")
 def put_observation(observation: ObservationIn):
     return guarded(store.put, **observation.model_dump())
