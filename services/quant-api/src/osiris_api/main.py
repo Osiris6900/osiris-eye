@@ -4,6 +4,8 @@ from fastapi import Body, FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from .data_store import ResearchStore
+from .data_intelligence import audit_observations
+from .backtesting import simulate_signals
 from .module_registry import MODULES
 from .platform_modules import (
     AgentTask, AlternativeEvent, HealthCheck, system_health,
@@ -31,6 +33,18 @@ app = FastAPI(
     description="Shared research API and point-in-time data store; no live execution.",
 )
 store = ResearchStore()
+
+
+class DataAuditIn(BaseModel):
+    records: list[dict[str, Any]] = Field(min_length=1, max_length=10000)
+    as_of: str
+    max_age_seconds: float = Field(default=300.0, ge=0)
+
+
+class BacktestIn(BaseModel):
+    signals: list[float] = Field(min_length=2, max_length=100000)
+    asset_returns: list[float] = Field(min_length=2, max_length=100000)
+    cost_bps_per_unit_turnover: float = Field(default=0.0, ge=0)
 
 
 class OrderCheck(BaseModel):
