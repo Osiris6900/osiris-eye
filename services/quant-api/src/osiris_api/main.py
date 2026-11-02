@@ -1,11 +1,12 @@
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from .data_store import ResearchStore
 from .module_registry import MODULES
 from .platform_modules import (
+    AgentTask, AlternativeEvent, HealthCheck, system_health,
     estimated_execution_cost_bps,
     historical_var_es,
     inverse_volatility_weights,
@@ -80,6 +81,26 @@ class FlowIn(BaseModel):
     ask_volume: float = Field(ge=0)
 
 
+class AlternativeEventIn(BaseModel):
+    source: str
+    event_time: str
+    published_at: str
+    category: str
+    sentiment: float
+
+
+class HealthCheckIn(BaseModel):
+    component: str
+    healthy: bool
+    detail: str = ""
+
+
+class AgentTaskIn(BaseModel):
+    role: str
+    objective: str
+    requires_human_approval: bool = True
+
+
 class ExecutionCostIn(BaseModel):
     half_spread_bps: float = Field(ge=0)
     slippage_bps: float = Field(ge=0)
@@ -114,6 +135,23 @@ def put_observation(observation: ObservationIn):
 def list_observations(dataset: str = Query(..., min_length=1, max_length=100),
                       limit: int = Query(100, ge=1, le=1000)):
     return {"dataset": dataset, "records": guarded(store.list, dataset, limit)}
+
+
+@app.post("/research/alternative-data/validate-event")
+def validate_alternative_event(request: AlternativeEventIn):
+    event = guarded(AlternativeEvent(**request.model_dump()).validate)
+    return {"valid": True, "event": event.__dict__}
+
+
+@app.post("/platform/reliability/health")
+def aggregate_health(checks: list[HealthCheckIn] = Body(..., min_length=1, max_length=100)):
+    return guarded(system_health, [HealthCheck(**item.model_dump()) for item in checks])
+
+
+@app.post("/platform/agents/validate-task")
+def validate_agent_task(request: AgentTaskIn):
+    task = guarded(AgentTask(**request.model_dump()).validate)
+    return {"valid": True, "role": task.role, "human_approval_required": True}
 
 
 @app.post("/research/portfolio/weights")
