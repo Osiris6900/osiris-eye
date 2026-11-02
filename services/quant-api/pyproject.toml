@@ -17,3 +17,6 @@ testpaths=["tests"]
 [tool.ruff]
 line-length=100
 target-version="py311"
+
+[tool.vercel]
+entrypoint="src.osiris_api.main:app"
