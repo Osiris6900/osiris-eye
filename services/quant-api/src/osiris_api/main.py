@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from .data_store import ResearchStore
 from .data_intelligence import audit_observations
 from .backtesting import simulate_signals
+from .phase5_backtesting import run_portfolio_backtest
 from .institutional_modules import portfolio_risk, options_surface_audit, cross_market_correlation, alternative_data_intake, agent_research_proposal, command_center_snapshot
 from .advanced_systems import order_book, execution_sim, model_governance, knowledge_graph, strategy_discovery, regime_change, monte_carlo, news_audit, security_audit, attribution, compute_plan, incident_assessment
 from .phase3_systems import connector_contract, market_replay, portfolio_optimizer, paper_order_lifecycle, factor_diagnostics, derivatives_risk, event_calendar_audit, experiment_manifest, portfolio_stress, sre_health, rbac_audit, workflow_gate
@@ -424,3 +425,16 @@ def api_instrument_master_audit(p: dict[str, Any] = Body(...)):
 def api_feed_health(p: dict[str, Any] = Body(...)):
     return guarded(feed_health_snapshot, p.get("last_event_time", ""),
                    p.get("last_available_at", ""), p.get("as_of", ""), p.get("max_lag_seconds", 60.0))
+
+
+@app.post("/research/backtest/portfolio")
+def api_portfolio_backtest(p: dict[str, Any] = Body(...)):
+    return guarded(run_portfolio_backtest,
+        p.get("asset_returns", []), p.get("target_weights", []),
+        commission_bps=p.get("commission_bps", 0.0),
+        spread_bps=p.get("spread_bps", 0.0),
+        slippage_bps=p.get("slippage_bps", 0.0),
+        impact_bps=p.get("impact_bps", 0.0),
+        periods_per_year=p.get("periods_per_year", 252),
+        max_gross_leverage=p.get("max_gross_leverage", 1.0),
+        initial_capital=p.get("initial_capital", 1_000_000.0))
