@@ -6,10 +6,10 @@ OSIRIS EYE is a research-first, multi-asset quantitative trading platform scaffo
 
 ## Architecture
 
-- `services/quant-api`: FastAPI service, feature research modules, risk checks, and tests.
+- `services/quant-api`: FastAPI service, shared SQLite point-in-time observation store, ten-module registry, research endpoints, risk checks, and tests.
 - `crates/risk-kernel`: Rust pre-trade risk primitives.
 - `apps/web`: TypeScript + Vite dashboard foundation.
-- `docs`: architecture, data contracts, and phased roadmap.
+- `docs`: architecture, data contracts, shared API integration guide, ten-module map, and phased roadmap.
 - `.github/workflows/ci.yml`: Python, Rust, and TypeScript CI.
 
 ## Ten platform modules
@@ -43,7 +43,7 @@ npm install
 npm run dev
 ```
 
-## Current research features
+## Shared data and API\n\nThe dashboard reads `/health` and `/platform/modules` through the Vite API proxy. Research modules share one FastAPI service and a local SQLite observation store. See [docs/DATA_API_INTEGRATION.md](docs/DATA_API_INTEGRATION.md) for setup, endpoints, timestamp rules, and limitations.\n\n## Current research features
 
 Options IV peer z-score, liquidity cost estimate, expiry/gamma exposure feature, implied-vs-forecast volatility spread, cross-market lagged correlation diagnostic, and a simple volatility/spread regime flag. These are transparent diagnostics, not profitable strategies or validated forecasts.
 
