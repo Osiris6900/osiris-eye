@@ -35,7 +35,7 @@ def test_rollout_and_kill_switch():
         "drift_within_limit","risk_checks_pass","human_approval")}
     assert evaluate_model_rollout(gates)["status"] == "canary_eligible"
     assert evaluate_model_rollout({})["production_deployment_authorized"] is False
-    assert evaluate_kill_switch({"feed":True},0,False)["action"] == "BLOCK_NEW_RISK"
+    assert evaluate_kill_switch({"feed":False},0,False)["action"] == "BLOCK_NEW_RISK"
 
 def test_phase11_routes_and_registry():
     assert client.get("/platform/modules").json()["count"] == 95
