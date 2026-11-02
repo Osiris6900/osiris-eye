@@ -63,4 +63,4 @@ MODULES = [
     {"id": "data_entitlement_guard", "name": "Data Entitlement Guard", "status": "foundation", "capabilities": ["operator-declared license gate", "unverified source rejection"]},
     {"id": "point_in_time_query_engine", "name": "Point-in-Time Query Engine", "status": "foundation", "capabilities": ["event-time and availability-time cutoff queries"]},
     {"id": "market_data_normalization", "name": "Market Data Normalization Layer", "status": "foundation", "capabilities": ["UTC normalization", "canonical symbol normalization"]},
-]
+]    {"id": "institutional_portfolio_backtesting", "name": "Institutional Portfolio Backtesting Engine", "status": "prototype", "capabilities": ["lagged multi-asset portfolio simulation", "commission, spread, slippage and impact costs", "equity, volatility, Sharpe and drawdown diagnostics"]},
