@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from .market_gateway import MarketDataGateway, MarketDataUnavailable
 from .market_universe import ASSET_CLASSES, audit_instruments
+from .provider_bootstrap import provider_readiness
 
 router = APIRouter(tags=["market-data"])
 # Deliberately empty by default. Operators must register an adapter and entitlement
@@ -58,9 +59,6 @@ def market_data_bars(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except (ValueError, TypeError, OverflowError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-
-from .provider_bootstrap import provider_readiness
 
 
 @router.get("/market-data/provider-readiness")
