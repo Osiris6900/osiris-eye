@@ -21,6 +21,8 @@ def _number(value, name, *, minimum=None, maximum=None):
 
 
 def reconcile_ledger(positions, broker_positions, cash, broker_cash, tolerance=1e-6):
+    if not isinstance(positions, list) or not isinstance(broker_positions, list):
+        raise ValueError("positions and broker_positions must be lists")
     tolerance = _number(tolerance, "tolerance", minimum=0)
     cash = _number(cash, "cash")
     broker_cash = _number(broker_cash, "broker_cash")
@@ -46,6 +48,10 @@ def simulate_order_lifecycle(order):
     if not isinstance(order, dict):
         raise ValueError("order must be an object")
     qty = _number(order.get("quantity"), "quantity", minimum=0)
+    if qty <= 0:
+        raise ValueError("quantity must be positive")
+    if "side" in order and order["side"] not in {"buy", "sell"}:
+        raise ValueError("side must be buy or sell")
     filled = _number(order.get("filled_quantity", 0), "filled_quantity", minimum=0)
     if filled > qty:
         raise ValueError("filled_quantity cannot exceed quantity")
@@ -55,6 +61,8 @@ def simulate_order_lifecycle(order):
         raise ValueError("unsupported order status")
     if status == "filled" and filled != qty:
         raise ValueError("filled order must have filled_quantity equal to quantity")
+    if status in {"accepted", "cancelled", "rejected"} and filled != 0:
+        raise ValueError(f"{status} order cannot contain fills in this lifecycle snapshot")
     if status == "partially_filled" and not 0 < filled < qty:
         raise ValueError("partially_filled requires a partial quantity")
     remaining = qty - filled
@@ -81,6 +89,8 @@ def calibrate_transaction_costs(observations):
 
 
 def options_greeks_risk(positions):
+    if not isinstance(positions, list):
+        raise ValueError("positions must be a list")
     totals = {k: 0.0 for k in ("delta", "gamma", "vega", "theta")}
     for row in positions:
         if not isinstance(row, dict):
@@ -94,6 +104,8 @@ def options_greeks_risk(positions):
 
 
 def margin_funding_stress(positions, available_funds, maintenance_margin, funding_bps=0):
+    if not isinstance(positions, list):
+        raise ValueError("positions must be a list")
     funds = _number(available_funds, "available_funds", minimum=0)
     margin = _number(maintenance_margin, "maintenance_margin", minimum=0)
     funding = _number(funding_bps, "funding_bps", minimum=0)
@@ -110,6 +122,8 @@ def margin_funding_stress(positions, available_funds, maintenance_margin, fundin
 
 
 def plan_position_exit(positions, adv_participation=0.1, stress_multiplier=2.0):
+    if not isinstance(positions, list):
+        raise ValueError("positions must be a list")
     participation = _number(adv_participation, "adv_participation", minimum=0.000001, maximum=1)
     stress = _number(stress_multiplier, "stress_multiplier", minimum=1)
     plans = []
@@ -141,6 +155,10 @@ def evaluate_model_rollout(metrics):
 def evaluate_kill_switch(health, risk_breaches, data_critical, manual_halt=False):
     if not isinstance(health, dict):
         raise ValueError("health must be an object")
+    if not isinstance(manual_halt, bool):
+        raise ValueError("manual_halt must be a boolean")
+    if not isinstance(data_critical, bool):
+        raise ValueError("data_critical must be a boolean")
     unhealthy = sorted(str(k) for k, v in health.items() if v is not True)
     breach_count = int(_number(risk_breaches, "risk_breaches", minimum=0))
     if float(breach_count) != risk_breaches:
