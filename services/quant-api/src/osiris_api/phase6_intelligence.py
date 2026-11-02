@@ -90,7 +90,7 @@ def model_validation(reference, current, reference_accuracy, current_accuracy, p
         raise ValueError("invalid accuracy or threshold")
     lo, hi = min(a), max(a)
     if hi == lo:
-        psi = 0.0 if all(x == lo for x in b) else float("inf")
+        psi = 0.0 if all(x == lo for x in b) else 13.815510557964274
     else:
         edges = [lo + (hi - lo) * i / 10 for i in range(11)]
         def counts(xs):
