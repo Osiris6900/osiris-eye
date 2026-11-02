@@ -618,3 +618,46 @@ def api_phase10_systemic_stress(p: dict[str, Any] = Body(...)):
 @app.post("/platform/strategies/approval-review")
 def api_phase10_strategy_approval(p: dict[str, Any] = Body(...)):
     return guarded(evaluate_strategy_approval, p)
+
+
+from .phase11_systems import (
+    reconcile_ledger, simulate_order_lifecycle, calibrate_transaction_costs,
+    options_greeks_risk, margin_funding_stress, plan_position_exit,
+    evaluate_model_rollout, evaluate_kill_switch,
+)
+
+@app.post("/portfolio/ledger/reconcile")
+def api_phase11_ledger(p: dict[str, Any] = Body(...)):
+    return guarded(reconcile_ledger, p.get("positions", []), p.get("broker_positions", []),
+                   p.get("cash", 0), p.get("broker_cash", 0), p.get("tolerance", 1e-6))
+
+@app.post("/execution/orders/lifecycle-audit")
+def api_phase11_order_lifecycle(p: dict[str, Any] = Body(...)):
+    return guarded(simulate_order_lifecycle, p.get("order", {}))
+
+@app.post("/research/execution/cost-calibration")
+def api_phase11_cost_calibration(p: dict[str, Any] = Body(...)):
+    return guarded(calibrate_transaction_costs, p.get("observations", []))
+
+@app.post("/risk/options/greeks-aggregate")
+def api_phase11_options_greeks(p: dict[str, Any] = Body(...)):
+    return guarded(options_greeks_risk, p.get("positions", []))
+
+@app.post("/risk/margin/funding-stress")
+def api_phase11_margin(p: dict[str, Any] = Body(...)):
+    return guarded(margin_funding_stress, p.get("positions", []), p.get("available_funds", 0),
+                   p.get("maintenance_margin", 0), p.get("funding_bps", 0))
+
+@app.post("/portfolio/liquidity/exit-plan")
+def api_phase11_exit_plan(p: dict[str, Any] = Body(...)):
+    return guarded(plan_position_exit, p.get("positions", []),
+                   p.get("adv_participation", 0.1), p.get("stress_multiplier", 2.0))
+
+@app.post("/platform/models/rollout-gate")
+def api_phase11_model_rollout(p: dict[str, Any] = Body(...)):
+    return guarded(evaluate_model_rollout, p.get("metrics", {}))
+
+@app.post("/platform/risk/kill-switch/evaluate")
+def api_phase11_kill_switch(p: dict[str, Any] = Body(...)):
+    return guarded(evaluate_kill_switch, p.get("health", {}), p.get("risk_breaches", 0),
+                   p.get("data_critical"), p.get("manual_halt", False))
