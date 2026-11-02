@@ -9,7 +9,7 @@ OSIRIS EYE is a research-first, multi-asset quantitative trading platform scaffo
 - `services/quant-api`: FastAPI service, shared SQLite point-in-time observation store, ten-module registry, research endpoints, risk checks, and tests.
 - `crates/risk-kernel`: Rust pre-trade risk primitives.
 - `apps/web`: TypeScript + Vite dashboard foundation.
-- `docs`: architecture, data contracts, shared API integration guide, ten-module map, advanced intelligence specification, and phased roadmap.
+- `docs`: architecture, data contracts, shared API integration guide, ten-module map, advanced intelligence specification, master engineering blueprint, and phased roadmap.
 - `.github/workflows/ci.yml`: Python, Rust, and TypeScript CI.
 
 ## Ten platform modules
@@ -27,7 +27,7 @@ The seven requested capability groups are now specified in [docs/ADVANCED_INTELL
 6. Weather, lunar, solar/space-weather and other alternative-data research lab.
 7. Futuristic operator dashboard covering AI, global markets, options, anomalies, quant research and risk.
 
-Data provenance, point-in-time joins, feed-quality gates, model records and security controls are defined in [docs/DATA_CONTRACTS_AND_VALIDATION.md](docs/DATA_CONTRACTS_AND_VALIDATION.md).
+Data provenance, point-in-time joins, feed-quality gates, model records and security controls are defined in [docs/DATA_CONTRACTS_AND_VALIDATION.md](docs/DATA_CONTRACTS_AND_VALIDATION.md), and [docs/MASTER_ENGINEERING_BLUEPRINT.md](docs/MASTER_ENGINEERING_BLUEPRINT.md).\n\nThe broader target architecture—including deep order-flow intelligence, portfolio intelligence, smart execution research, market simulation, financial knowledge graph, observability, model governance, alternative intelligence, latency discipline, security and phased acceptance gates—is documented in [docs/MASTER_ENGINEERING_BLUEPRINT.md](docs/MASTER_ENGINEERING_BLUEPRINT.md).
 
 These documents specify the target architecture and acceptance criteria; they do not mean all live feeds, trained models, agent runtime, or dashboard screens are already implemented.
 
