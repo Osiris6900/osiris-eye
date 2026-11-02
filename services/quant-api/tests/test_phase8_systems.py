@@ -89,3 +89,32 @@ def test_phase8_rejects_invalid_timestamps_and_overfills():
     with pytest.raises(ValueError):
         reconcile_paper_trades([{"order_id": "o", "asset": "A", "side": "buy", "quantity": 1}],
             [{"order_id": "o", "quantity": 2, "price": 1}], [])
+
+
+
+def test_risk_governor_uses_portfolio_nav_once_and_aggregates_duplicate_assets():
+    positions = [
+        {"asset": "A", "market_value": 35, "nav": 100},
+        {"asset": "A", "market_value": 25, "nav": 100},
+        {"asset": "B", "market_value": 20, "nav": 100},
+    ]
+    result = portfolio_risk_governor(positions, 1, 0.5, 0.0, 0.2)
+    assert result["gross_exposure"] == pytest.approx(0.8)
+    assert result["largest_name_weight"] == pytest.approx(0.6)
+    assert "single_name_concentration_limit" in result["breaches"]
+
+
+def test_risk_governor_rejects_inconsistent_portfolio_nav():
+    positions = [
+        {"asset": "A", "market_value": 10, "nav": 100},
+        {"asset": "B", "market_value": 10, "nav": 200},
+    ]
+    with pytest.raises(ValueError, match="same portfolio nav"):
+        portfolio_risk_governor(positions, 2, 1, 0, 0.2)
+
+
+def test_model_health_zero_reference_variance_returns_json_safe_ratio():
+    result = observe_model_health([0, 0, 0], [1, 1, 1])
+    assert result["status"] == "alert"
+    assert result["std_ratio"] is None
+    assert result["std_ratio_status"] == "undefined_zero_reference_variance"
