@@ -785,3 +785,7 @@ app.include_router(market_data_router)
 
 from .instrument_routes import router as instrument_master_router
 app.include_router(instrument_master_router)
+
+
+from .calendar_routes import router as exchange_calendar_router
+app.include_router(exchange_calendar_router)
