@@ -86,3 +86,8 @@ Options IV peer z-score, liquidity cost estimate, expiry/gamma exposure feature,
 8. Stale or invalid critical data must fail closed and block new simulated risk.
 
 See [docs/ROADMAP.md](docs/ROADMAP.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/PLATFORM_MODULES.md](docs/PLATFORM_MODULES.md), [docs/ADVANCED_INTELLIGENCE_SYSTEMS.md](docs/ADVANCED_INTELLIGENCE_SYSTEMS.md), and [docs/DATA_CONTRACTS_AND_VALIDATION.md](docs/DATA_CONTRACTS_AND_VALIDATION.md).
+
+
+### Phase 9 — Global Multi-Asset Intelligence
+
+Eight research/control prototypes extend the platform: global instrument coverage, counterparty concentration, corporate-action and tax-lot audit, portfolio capacity, derivatives Greeks aggregation, financial knowledge-graph integrity, disaster-recovery RTO/RPO checks, and benchmark-relative performance. See [Phase 9 documentation](docs/PHASE9_GLOBAL_MULTI_ASSET_INTELLIGENCE.md). These are caller-data diagnostics, not connected feeds, tax advice, calibrated risk models, production failover, or live execution.
