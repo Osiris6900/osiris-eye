@@ -72,3 +72,29 @@ def test_live_provider_mode_remains_disabled():
             "live-feed", "ABC", "2026-11-02T09:00:00Z",
             "2026-11-02T10:00:00Z", asset_class="equity",
         )
+
+
+def test_public_provider_mode_is_read_only_and_supported():
+    class PublicAdapter(Adapter):
+        mode = "public"
+
+        def fetch_bars(self, symbol, start, end):
+            return [{
+                "symbol": symbol,
+                "event_time": "2026-11-02T09:00:00+00:00",
+                "available_at": "2026-11-02T09:01:00+00:00",
+                "open": 10, "high": 12, "low": 9, "close": 11, "volume": 5,
+            }]
+
+    gateway = MarketDataGateway()
+    gateway.register_adapter(
+        "public-feed", PublicAdapter(), supported_asset_classes=["crypto"],
+        entitlement_reference="public-data:test",
+    )
+    result = gateway.fetch_bars(
+        "public-feed", "BTC-USD", "2026-11-02T09:00:00Z",
+        "2026-11-02T09:05:00Z", asset_class="crypto",
+    )
+    assert result["mode"] == "public"
+    assert result["live_execution"] is False
+    assert gateway.providers()["live_market_data_enabled"] is False
