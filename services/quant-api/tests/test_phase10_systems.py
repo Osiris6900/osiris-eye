@@ -57,7 +57,7 @@ def test_tca_stress_and_approval_board():
 
 
 def test_phase10_routes_and_registry():
-    assert client.get("/platform/modules").json()["count"] == 87
+    assert client.get("/platform/modules").json()["count"] == 95
     paths = [
         ("/risk/portfolio/real-time-monitor", {"positions": [], "nav": 100}),
         ("/platform/data/vendor-failover-audit", {"feeds": []}),
