@@ -76,4 +76,12 @@ MODULES = [
     {"id": "offline_reinforcement_learning_lab", "name": "Reinforcement Learning Research Lab", "status": "prototype", "capabilities": ["offline clipped importance-sampling evaluation", "no policy training or deployment"]},
     {"id": "trade_surveillance_market_abuse", "name": "Trade Surveillance & Market Abuse Detection", "status": "prototype", "capabilities": ["cancel/submit and event-burst review indicators", "human review; no misconduct determination"]},
     {"id": "institutional_portfolio_backtesting", "name": "Institutional Portfolio Backtesting Engine", "status": "prototype", "capabilities": ["lagged multi-asset portfolio simulation", "commission, spread, slippage and impact costs", "equity, volatility, Sharpe and drawdown diagnostics"]},
+    {"id": "data_lineage_provenance", "name": "Data Lineage & Provenance Engine", "status": "prototype", "capabilities": ["source and timestamp lineage audit"]},
+    {"id": "backtest_integrity_governance", "name": "Backtest Integrity Audit", "status": "prototype", "capabilities": ["PIT, corporate-action, cost and holdout evidence gates"]},
+    {"id": "dynamic_portfolio_risk_governor", "name": "Dynamic Portfolio Risk Governor", "status": "prototype", "capabilities": ["gross exposure, concentration and drawdown limits"]},
+    {"id": "catalyst_impact_scenarios", "name": "Catalyst Impact Scenario Engine", "status": "prototype", "capabilities": ["deterministic caller-supplied event shocks"]},
+    {"id": "model_observability_drift", "name": "Model Drift Observatory", "status": "prototype", "capabilities": ["mean and dispersion shift alerts"]},
+    {"id": "paper_trade_reconciliation", "name": "Paper Trade Reconciliation Engine", "status": "prototype", "capabilities": ["fill and position quantity reconciliation"]},
+    {"id": "security_resilience_governance", "name": "Security & Operational Resilience", "status": "prototype", "capabilities": ["MFA, secrets, backup and kill-switch control checks"]},
+    {"id": "research_experiment_orchestrator", "name": "Research Experiment Orchestrator", "status": "prototype", "capabilities": ["explicit research gates and human approval"]},
 ]

@@ -7,6 +7,7 @@ from .data_store import ResearchStore
 from .data_intelligence import audit_observations
 from .backtesting import simulate_signals
 from .phase5_backtesting import run_portfolio_backtest
+from .phase8_systems import audit_data_lineage, audit_backtest_integrity, portfolio_risk_governor, catalyst_impact_scenarios, observe_model_health, reconcile_paper_trades, audit_security_resilience, orchestrate_research_workflow
 from .phase7_market_intelligence import (cross_asset_alpha, options_flow_intelligence, liquidity_forecast, detect_market_anomalies, offline_rl_evaluation, trade_surveillance)
 from .phase6_intelligence import (walk_forward_validation, portfolio_risk_diagnostics as phase6_portfolio_risk_diagnostics, execution_intelligence, model_validation, macro_intelligence, rank_strategies)
 from .institutional_modules import portfolio_risk, options_surface_audit, cross_market_correlation, alternative_data_intake, agent_research_proposal, command_center_snapshot
@@ -229,6 +230,38 @@ def phase7_offline_rl(p: dict[str, Any] = Body(...)):
 def phase7_trade_surveillance(p: dict[str, Any] = Body(...)):
     return guarded(trade_surveillance, p.get("events", []),
                    p.get("cancel_ratio_threshold", 0.8), p.get("burst_window_seconds", 1.0))
+
+@app.post("/platform/data/lineage-audit")
+def phase8_lineage(p: dict[str, Any] = Body(...)):
+    return guarded(audit_data_lineage, p.get("records", []))
+
+@app.post("/research/backtest/integrity-audit")
+def phase8_backtest_integrity(p: dict[str, Any] = Body(...)):
+    return guarded(audit_backtest_integrity, p.get("evidence", {}))
+
+@app.post("/risk/governor/evaluate")
+def phase8_risk_governor(p: dict[str, Any] = Body(...)):
+    return guarded(portfolio_risk_governor, p.get("positions", []), p.get("max_gross_exposure", 0), p.get("max_single_name_weight", 0), p.get("current_drawdown", 0), p.get("max_drawdown", 0))
+
+@app.post("/research/catalysts/impact-scenarios")
+def phase8_catalyst_scenarios(p: dict[str, Any] = Body(...)):
+    return guarded(catalyst_impact_scenarios, p.get("weights", {}), p.get("scenarios", {}))
+
+@app.post("/research/models/observability")
+def phase8_model_observability(p: dict[str, Any] = Body(...)):
+    return guarded(observe_model_health, p.get("reference", []), p.get("current", []), p.get("max_mean_shift", 0.5), p.get("max_std_ratio", 2.0))
+
+@app.post("/paper/trading/reconcile")
+def phase8_paper_reconciliation(p: dict[str, Any] = Body(...)):
+    return guarded(reconcile_paper_trades, p.get("orders", []), p.get("fills", []), p.get("positions", []))
+
+@app.post("/platform/security/resilience-audit")
+def phase8_security_resilience(p: dict[str, Any] = Body(...)):
+    return guarded(audit_security_resilience, p.get("controls", {}))
+
+@app.post("/platform/workflow/research-orchestrate")
+def phase8_research_orchestrator(p: dict[str, Any] = Body(...)):
+    return guarded(orchestrate_research_workflow, p.get("gates", {}))
 
 @app.get("/platform/command-center")
 def command_center():
