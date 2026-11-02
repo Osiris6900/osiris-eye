@@ -31,7 +31,11 @@ def test_inverse_volatility_weights_are_normalized():
 def test_historical_var_and_expected_shortfall():
     var, es = historical_var_es([-0.01, -0.02, 0.01, -0.10], 0.75)
     assert var == pytest.approx(0.02)
-    assert es >= var
+    assert es == pytest.approx(0.06)
+    # Nearest-rank quantile: ceil(0.75 * 4) = 3rd ordered loss.
+    assert historical_var_es([-0.01, -0.02, 0.01, -0.10], 0.50)[0] == pytest.approx(0.01)
+    with pytest.raises(ValueError):
+        historical_var_es([-0.01, -0.02], 1.0)
 
 
 def test_population_stability_index_detects_distribution_shift():
