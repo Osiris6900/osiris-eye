@@ -108,3 +108,19 @@ class ResearchStore:
                 ORDER BY available_at DESC, id DESC LIMIT ?
             """, (dataset, limit)).fetchall()
         return [self._serialize(row) for row in rows]
+
+    def list_as_of(self, dataset: str, as_of: str, limit: int = 100) -> list[dict[str, Any]]:
+        if not dataset.strip():
+            raise ValueError("dataset must be non-empty")
+        if not 1 <= limit <= 1000:
+            raise ValueError("limit must be between 1 and 1000")
+        cutoff = _utc_timestamp(as_of)
+        with self._connect() as connection:
+            rows = connection.execute("""
+                SELECT id, dataset, record_key, source, event_time, available_at,
+                       ingested_at, payload_json
+                FROM observations
+                WHERE dataset=? AND event_time<=? AND available_at<=?
+                ORDER BY event_time DESC, available_at DESC, id DESC LIMIT ?
+            """, (dataset, cutoff, cutoff, limit)).fetchall()
+        return [self._serialize(row) for row in rows]

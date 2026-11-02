@@ -16,7 +16,7 @@ OSIRIS EYE is a research-first, multi-asset quantitative trading platform scaffo
 
 The ten-module foundation is documented in [docs/PLATFORM_MODULES.md](docs/PLATFORM_MODULES.md). Deterministic Python primitives now cover alternative-event validation, order-flow imbalance, baseline portfolio weights, historical VaR/ES, model drift, strategy diagnostics, execution-cost estimation, macro regime labels, component health, and approval-gated AI task contracts. These are not complete services or validated trading signals.
 
-## Advanced intelligence systems
+## Phase 4 market-data infrastructure\n\nSix foundations add batch validation and ingestion, UTC normalization, instrument-master audits, feed freshness checks, operator-declared entitlement gating, and event-time plus availability-time point-in-time queries. See [docs/PHASE4_MARKET_DATA_INFRASTRUCTURE.md](docs/PHASE4_MARKET_DATA_INFRASTRUCTURE.md). These use local SQLite; no vendor feeds or production streaming service are connected.\n\n## Advanced intelligence systems
 
 The seven requested capability groups are now specified in [docs/ADVANCED_INTELLIGENCE_SYSTEMS.md](docs/ADVANCED_INTELLIGENCE_SYSTEMS.md):
 1. Multi-Agent AI research team with scoped permissions and human approval.

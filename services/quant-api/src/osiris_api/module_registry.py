@@ -57,4 +57,10 @@ MODULES = [
     {"id": "production_observability_sre", "name": "Production Observability & SRE", "status": "foundation", "capabilities": ["service health aggregation and fail-closed risk readiness"]},
     {"id": "institutional_security_audit", "name": "Institutional Security & Audit Layer", "status": "foundation", "capabilities": ["privileged permission audit; no policy enforcement"]},
     {"id": "research_execution_control_plane", "name": "Unified Research-to-Execution Control Plane", "status": "foundation", "capabilities": ["data, OOS, paper and approval gates; no live routing"]},
+    {"id": "market_data_ingestion_pipeline", "name": "Market Data Ingestion Pipeline", "status": "foundation", "capabilities": ["batch validation", "normalized ingestion", "point-in-time queries"]},
+    {"id": "instrument_master_governance", "name": "Instrument Master Governance", "status": "foundation", "capabilities": ["symbol uniqueness", "asset-class validation"]},
+    {"id": "feed_quality_sentinel", "name": "Feed Quality Sentinel", "status": "foundation", "capabilities": ["freshness checks", "timestamp anomaly detection", "fail-closed readiness"]},
+    {"id": "data_entitlement_guard", "name": "Data Entitlement Guard", "status": "foundation", "capabilities": ["operator-declared license gate", "unverified source rejection"]},
+    {"id": "point_in_time_query_engine", "name": "Point-in-Time Query Engine", "status": "foundation", "capabilities": ["event-time and availability-time cutoff queries"]},
+    {"id": "market_data_normalization", "name": "Market Data Normalization Layer", "status": "foundation", "capabilities": ["UTC normalization", "canonical symbol normalization"]},
 ]

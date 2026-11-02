@@ -9,6 +9,7 @@ from .backtesting import simulate_signals
 from .institutional_modules import portfolio_risk, options_surface_audit, cross_market_correlation, alternative_data_intake, agent_research_proposal, command_center_snapshot
 from .advanced_systems import order_book, execution_sim, model_governance, knowledge_graph, strategy_discovery, regime_change, monte_carlo, news_audit, security_audit, attribution, compute_plan, incident_assessment
 from .phase3_systems import connector_contract, market_replay, portfolio_optimizer, paper_order_lifecycle, factor_diagnostics, derivatives_risk, event_calendar_audit, experiment_manifest, portfolio_stress, sre_health, rbac_audit, workflow_gate
+from .phase4_systems import audit_market_batch, normalize_market_record, audit_instrument_master, feed_health_snapshot
 from .module_registry import MODULES
 from .platform_modules import (
     AgentTask, AlternativeEvent, HealthCheck, system_health,
@@ -389,3 +390,37 @@ def api_rbac_audit(p: dict[str, Any] = Body(...)):
 @app.post("/platform/workflow/gate")
 def api_workflow_gate(p: dict[str, Any] = Body(...)):
     return guarded(workflow_gate, p)
+
+
+@app.post("/platform/data/market-batch-audit")
+def api_market_batch_audit(p: dict[str, Any] = Body(...)):
+    return guarded(audit_market_batch, p.get("provider", ""), p.get("dataset", ""),
+                   p.get("license_status", "unverified"), p.get("records", []))
+
+@app.post("/data/market/batch-ingest")
+def api_market_batch_ingest(p: dict[str, Any] = Body(...)):
+    audit = guarded(audit_market_batch, p.get("provider", ""), p.get("dataset", ""),
+                    p.get("license_status", "unverified"), p.get("records", []))
+    if not audit["ingestion_allowed"]:
+        raise HTTPException(422, detail={"message": "batch rejected by data-quality or license gate", "audit": audit})
+    saved = []
+    for record in p["records"]:
+        normalized = guarded(normalize_market_record, record)
+        saved.append(guarded(store.put, dataset=p["dataset"], record_key=normalized["record_key"],
+            source=p["provider"], event_time=normalized["event_time"],
+            available_at=normalized["available_at"], payload=normalized["payload"]))
+    return {"accepted": len(saved), "records": saved, "live_execution": False}
+
+@app.get("/data/market/as-of")
+def api_market_as_of(dataset: str = Query(..., min_length=1, max_length=100),
+                     as_of: str = Query(...), limit: int = Query(100, ge=1, le=1000)):
+    return {"dataset": dataset, "as_of": as_of, "records": guarded(store.list_as_of, dataset, as_of, limit)}
+
+@app.post("/platform/data/instrument-master-audit")
+def api_instrument_master_audit(p: dict[str, Any] = Body(...)):
+    return guarded(audit_instrument_master, p.get("instruments", []))
+
+@app.post("/platform/data/feed-health")
+def api_feed_health(p: dict[str, Any] = Body(...)):
+    return guarded(feed_health_snapshot, p.get("last_event_time", ""),
+                   p.get("last_available_at", ""), p.get("as_of", ""), p.get("max_lag_seconds", 60.0))
