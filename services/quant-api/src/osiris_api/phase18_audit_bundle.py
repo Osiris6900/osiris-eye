@@ -20,6 +20,8 @@ def export_audit_bundle(store: DurableAuditStore, bundle_id: str,
     verified = store.verify()
     if verified["status"] != "valid":
         raise ValueError("cannot export an invalid audit journal")
+    if verified["event_count"] == 0:
+        raise ValueError("cannot export an empty audit journal")
     with store._connect() as db:
         rows = db.execute(
             "SELECT sequence,event_id,previous_hash,event_json,event_hash "
@@ -60,12 +62,14 @@ def verify_audit_bundle(bundle: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(bundle["bundle_id"], str) or not bundle["bundle_id"].strip():
         raise ValueError("bundle_id must be non-empty")
     events = bundle["events"]
-    if not isinstance(events, list) or bundle["event_count"] != len(events):
-        raise ValueError("bundle event_count does not match events")
+    if not isinstance(events, list):
+        raise ValueError("bundle events must be a list")
     unsigned = dict(bundle)
     claimed_bundle_hash = unsigned.pop("bundle_hash")
     actual_bundle_hash = hashlib.sha256(_canonical_event(unsigned)).hexdigest()
     issues: list[str] = []
+    if bundle["event_count"] != len(events):
+        issues.append("event_count_mismatch")
     if not isinstance(claimed_bundle_hash, str) or claimed_bundle_hash != actual_bundle_hash:
         issues.append("bundle_hash_mismatch")
 
