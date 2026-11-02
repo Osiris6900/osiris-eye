@@ -37,7 +37,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - name: Test Rust risk kernel
-        run: cargo test --manifest-path crates/risk-kernel/Cargo.toml --locked
+        run: cargo test --manifest-path crates/risk-kernel/Cargo.toml
 
   web:
     runs-on: ubuntu-latest
@@ -46,8 +46,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: npm
-          cache-dependency-path: apps/web/package-lock.json
       - name: Install web dependencies
         working-directory: apps/web
         run: npm install
