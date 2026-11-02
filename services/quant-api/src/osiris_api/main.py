@@ -8,6 +8,7 @@ from .data_intelligence import audit_observations
 from .backtesting import simulate_signals
 from .institutional_modules import portfolio_risk, options_surface_audit, cross_market_correlation, alternative_data_intake, agent_research_proposal, command_center_snapshot
 from .advanced_systems import order_book, execution_sim, model_governance, knowledge_graph, strategy_discovery, regime_change, monte_carlo, news_audit, security_audit, attribution, compute_plan, incident_assessment
+from .phase3_systems import connector_contract, market_replay, portfolio_optimizer, paper_order_lifecycle, factor_diagnostics, derivatives_risk, event_calendar_audit, experiment_manifest, portfolio_stress, sre_health, rbac_audit, workflow_gate
 from .module_registry import MODULES
 from .platform_modules import (
     AgentTask, AlternativeEvent, HealthCheck, system_health,
@@ -339,3 +340,52 @@ def api_compute_plan(p: dict[str, Any] = Body(...)):
 @app.post("/platform/incidents/assess")
 def api_incident_assessment(p: dict[str, Any] = Body(...)):
     return guarded(incident_assessment, p.get("checks", []))
+
+
+@app.post("/platform/connectors/contract-audit")
+def api_connector_contract(p: dict[str, Any] = Body(...)):
+    return guarded(connector_contract, p)
+
+@app.post("/research/market/replay")
+def api_market_replay(p: dict[str, Any] = Body(...)):
+    return guarded(market_replay, p.get("events", []))
+
+@app.post("/research/portfolio/optimize")
+def api_portfolio_optimizer(p: dict[str, Any] = Body(...)):
+    return guarded(portfolio_optimizer, p.get("volatilities", []), p.get("max_weight", 1.0))
+
+@app.post("/paper/orders/lifecycle")
+def api_paper_order(p: dict[str, Any] = Body(...)):
+    return guarded(paper_order_lifecycle, p)
+
+@app.post("/research/factors/diagnostics")
+def api_factor_diagnostics(p: dict[str, Any] = Body(...)):
+    return guarded(factor_diagnostics, p.get("asset_returns", {}), p.get("factor_returns", {}))
+
+@app.post("/research/options/greeks-aggregate")
+def api_derivatives_risk(p: dict[str, Any] = Body(...)):
+    return guarded(derivatives_risk, p.get("positions", []))
+
+@app.post("/research/events/calendar-audit")
+def api_event_calendar(p: dict[str, Any] = Body(...)):
+    return guarded(event_calendar_audit, p.get("events", []))
+
+@app.post("/research/experiments/manifest")
+def api_experiment_manifest(p: dict[str, Any] = Body(...)):
+    return guarded(experiment_manifest, p)
+
+@app.post("/research/portfolio/stress")
+def api_portfolio_stress(p: dict[str, Any] = Body(...)):
+    return guarded(portfolio_stress, p.get("returns", {}), p.get("weights", {}), p.get("shocks", {}))
+
+@app.post("/platform/sre/health")
+def api_sre_health(p: dict[str, Any] = Body(...)):
+    return guarded(sre_health, p.get("services", []))
+
+@app.post("/platform/security/rbac-audit")
+def api_rbac_audit(p: dict[str, Any] = Body(...)):
+    return guarded(rbac_audit, p.get("grants", []))
+
+@app.post("/platform/workflow/gate")
+def api_workflow_gate(p: dict[str, Any] = Body(...)):
+    return guarded(workflow_gate, p)
