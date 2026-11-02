@@ -100,4 +100,12 @@ MODULES = [
     {"id": "execution_quality_tca", "name": "Execution Quality & Transaction Cost Analysis", "status": "prototype", "capabilities": ["implementation shortfall from arrival and average fill prices"]},
     {"id": "systemic_crisis_contagion_simulator", "name": "Systemic Crisis & Contagion Simulator", "status": "prototype", "capabilities": ["caller-defined factor shocks and exposure-based stress loss"]},
     {"id": "independent_strategy_approval_board", "name": "Independent Strategy Approval Board", "status": "prototype", "capabilities": ["evidence gates for holdout, risk signoff, paper trading and human review"]},
+    {"id":"portfolio_ledger_reconciliation","name":"Portfolio Ledger & Reconciliation Engine","status":"prototype","capabilities":["position and cash break detection","breaks block new risk"]},
+    {"id":"advanced_order_lifecycle","name":"Advanced Order Lifecycle Engine","status":"prototype","capabilities":["accepted, partial, filled, cancelled and rejected state validation","no live routing"]},
+    {"id":"calibrated_transaction_costs","name":"Transaction Cost Calibration Engine","status":"prototype","capabilities":["historical realized cost summaries by execution bucket","not production calibrated"]},
+    {"id":"options_greeks_volatility_risk","name":"Options Greeks & Volatility Risk Engine","status":"prototype","capabilities":["multiplier-adjusted aggregate delta, gamma, vega and theta"]},
+    {"id":"margin_funding_intelligence","name":"Margin & Funding Intelligence","status":"prototype","capabilities":["maintenance margin shortfall and simple funding estimate"]},
+    {"id":"portfolio_liquidity_exit_planner","name":"Portfolio Liquidity & Exit Planner","status":"prototype","capabilities":["ADV participation and stressed exit-day estimates"]},
+    {"id":"model_deployment_rollback","name":"Model Deployment & Rollback Controller","status":"prototype","capabilities":["shadow, drift, risk and human approval gates","no production deployment"]},
+    {"id":"trading_kill_switch_recovery","name":"Trading Kill-Switch & Recovery System","status":"prototype","capabilities":["fail-closed new-risk block on health, data or risk failures","no live order cancellation"]},
 ]
