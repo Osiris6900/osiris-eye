@@ -9,12 +9,27 @@ OSIRIS EYE is a research-first, multi-asset quantitative trading platform scaffo
 - `services/quant-api`: FastAPI service, shared SQLite point-in-time observation store, ten-module registry, research endpoints, risk checks, and tests.
 - `crates/risk-kernel`: Rust pre-trade risk primitives.
 - `apps/web`: TypeScript + Vite dashboard foundation.
-- `docs`: architecture, data contracts, shared API integration guide, ten-module map, and phased roadmap.
+- `docs`: architecture, data contracts, shared API integration guide, ten-module map, advanced intelligence specification, and phased roadmap.
 - `.github/workflows/ci.yml`: Python, Rust, and TypeScript CI.
 
 ## Ten platform modules
 
 The ten-module foundation is documented in [docs/PLATFORM_MODULES.md](docs/PLATFORM_MODULES.md). Deterministic Python primitives now cover alternative-event validation, order-flow imbalance, baseline portfolio weights, historical VaR/ES, model drift, strategy diagnostics, execution-cost estimation, macro regime labels, component health, and approval-gated AI task contracts. These are not complete services or validated trading signals.
+
+## Advanced intelligence systems
+
+The seven requested capability groups are now specified in [docs/ADVANCED_INTELLIGENCE_SYSTEMS.md](docs/ADVANCED_INTELLIGENCE_SYSTEMS.md):
+1. Multi-Agent AI research team with scoped permissions and human approval.
+2. Probabilistic market-prediction ensemble with walk-forward validation and abstention.
+3. Explainable anomaly detection for markets, options, liquidity, data quality and model drift.
+4. Global multi-asset intelligence network with instrument masters, exchange calendars and UTC/source timestamps.
+5. Advanced quantitative research lab with reproducible experiments and bias controls.
+6. Weather, lunar, solar/space-weather and other alternative-data research lab.
+7. Futuristic operator dashboard covering AI, global markets, options, anomalies, quant research and risk.
+
+Data provenance, point-in-time joins, feed-quality gates, model records and security controls are defined in [docs/DATA_CONTRACTS_AND_VALIDATION.md](docs/DATA_CONTRACTS_AND_VALIDATION.md).
+
+These documents specify the target architecture and acceptance criteria; they do not mean all live feeds, trained models, agent runtime, or dashboard screens are already implemented.
 
 ## Quick start
 
@@ -43,7 +58,11 @@ npm install
 npm run dev
 ```
 
-## Shared data and API\n\nThe dashboard reads `/health` and `/platform/modules` through the Vite API proxy. Research modules share one FastAPI service and a local SQLite observation store. See [docs/DATA_API_INTEGRATION.md](docs/DATA_API_INTEGRATION.md) for setup, endpoints, timestamp rules, and limitations.\n\n## Current research features
+## Shared data and API
+
+The dashboard reads `/health` and `/platform/modules` through the Vite API proxy. Research modules share one FastAPI service and a local SQLite observation store. See [docs/DATA_API_INTEGRATION.md](docs/DATA_API_INTEGRATION.md) for setup, endpoints, timestamp rules, and limitations.
+
+## Current research features
 
 Options IV peer z-score, liquidity cost estimate, expiry/gamma exposure feature, implied-vs-forecast volatility spread, cross-market lagged correlation diagnostic, and a simple volatility/spread regime flag. These are transparent diagnostics, not profitable strategies or validated forecasts.
 
@@ -55,5 +74,7 @@ Options IV peer z-score, liquidity cost estimate, expiry/gamma exposure feature,
 4. Keep credentials in a secret manager or environment variables; never commit secrets.
 5. Paper trading and kill-switch validation before any live execution work.
 6. Every order path must enforce risk limits independently of the strategy model.
+7. Agents and strategy models cannot bypass the independent risk gate.
+8. Stale or invalid critical data must fail closed and block new simulated risk.
 
-See [docs/ROADMAP.md](docs/ROADMAP.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), and [docs/PLATFORM_MODULES.md](docs/PLATFORM_MODULES.md).
+See [docs/ROADMAP.md](docs/ROADMAP.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/PLATFORM_MODULES.md](docs/PLATFORM_MODULES.md), [docs/ADVANCED_INTELLIGENCE_SYSTEMS.md](docs/ADVANCED_INTELLIGENCE_SYSTEMS.md), and [docs/DATA_CONTRACTS_AND_VALIDATION.md](docs/DATA_CONTRACTS_AND_VALIDATION.md).
