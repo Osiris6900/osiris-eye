@@ -789,3 +789,35 @@ app.include_router(instrument_master_router)
 
 from .calendar_routes import router as exchange_calendar_router
 app.include_router(exchange_calendar_router)
+
+
+from .paper_workflow import evaluate_paper_workflow
+
+
+@app.post("/paper/workflow/evaluate")
+def evaluate_paper_workflow_endpoint(p: dict[str, Any] = Body(...)):
+    """Run backtest + risk gate and persist an audit event; never submits orders."""
+    result = guarded(
+        evaluate_paper_workflow,
+        symbol=p.get("symbol", ""),
+        signals=p.get("signals", []),
+        asset_returns=p.get("asset_returns", []),
+        quantity=p.get("quantity", 0),
+        price=p.get("price", 0),
+        current_position_notional=p.get("current_position_notional", 0),
+        daily_pnl=p.get("daily_pnl", 0),
+        cost_bps_per_unit_turnover=p.get("cost_bps_per_unit_turnover", 2.0),
+    )
+    audit = guarded(
+        durable_audit_store.append,
+        {
+            "event_type": "paper_workflow_evaluated",
+            "symbol": result["symbol"],
+            "risk_approved": result["risk"]["approved_for_paper"],
+            "risk_reason": result["risk"]["reason"],
+            "execution_mode": "paper_only",
+            "broker_order_submitted": False,
+        },
+    )
+    result["audit"] = audit
+    return result
