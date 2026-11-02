@@ -52,3 +52,20 @@ def test_phase11_routes_and_registry():
     for path,payload in cases:
         response=client.post(path,json=payload)
         assert response.status_code == 200, (path,response.text)
+
+
+def test_phase11_rejects_malformed_collections_and_inconsistent_states():
+    with pytest.raises(ValueError):
+        reconcile_ledger(None, [], 0, 0)
+    with pytest.raises(ValueError):
+        options_greeks_risk(None)
+    with pytest.raises(ValueError):
+        margin_funding_stress(None, 100, 50)
+    with pytest.raises(ValueError):
+        plan_position_exit(None)
+    with pytest.raises(ValueError):
+        simulate_order_lifecycle({"quantity": 10, "filled_quantity": 2, "status": "accepted"})
+    with pytest.raises(ValueError):
+        simulate_order_lifecycle({"quantity": 10, "filled_quantity": 10, "status": "cancelled"})
+    with pytest.raises(ValueError):
+        evaluate_kill_switch({"feed": True}, 0, False, manual_halt="false")
