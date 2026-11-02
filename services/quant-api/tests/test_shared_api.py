@@ -31,17 +31,26 @@ def test_shared_research_api_endpoints():
                            "execution"] == "disabled"
 
 
-def test_point_in_time_store_is_idempotent_and_normalizes_utc(tmp_path):
+def test_point_in_time_store_rejects_duplicate_and_normalizes_utc(tmp_path):
     store = ResearchStore(str(tmp_path / "research.sqlite3"))
     record = dict(dataset="bars", record_key="ABC-1", source="test",
                   event_time="2026-01-01T10:00:00+05:30",
                   available_at="2026-01-01T10:01:00+05:30",
                   payload={"close": 123.4})
     first = store.put(**record)
-    second = store.put(**record)
-    assert first["id"] == second["id"]
     assert first["event_time"] == "2026-01-01T04:30:00+00:00"
-    assert store.list("bars")[0]["payload"]["close"] == 123.4
+
+    # Observation rows are immutable: corrections must use a new record key.
+    with pytest.raises(ValueError, match="duplicate observation key"):
+        store.put(**record)
+
+    correction = {**record, "record_key": "ABC-1-correction",
+                  "payload": {"close": 124.0}}
+    store.put(**correction)
+    rows = store.list("bars")
+    assert len(rows) == 2
+    assert rows[0]["payload"]["close"] == 123.4
+    assert rows[1]["payload"]["close"] == 124.0
 
 
 def test_point_in_time_store_rejects_naive_timestamps_and_non_json_numbers(tmp_path):
