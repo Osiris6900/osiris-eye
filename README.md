@@ -6,17 +6,17 @@ OSIRIS EYE is a research-first, multi-asset quantitative trading platform scaffo
 
 ## Architecture
 
-- `services/quant-api`: FastAPI service, shared SQLite point-in-time observation store, ten-module registry, research endpoints, risk checks, and tests.
+- `services/quant-api`: FastAPI service, shared SQLite point-in-time observation store, 51-module registry, research endpoints, risk checks, and tests.
 - `crates/risk-kernel`: Rust pre-trade risk primitives.
 - `apps/web`: TypeScript + Vite dashboard foundation.
-- `docs`: architecture, data contracts, shared API integration guide, ten-module map, advanced intelligence specification, master engineering blueprint, and phased roadmap.
+- `docs`: architecture, data contracts, shared API integration guide, module catalog, advanced intelligence specification, master engineering blueprint, and phased roadmap.
 - `.github/workflows/ci.yml`: Python, Rust, and TypeScript CI.
 
-## Ten platform modules
+## Platform module catalog
 
-The ten-module foundation is documented in [docs/PLATFORM_MODULES.md](docs/PLATFORM_MODULES.md). Deterministic Python primitives now cover alternative-event validation, order-flow imbalance, baseline portfolio weights, historical VaR/ES, model drift, strategy diagnostics, execution-cost estimation, macro regime labels, component health, and approval-gated AI task contracts. These are not complete services or validated trading signals.
+The platform now registers 51 research and infrastructure capability foundations; registry status indicates implementation maturity, not production readiness. Deterministic Python primitives now cover alternative-event validation, order-flow imbalance, baseline portfolio weights, historical VaR/ES, model drift, strategy diagnostics, execution-cost estimation, macro regime labels, component health, and approval-gated AI task contracts. These are not complete services or validated trading signals.
 
-## Phase 4 market-data infrastructure\n\nSix foundations add batch validation and ingestion, UTC normalization, instrument-master audits, feed freshness checks, operator-declared entitlement gating, and event-time plus availability-time point-in-time queries. See [docs/PHASE4_MARKET_DATA_INFRASTRUCTURE.md](docs/PHASE4_MARKET_DATA_INFRASTRUCTURE.md). These use local SQLite; no vendor feeds or production streaming service are connected.\n\n## Advanced intelligence systems
+## Phase 5 institutional backtesting\n\nA multi-asset portfolio simulator applies target weights with a one-period lag and models explicit commission, spread, slippage and impact assumptions. It reports equity, CAGR, volatility, Sharpe and drawdown diagnostics. See [docs/PHASE5_INSTITUTIONAL_BACKTESTING.md](docs/PHASE5_INSTITUTIONAL_BACKTESTING.md). This remains a research simulator, not fill-level execution.\n\n## Phase 4 market-data infrastructure\n\nSix foundations add batch validation and ingestion, UTC normalization, instrument-master audits, feed freshness checks, operator-declared entitlement gating, and event-time plus availability-time point-in-time queries. See [docs/PHASE4_MARKET_DATA_INFRASTRUCTURE.md](docs/PHASE4_MARKET_DATA_INFRASTRUCTURE.md). These use local SQLite; no vendor feeds or production streaming service are connected.\n\n## Advanced intelligence systems
 
 The seven requested capability groups are now specified in [docs/ADVANCED_INTELLIGENCE_SYSTEMS.md](docs/ADVANCED_INTELLIGENCE_SYSTEMS.md):
 1. Multi-Agent AI research team with scoped permissions and human approval.
