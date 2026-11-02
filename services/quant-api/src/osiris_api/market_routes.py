@@ -1,6 +1,7 @@
 """Authenticated HTTP routes for the provider-neutral market-data gateway."""
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
@@ -8,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Query
 from .market_gateway import MarketDataGateway, MarketDataUnavailable
 from .market_universe import ASSET_CLASSES, audit_instruments
 from .provider_bootstrap import provider_readiness
+from .provider_router import MultiProviderMarketDataRouter
 
 router = APIRouter(tags=["market-data"])
 # Deliberately empty by default. Operators must register an adapter and entitlement
@@ -55,6 +57,45 @@ def market_data_bars(
     """Return normalized historical OHLCV bars from an enabled sandbox adapter."""
     try:
         return market_data_gateway.fetch_bars(provider, symbol, start, end, asset_class=asset_class)
+    except MarketDataUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except (ValueError, TypeError, OverflowError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+# Multi-provider routing is opt-in and remains sandbox/synthetic-only.
+_provider_order = [
+    item.strip() for item in os.getenv("OSIRIS_MARKET_PROVIDER_ORDER", "").split(",")
+    if item.strip()
+]
+try:
+    multi_provider_router = MultiProviderMarketDataRouter(market_data_gateway, _provider_order) if _provider_order else None
+except ValueError:
+    # Invalid deployment configuration must not silently select a different order.
+    multi_provider_router = None
+
+
+@router.get("/market-data/routing/providers")
+def market_data_routing_providers():
+    if multi_provider_router is None:
+        return {
+            "providers": [],
+            "routing_policy": "not_configured",
+            "live_market_data_enabled": False,
+        }
+    return multi_provider_router.providers()
+
+
+@router.get("/market-data/routing/bars")
+def market_data_routed_bars(
+    symbol: str = Query(..., min_length=1, max_length=64),
+    start: str = Query(..., min_length=20, max_length=64),
+    end: str = Query(..., min_length=20, max_length=64),
+):
+    if multi_provider_router is None:
+        raise HTTPException(status_code=503, detail="multi_provider_routing_not_configured")
+    try:
+        return multi_provider_router.fetch_bars(symbol, start, end)
     except MarketDataUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except (ValueError, TypeError, OverflowError) as exc:
