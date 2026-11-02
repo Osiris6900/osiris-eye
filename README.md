@@ -101,3 +101,8 @@ Eight additional prototype systems cover portfolio risk monitoring, fail-closed 
 ## Phase 15 — Tamper-evident audit evidence
 
 Deterministic SHA-256 hash-chain construction and verification now detect edits, reordering, missing links, and inconsistent chain heads in caller-supplied audit evidence. This is not durable immutable storage, actor authentication, a digital signature system, or proof of event truth. See [Phase 15 documentation](docs/PHASE15_TAMPER_EVIDENT_AUDIT.md).
+
+
+## Phase 16 — Durable SQLite audit journal
+
+Audit events can now be appended transactionally to the configured SQLite database and verified as a persistent hash chain. Duplicate event IDs are rejected and row tampering is detected. This is not WORM storage or protection against a privileged database rewrite; see [Phase 16 documentation](docs/PHASE16_DURABLE_AUDIT_JOURNAL.md).
