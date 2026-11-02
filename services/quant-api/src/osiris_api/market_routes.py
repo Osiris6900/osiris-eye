@@ -12,6 +12,7 @@ from .market_universe import ASSET_CLASSES, audit_instruments
 from .provider_bootstrap import provider_readiness
 from .provider_router import MultiProviderMarketDataRouter
 from .public_market_data import CoinbasePublicMarketDataAdapter
+from .universal_aggregator import UniversalMarketDataAggregator
 
 router = APIRouter(tags=["market-data"])
 market_data_gateway = MarketDataGateway()
@@ -87,6 +88,30 @@ def market_data_bars(
 ):
     try:
         return market_data_gateway.fetch_bars(provider, symbol, start, end, asset_class=asset_class)
+    except MarketDataUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except (ValueError, TypeError, OverflowError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/market-data/aggregate/bars")
+def market_data_aggregate_bars(
+    providers: str = Query(..., min_length=1, max_length=500),
+    symbol: str = Query(..., min_length=1, max_length=64),
+    start: str = Query(..., min_length=20, max_length=64),
+    end: str = Query(..., min_length=20, max_length=64),
+    asset_class: str | None = Query(default=None, min_length=1, max_length=32),
+    divergence_threshold_bps: float = Query(default=50.0, ge=0, le=10000),
+):
+    """Aggregate source-preserving public/sandbox bars; never submits orders."""
+    try:
+        aggregator = UniversalMarketDataAggregator(
+            market_data_gateway, divergence_threshold_bps=divergence_threshold_bps
+        )
+        return aggregator.aggregate_bars(
+            providers=[item.strip() for item in providers.split(",")],
+            symbol=symbol, start=start, end=end, asset_class=asset_class,
+        )
     except MarketDataUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except (ValueError, TypeError, OverflowError) as exc:
