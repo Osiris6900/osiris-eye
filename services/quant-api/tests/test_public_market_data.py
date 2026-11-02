@@ -24,8 +24,7 @@ class FakeResponse:
 def test_coinbase_public_adapter_normalizes_candle_shape():
     adapter = CoinbasePublicMarketDataAdapter()
     timestamp = int(datetime(2026, 11, 2, tzinfo=timezone.utc).timestamp())
-    with patch("osiris_api.public_market_data.urlopen",
-               return_value=FakeResponse([[timestamp, 99, 102, 100, 101, 12.5]])):
+    with patch("osiris_api.public_market_data._get", return_value=json.dumps([[timestamp, 99, 102, 100, 101, 12.5]]).encode()):
         bars = adapter.fetch_bars(
             "BTC-USD", "2026-11-02T00:00:00Z", "2026-11-02T00:05:00Z"
         )
@@ -84,7 +83,7 @@ def test_binance_rejects_invalid_symbol_and_unsupported_interval():
 
 
 def test_stooq_daily_adapter_parses_csv_as_daily_bars():
-    payload = b"Date,Open,High,Low,Close,Volume\\n2026-11-02,10,12,9,11,1000\\n"
+    payload = bytes([10]).join([b"Date,Open,High,Low,Close,Volume", b"2026-11-02,10,12,9,11,1000"])
     with patch("osiris_api.public_market_data._get", return_value=payload):
         bars = StooqDailyMarketDataAdapter().fetch_bars(
             "aapl.us", "2026-11-02T00:00:00Z", "2026-11-03T00:00:00Z"
