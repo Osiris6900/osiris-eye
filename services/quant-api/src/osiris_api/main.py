@@ -7,7 +7,7 @@ from .data_store import ResearchStore
 from .data_intelligence import audit_observations
 from .backtesting import simulate_signals
 from .phase5_backtesting import run_portfolio_backtest
-from .phase6_intelligence import (walk_forward_validation, portfolio_risk_diagnostics as phase6_portfolio_risk_diagnostics, execution_intelligence, model_validation, macro_intelligence, rank_strategies)
+from .phase7_market_intelligence import (cross_asset_alpha, options_flow_intelligence, liquidity_forecast, detect_market_anomalies, offline_rl_evaluation, trade_surveillance)\nfrom .phase6_intelligence import (walk_forward_validation, portfolio_risk_diagnostics as phase6_portfolio_risk_diagnostics, execution_intelligence, model_validation, macro_intelligence, rank_strategies)
 from .institutional_modules import portfolio_risk, options_surface_audit, cross_market_correlation, alternative_data_intake, agent_research_proposal, command_center_snapshot
 from .advanced_systems import order_book, execution_sim, model_governance, knowledge_graph, strategy_discovery, regime_change, monte_carlo, news_audit, security_audit, attribution, compute_plan, incident_assessment
 from .phase3_systems import connector_contract, market_replay, portfolio_optimizer, paper_order_lifecycle, factor_diagnostics, derivatives_risk, event_calendar_audit, experiment_manifest, portfolio_stress, sre_health, rbac_audit, workflow_gate
@@ -195,6 +195,39 @@ def phase6_macro_intelligence(p: dict[str, Any] = Body(...)):
 @app.post("/research/strategies/rank")
 def phase6_strategy_ranking(p: dict[str, Any] = Body(...)):
     return guarded(rank_strategies, p.get("candidates", []), p.get("multiple_testing_penalty", 0.01))
+
+
+@app.post("/research/alpha/cross-asset-discovery")
+def phase7_cross_asset_alpha(p: dict[str, Any] = Body(...)):
+    return guarded(cross_asset_alpha, p.get("returns", {}), p.get("max_lag", 3))
+
+
+@app.post("/research/options/flow-intelligence")
+def phase7_options_flow(p: dict[str, Any] = Body(...)):
+    return guarded(options_flow_intelligence, p.get("trades", []))
+
+
+@app.post("/research/liquidity/forecast")
+def phase7_liquidity_forecast(p: dict[str, Any] = Body(...)):
+    return guarded(liquidity_forecast, p.get("spread_bps", []), p.get("volume", []),
+                   p.get("volatility", []), p.get("horizon", 1))
+
+
+@app.post("/research/market/anomalies")
+def phase7_market_anomalies(p: dict[str, Any] = Body(...)):
+    return guarded(detect_market_anomalies, p.get("returns", []), p.get("volumes", []),
+                   p.get("spread_bps", []), p.get("z_threshold", 4.0))
+
+
+@app.post("/research/rl/offline-evaluation")
+def phase7_offline_rl(p: dict[str, Any] = Body(...)):
+    return guarded(offline_rl_evaluation, p.get("episodes", []), p.get("max_importance_weight", 10.0))
+
+
+@app.post("/surveillance/trades/analyze")
+def phase7_trade_surveillance(p: dict[str, Any] = Body(...)):
+    return guarded(trade_surveillance, p.get("events", []),
+                   p.get("cancel_ratio_threshold", 0.8), p.get("burst_window_seconds", 1.0))
 
 @app.get("/platform/command-center")
 def command_center():
