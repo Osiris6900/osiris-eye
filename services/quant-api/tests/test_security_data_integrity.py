@@ -69,8 +69,8 @@ def test_python_risk_engine_rejects_boolean_numeric_values():
     from osiris_api.risk import check_order
 
     assert check_order(quantity=True, price=10, current_position_notional=0, daily_pnl=0) == (
-        False, "non_finite_input"
+        False, "invalid_numeric_input"
     )
     assert check_order(quantity=1, price=10, current_position_notional=0, daily_pnl=False) == (
-        False, "non_finite_input"
+        False, "invalid_numeric_input"
     )
