@@ -1,67 +1,54 @@
-import React, {useEffect, useState} from 'react';
-import {createRoot} from 'react-dom/client';
+import React, { useMemo, useState } from 'react';
+import { createRoot } from 'react-dom/client';
 import './style.css';
 
-type PlatformModule = {id: string; name: string; status: string; capabilities: string[]};
-type PlatformResponse = {count: number; modules: PlatformModule[]; execution_enabled: boolean};
-
-function App() {
-  const [platform, setPlatform] = useState<PlatformResponse | null>(null);
-  const [apiStatus, setApiStatus] = useState<'checking' | 'online' | 'offline'>('checking');
-
-  useEffect(() => {
-    let active = true;
-    Promise.all([
-      fetch('/api/health').then(response => {
-        if (!response.ok) throw new Error('health endpoint unavailable');
-        return response.json();
-      }),
-      fetch('/api/platform/modules').then(response => {
-        if (!response.ok) throw new Error('module endpoint unavailable');
-        return response.json() as Promise<PlatformResponse>;
-      }),
-    ]).then(([, data]) => {
-      if (active) { setPlatform(data); setApiStatus('online'); }
-    }).catch(() => { if (active) setApiStatus('offline'); });
-    return () => { active = false; };
-  }, []);
-
-  const modules = platform?.modules ?? [
-    {id:'alternative_data',name:'Alternative Data Engine',status:'foundation',capabilities:['Event timestamps']},
-    {id:'microstructure',name:'Market Microstructure',status:'foundation',capabilities:['Order-flow imbalance']},
-    {id:'portfolio',name:'Portfolio Optimization',status:'foundation',capabilities:['Baseline weights']},
-    {id:'risk',name:'Risk Intelligence',status:'foundation',capabilities:['Historical VaR / ES']},
-    {id:'model_factory',name:'AI Model Factory',status:'foundation',capabilities:['Drift diagnostics']},
-    {id:'strategy_lab',name:'Strategy Discovery Lab',status:'foundation',capabilities:['Performance diagnostics']},
-    {id:'execution',name:'Execution Intelligence',status:'foundation',capabilities:['Cost estimation']},
-    {id:'macro_regime',name:'Macro & Regime Engine',status:'foundation',capabilities:['Regime heuristic']},
-    {id:'reliability',name:'System Reliability Center',status:'foundation',capabilities:['Health aggregation']},
-    {id:'agent_team',name:'AI Agent Research Team',status:'foundation',capabilities:['Approval-gated tasks']},
-  ];
-
-  return <main className="shell">
-    <aside className="rail"><div className="logo">◉</div><strong>OSIRIS EYE</strong><small>QUANT INTELLIGENCE</small>
-      <nav>{['◈ Overview','⌁ Markets','▦ Options','⌘ Research','◫ Strategy Lab','◷ Backtests','⚖ Risk'].map((x,i)=><a className={i===0?'active':''} key={x}>{x}</a>)}</nav>
-      <div className="foot">SYSTEM MODE<br/><b>RESEARCH ONLY</b></div>
-    </aside>
-    <section className="content">
-      <header>OSIRIS EYE / INSTITUTIONAL OVERVIEW <span>● {apiStatus === 'online' ? 'SHARED API CONNECTED' : apiStatus === 'offline' ? 'API OFFLINE · SHOWING CATALOG' : 'CONNECTING TO API'}</span></header>
-      <div className="hero"><div><p className="eyebrow">MULTI-ASSET INTELLIGENCE</p><h1>Market Intelligence Terminal</h1><p>One research API, a shared point-in-time store and ten connected module foundations.</p></div><label>LIVE EXECUTION DISABLED</label></div>
-      <section className="stats">
-        <article><small>DATA STORE</small><h2>{apiStatus === 'online' ? 'SQLite · Connected' : 'Not connected'}</h2></article>
-        <article><small>PLATFORM MODULES</small><h2>{platform?.count ?? 10} foundations</h2></article>
-        <article><small>RISK GATE</small><h2>Enabled · simulation</h2></article>
-        <article><small>API STATUS</small><h2>{apiStatus.toUpperCase()}</h2></article>
-      </section>
-      <section className="columns">
-        <article><h3>CONNECTED MODULE CATALOG</h3>{modules.map((m,i)=><div className="item" key={m.id}><i>{String(i+1).padStart(2,'0')}</i><div className="module-copy"><strong>{m.name}</strong><small>{m.capabilities.join(' · ')}</small></div><b>FOUNDATION</b></div>)}</article>
-        <article><h3>SHARED DATA & API</h3><p>All research modules are exposed through one FastAPI service.</p>
-          <ul><li>Point-in-time observations with event and availability timestamps</li><li>SQLite persistence for local development</li><li>Idempotent source + dataset + record keys</li><li>Common module registry and health endpoint</li><li>Research diagnostics only; no live order routing</li></ul>
-          <p className="notice">Use licensed feeds. Preserve publication time to prevent look-ahead bias. SQLite is a local foundation, not production-scale storage.</p>
-        </article>
-      </section>
-      <footer>OSIRIS EYE · INSTITUTIONAL QUANT PLATFORM <span>V0.2.0 · RESEARCH FOUNDATION</span></footer>
-    </section>
-  </main>;
+const tickers = [
+  ['NIFTY 50','24,198.60','+112.35','+0.47%','up'],['BANKNIFTY','51,342.20','+296.75','+0.56%','up'],
+  ['FINNIFTY','23,668.45','+118.10','+0.50%','up'],['INDIA VIX','13.42','-0.58','-4.15%','down'],
+  ['S&P 500','6,047.21','+0.32','+0.32%','up'],['NASDAQ','19,482.30','+0.41','+0.41%','up'],
+  ['DOW','44,910.65','+0.39','+0.39%','up'],['USDINR','83.24','-0.02','-0.02%','down'],
+  ['GOLD','2,644.30','+0.28','+0.28%','up'],['CRUDE','71.24','-0.61','-0.61%','down']
+];
+const nav = ['Dashboard','Live Markets','Options Chain','AI Signals','Strategy Lab','Backtesting','Paper Trading','Live Trading','Risk Management','Market Regime','Global Markets','News & Sentiment','Reports','Settings'];
+const signals = [['◉','NIFTY 24200 CE','BUY','82%','18.4%','Low'],['✦','NIFTY 24000 PE','SELL','76%','14.2%','Medium'],['◈','BANKNIFTY 51500 CE','BUY','71%','16.8%','Medium'],['▣','RELIANCE','BUY','68%','12.6%','Low'],['⌁','Regime Breakout','SELL','64%','11.9%','Medium']];
+const optionRows = [['23900','12,542','312.0','315.5','314.0','38.5','40.0','39.2','42,210'],['23950','10,890','282.0','291.5','284.0','39.3','44.0','39.2','38,440'],['24000','18,430','233.0','236.6','243.0','36.0','56.9','39.0','46,320'],['24050','32,360','223.0','228.0','238.0','26.0','67.0','32.0','48,660'],['24100','42,120','212.0','219.5','213.5','24.0','70.0','29.0','52,440'],['24150','41,220','162.0','170.0','195.5','18.0','79.0','21.0','62,400'],['24200','36,540','363.0','368.0','343.0','183.6','172.0','48.3','48,320'],['24250','29,680','138.0','139.0','132.6','22.6','113.0','19.2','36,120'],['24300','18,210','120.0','126.0','121.0','20.0','98.0','17.0','28,640'],['24350','12,810','92.0','99.0','92.0','18.0','85.0','15.0','24,110'],['24400','9,880','87.0','91.0','78.0','16.0','79.0','13.0','18,630']];
+function Spark({down=false}:{down?:boolean}) { return <svg viewBox="0 0 90 28" className="spark" aria-hidden="true"><path d={down?'M1 20 L12 17 L20 22 L31 14 L41 18 L51 8 L61 13 L72 5 L89 10':'M1 22 L12 18 L20 20 L31 8 L41 12 L51 4 L61 10 L72 2 L89 5'} fill="none" stroke={down?'#ff647c':'#16d7a0'} strokeWidth="2"/></svg> }
+function Chart() {
+ const candles = Array.from({length:42},(_,i)=>{const base=62+Math.sin(i*.42)*19+(i>20?-8:0)+(i>30?13:0);const up=Math.sin(i*2.1)>.05;return {x:12+i*10, y:base, h:7+(i*7%16), up}});
+ return <svg className="candle-chart" viewBox="0 0 440 230" preserveAspectRatio="none"><defs><pattern id="grid" width="55" height="38" patternUnits="userSpaceOnUse"><path d="M55 0H0V38" fill="none" stroke="#1c3048" strokeWidth=".7"/></pattern></defs><rect width="440" height="230" fill="url(#grid)"/>{[0,1,2,3,4].map(i=><text key={i} x="6" y={20+i*42} fill="#647b98" fontSize="8">24,{300-i*50}</text>)}<path d="M0 160 Q75 120 140 152 T280 128 T440 100" fill="none" stroke="#a46aff" opacity=".55"/><path d="M0 175 Q90 165 160 144 T300 135 T440 118" fill="none" stroke="#f0a34b" opacity=".8"/>{candles.map((c,i)=><g key={i} stroke={c.up?'#16d7a0':'#ff647c'} fill={c.up?'#16d7a0':'#ff647c'}><path d={`M${c.x+3} ${c.y-10}V${c.y+c.h+8}`} strokeWidth="1"/><rect x={c.x} y={c.y} width="6" height={c.h} rx="1"/></g>)}<path d="M0 88H440" stroke="#35d6ec" strokeDasharray="4 3"/><rect x="374" y="78" width="62" height="18" rx="4" fill="#087d78"/><text x="380" y="90" fill="white" fontSize="9">24,198.60</text><g fill="#7186a1" fontSize="8"><text x="10" y="221">09:15</text><text x="110" y="221">10:30</text><text x="215" y="221">12:00</text><text x="320" y="221">13:30</text><text x="395" y="221">15:00</text></g></svg>;
+}
+function VolSurface(){return <div className="vol-wrap"><div className="vol-grid">{Array.from({length:49},(_,i)=><i key={i} style={{'--v':Math.max(8,70-Math.abs(i%7-3)*15-Math.abs(Math.floor(i/7)-3)*13)} as React.CSSProperties}/>)}</div><div className="vol-label">IV SURFACE · DEMO</div><b>18.4%</b></div>}
+function App(){
+ const [active,setActive]=useState('Dashboard');const [time,setTime]=useState('5m');const [symbol,setSymbol]=useState('NIFTY 50');const [query,setQuery]=useState('');const [period,setPeriod]=useState('05 Dec');
+ const filtered=useMemo(()=>tickers.filter(t=>t[0].toLowerCase().includes(query.toLowerCase())),[query]);
+ return <div className="app-shell">
+  <aside className="sidebar"><div className="brand"><div className="brand-mark">✧</div><div><b>OSIRIS EYE</b><small>INSTITUTIONAL QUANT</small></div></div>
+   <div className="side-label">WORKSPACE</div><nav>{nav.map((n,i)=><button key={n} onClick={()=>setActive(n)} className={active===n?'selected':''}><span>{['▦','⌁','▤','✧','⌘','◷','▣','⇄','⚖','◉','◎','▧','▤','⚙'][i]}</span>{n}{n==='Live Trading'&&<em>LOCKED</em>}</button>)}</nav>
+   <div className="world-art"><div className="globe">◉</div></div><div className="system-card"><small>SYSTEM STATUS</small>{['Market Data · Demo','AI Research · Ready','Risk Engine · Ready','Execution · Disabled','Database · Connected'].map((s,i)=><p key={s}><i className={i===3?'amber':''}/>{s}</p>)}</div>
+  </aside>
+  <main className="main">
+   <header className="topbar"><div className="mobile-brand">OSIRIS EYE</div><div className="searchbox">⌕ <input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search symbol (NIFTY, BANKNIFTY, RELIANCE...)" />{query&&<div className="search-results">{filtered.map(t=><button key={t[0]} onClick={()=>{setSymbol(t[0]);setQuery('')}}>{t[0]} <small>{t[1]}</small></button>)}</div>}</div><div className="top-actions">{['1m','5m','15m','1h','4h','1D'].map(t=><button onClick={()=>setTime(t)} className={time===t?'chosen':''} key={t}>{t}</button>)}<button className="icon-btn">☾</button><button className="icon-btn">♧</button><button className="avatar">A</button></div></header>
+   <div className="demo-banner"><span>● SIMULATION ENVIRONMENT</span><span>Illustrative market values · Not live prices · No orders can be placed</span></div>
+   <section className="ticker-strip">{tickers.map(t=><button className="ticker" key={t[0]} onClick={()=>setSymbol(t[0])}><b>{t[0]}</b><strong>{t[1]}</strong><small className={t[4]}>{t[2]} ({t[3]})</small><Spark down={t[4]==='down'}/></button>)}</section>
+   <div className="section-heading"><div><small>MARKET OVERVIEW / INDIA + GLOBAL</small><h1>{active==='Dashboard'?'Trading Intelligence Dashboard':active}</h1></div><span className="market-open">● RESEARCH MODE</span></div>
+   <section className="top-grid">
+    <article className="panel chart-panel"><div className="panel-head"><div><h2>⌁ {symbol}</h2><small>NSE · INDEX · <span className="up">+0.47%</span></small></div><div className="tabs">{['1m','5m','15m','1h','4h','1D'].map(t=><button className={time===t?'on':''} onClick={()=>setTime(t)} key={t}>{t}</button>)}</div></div><div className="chart-legend"><span>O 24,195.10</span><span>H 24,201.45</span><span>L 24,190.20</span><span>C 24,198.60</span><span className="up">+3.50 (+0.01%)</span></div><Chart/><div className="volume-bars">{Array.from({length:48},(_,i)=><i key={i} style={{height:(9+(i*17)%28)+'px'}}/>)}</div></article>
+    <article className="panel options-panel"><div className="panel-head"><div><h2>Options Chain · NIFTY</h2><small>Expiry: {period} 2026 · SIMULATED</small></div><button className="dots">···</button></div><div className="expiry-tabs">{['28 Nov','05 Dec','12 Dec','19 Dec','26 Dec'].map(x=><button key={x} onClick={()=>setPeriod(x)} className={period===x?'on':''}>{x}</button>)}</div><div className="option-head"><span>CALLS</span><span>STRIKE</span><span>PUTS</span></div><div className="option-table">{optionRows.map((r,i)=><div className={i===6?'atm':''} key={r[0]}><span>{r[1]}</span><span>{r[2]}</span><span>{r[3]}</span><span>{r[4]}</span><b>{r[0]}</b><span>{r[5]}</span><span>{r[6]}</span><span>{r[7]}</span><span>{r[8]}</span></div>)}</div></article>
+    <article className="panel vol-panel"><div className="panel-head"><div><h2>Volatility Surface</h2><small>IMPLIED VOLATILITY · DEMO</small></div><button className="select-pill">NIFTY⌄</button></div><VolSurface/><div className="vol-footer"><span>STRIKE</span><span>DAYS TO EXPIRY</span></div></article>
+   </section>
+   <section className="middle-grid">
+    <article className="panel"><div className="panel-head"><h2>✧ AI Trading Signals</h2><span className="mini-tag">SIMULATED</span></div><div className="data-head signal-row"><span>SYMBOL</span><span>BIAS</span><span>CONFIDENCE</span><span>MODEL RETURN</span><span>RISK</span></div>{signals.map(s=><div className="data-row signal-row" key={s[1]}><strong><i>{s[0]}</i>{s[1]}</strong><b className={s[2]==='BUY'?'buy':'sell'}>{s[2]}</b><span>{s[3]}</span><span className="up">{s[4]}</span><span className={s[5]==='Low'?'up':'amber'}>{s[5]}</span></div>)}</article>
+    <article className="panel regime-panel"><div className="panel-head"><h2>Market Regime</h2><span className="status-good">NORMAL · DEMO</span></div><div className="regime-content"><div className="radar"><div className="radar-globe">◎</div></div><div className="regime-stats">{[['Volatility','Low'],['Trend','Uptrend'],['Liquidity','Healthy'],['Risk Level','Moderate']].map(x=><p key={x[0]}><span>{x[0]}</span><b>{x[1]}</b></p>)}</div></div><small className="subhead">REGIME PROBABILITY · ILLUSTRATIVE</small><div className="prob-bars">{[['Normal','69%'],['Trending','18%'],['Volatile','10%'],['Illiquid','4%']].map((x,i)=><div key={x[0]}><span>{x[0]}</span><b>{x[1]}</b><i><em style={{width:x[1]}}/></i></div>)}</div></article>
+    <article className="panel heat-panel"><div className="panel-head"><h2>Cross-Market Lead-Lag</h2><small>DEMO CORRELATION MATRIX</small></div><div className="heatmap">{Array.from({length:49},(_,i)=><i key={i} style={{background:['#b85a46','#b17a45','#4e9c82','#a54d4d','#477e81','#cf8950','#538e76'][(i*5+Math.floor(i/7)*3)%7],opacity:.45+(i%4)*.13}}/>)}</div><div className="heat-labels"><span>NIFTY</span><span>BANKNIFTY</span><span>FINNIFTY</span><span>USDINR</span><span>S&P 500</span><span>GOLD</span><span>CRUDE</span></div></article>
+   </section>
+   <section className="lower-grid">
+    <article className="panel"><div className="panel-head"><h2>Liquidity & Execution Cost</h2><small>ESTIMATES · NOT ROUTABLE</small></div><div className="table-head"><span>SYMBOL</span><span>SPREAD</span><span>DEPTH</span><span>SLIPPAGE</span><span>SCORE</span></div>{[['NIFTY 24200 CE','1.5 (0.9%)','42,350','0.8','8.7'],['NIFTY 24000 PE','1.8 (1.1%)','38,120','1.0','8.1'],['BANKNIFTY 51500 CE','2.2 (1.4%)','26,440','1.6','7.4'],['RELIANCE','0.5 (0.2%)','1,28,300','0.2','9.1'],['HDFCBANK','0.6 (0.3%)','98,420','0.3','8.9']].map(r=><div className="table-row" key={r[0]}>{r.map((v,i)=><span className={i===4?'up':''} key={i}>{v}</span>)}</div>)}</article>
+    <article className="panel"><div className="panel-head"><h2>Strategy Performance</h2><span className="mini-tag">BACKTEST · DEMO</span></div><div className="metric-pills"><b>Total Return</b><span>Sharpe Ratio</span><span>Drawdown</span><span>Win Rate</span></div><div className="performance-chart"><svg viewBox="0 0 420 140" preserveAspectRatio="none"><path d="M0 110 C50 90 55 105 90 75 S150 95 190 68 S240 85 280 48 S350 62 420 20" stroke="#22d7a5" fill="none" strokeWidth="2"/><path d="M0 125 C50 118 75 90 110 100 S170 82 205 93 S270 55 310 65 S370 30 420 40" stroke="#3f9fff" fill="none" strokeWidth="2"/><path d="M0 115 C50 105 75 115 110 86 S160 120 200 88 S260 95 300 72 S370 75 420 60" stroke="#bd7aff" fill="none" strokeWidth="1.5"/></svg></div><div className="chart-dates"><span>JAN 2023</span><span>APR 2023</span><span>JUL 2023</span><span>OCT 2023</span><span>JAN 2024</span></div></article>
+    <article className="panel portfolio"><div className="panel-head"><h2>Portfolio & Risk</h2><span className="mini-tag">PAPER ONLY</span></div><div className="pnl"><div><small>TOTAL P&L</small><b className="up">+₹7,42,360</b></div><div><small>DAY P&L</small><b className="up">+₹21,650</b></div></div><div className="risk-grid"><div><small>NET EXPOSURE</small><b>24%</b></div><div><small>MAX DRAWDOWN</small><b className="down">-8.6%</b></div><div><small>MARGIN USED</small><b>32%</b></div><div><small>RISK SCORE</small><b>42 / 100</b></div></div><div className="risk-meter"><i/></div><small className="muted">Illustrative values only — no account connected</small></article>
+   </section>
+   <section className="bottom-grid"><article className="panel"><div className="panel-head"><h2>Global Markets</h2><small>REFERENCE SNAPSHOT · DEMO</small></div><div className="global-list">{[['AMERICAS','S&P 500','6,047.21','+0.32%'],['AMERICAS','NASDAQ','19,482.30','+0.41%'],['EUROPE','DAX','19,246.60','+0.28%'],['EUROPE','FTSE','8,312.40','+0.18%'],['ASIA','NIKKEI','39,410.20','-0.10%'],['ASIA','HANG SENG','19,840.30','-0.36%']].map(x=><div key={x[1]}><small>{x[0]}</small><b>{x[1]}</b><span>{x[2]}</span><em className={x[3][0]==='-'?'down':'up'}>{x[3]}</em></div>)}</div></article><article className="panel news"><div className="panel-head"><h2>News & Sentiment</h2><small>PLACEHOLDER · NOT CONNECTED</small></div>{[['10:22','RBI policy signals cautious stance','POSITIVE'],['09:48','Global markets digest US data','POSITIVE'],['09:15','Flows remain mixed in Indian equities','NEUTRAL'],['08:42','Crude oil volatility elevated','NEGATIVE'],['08:10','Technology stocks lead US markets','POSITIVE']].map(x=><div className="news-row" key={x[0]}><time>{x[0]}</time><span>{x[1]}</span><b className={x[2].toLowerCase()}>{x[2]}</b></div>)}</article></section>
+   <footer>OSIRIS EYE · INSTITUTIONAL QUANT TERMINAL <span>DEMO BUILD · LIVE EXECUTION DISABLED · DATA SUBJECT TO VALIDATION</span></footer>
+  </main>
+ </div>
 }
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>);
