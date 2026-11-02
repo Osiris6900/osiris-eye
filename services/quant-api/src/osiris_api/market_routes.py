@@ -49,10 +49,11 @@ def market_data_bars(
     symbol: str = Query(..., min_length=1, max_length=64),
     start: str = Query(..., min_length=20, max_length=64),
     end: str = Query(..., min_length=20, max_length=64),
+    asset_class: str | None = Query(default=None, min_length=1, max_length=32),
 ):
     """Return normalized historical OHLCV bars from an enabled sandbox adapter."""
     try:
-        return market_data_gateway.fetch_bars(provider, symbol, start, end)
+        return market_data_gateway.fetch_bars(provider, symbol, start, end, asset_class=asset_class)
     except MarketDataUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except (ValueError, TypeError, OverflowError) as exc:
