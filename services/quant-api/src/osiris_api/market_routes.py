@@ -58,3 +58,12 @@ def market_data_bars(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except (ValueError, TypeError, OverflowError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+from .provider_bootstrap import provider_readiness
+
+
+@router.get("/market-data/provider-readiness")
+def market_data_provider_readiness():
+    """Show onboarding configuration presence without claiming connectivity."""
+    return provider_readiness()
