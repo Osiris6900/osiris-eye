@@ -143,7 +143,6 @@ def test_advanced_systems_9_to_20_api_contracts():
     assert incident.status_code == 200 and incident.json()["new_risk_allowed"] is False
 
 def test_phase13_data_to_risk_pipeline_allows_only_fresh_pit_data_and_clean_risk():
-    from datetime import datetime, timezone
     import uuid
     dataset = "phase13-" + uuid.uuid4().hex
     record = {
