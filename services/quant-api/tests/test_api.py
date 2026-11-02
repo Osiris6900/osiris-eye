@@ -141,3 +141,90 @@ def test_advanced_systems_9_to_20_api_contracts():
     assert plan.status_code == 200 and plan.json()["tasks_per_worker_ceiling"] == 4
     incident=client.post("/platform/incidents/assess",json={"checks":[{"component":"feed","status":"down","critical":True}]})
     assert incident.status_code == 200 and incident.json()["new_risk_allowed"] is False
+
+def test_phase13_data_to_risk_pipeline_allows_only_fresh_pit_data_and_clean_risk():
+    from datetime import datetime, timezone
+    import uuid
+    dataset = "phase13-" + uuid.uuid4().hex
+    record = {
+        "symbol": "ABC", "record_key": "abc-1",
+        "event_time": "2026-11-02T20:00:00Z",
+        "available_at": "2026-11-02T20:00:01Z", "close": 100,
+    }
+    ingest = client.post("/data/market/batch-ingest", json={
+        "provider": "test-operator-declared", "dataset": dataset,
+        "license_status": "authorized", "records": [record],
+    })
+    assert ingest.status_code == 200
+    payload = {
+        "dataset": dataset, "as_of": "2026-11-02T20:00:10Z",
+        "max_age_seconds": 30,
+        "positions": [{"asset": "ABC", "market_value": 40, "nav": 100},
+                      {"asset": "XYZ", "market_value": 30, "nav": 100}],
+        "max_gross_exposure": 1.0, "max_single_name_weight": 0.5,
+        "current_drawdown": 0.02, "max_drawdown": 0.2,
+    }
+    result = client.post("/platform/integration/data-to-risk", json=payload)
+    assert result.status_code == 200
+    body = result.json()
+    assert body["status"] == "within_limits"
+    assert body["point_in_time"]["status"] == "fresh"
+    assert body["new_risk_allowed"] is True
+    assert body["live_execution_enabled"] is False
+
+
+def test_phase13_data_to_risk_pipeline_fails_closed_on_missing_or_stale_data():
+    import uuid
+    dataset = "phase13-empty-" + uuid.uuid4().hex
+    payload = {
+        "dataset": dataset, "as_of": "2026-11-02T20:00:10Z",
+        "max_age_seconds": 30,
+        "positions": [{"asset": "ABC", "market_value": 40, "nav": 100}],
+        "max_gross_exposure": 1.0, "max_single_name_weight": 0.5,
+        "current_drawdown": 0.02, "max_drawdown": 0.2,
+    }
+    missing = client.post("/platform/integration/data-to-risk", json=payload)
+    assert missing.status_code == 200
+    assert missing.json()["point_in_time"]["status"] == "missing"
+    assert missing.json()["new_risk_allowed"] is False
+
+    payload["dataset"] = "phase13-stale-" + uuid.uuid4().hex
+    record = {
+        "symbol": "ABC", "record_key": "old-1",
+        "event_time": "2026-11-02T19:00:00Z",
+        "available_at": "2026-11-02T19:00:01Z", "close": 99,
+    }
+    ingest = client.post("/data/market/batch-ingest", json={
+        "provider": "test-operator-declared", "dataset": payload["dataset"],
+        "license_status": "authorized", "records": [record],
+    })
+    assert ingest.status_code == 200
+    stale = client.post("/platform/integration/data-to-risk", json=payload)
+    assert stale.status_code == 200
+    assert stale.json()["point_in_time"]["status"] == "stale"
+    assert stale.json()["new_risk_allowed"] is False
+
+
+def test_phase13_data_to_risk_pipeline_blocks_portfolio_breach():
+    import uuid
+    dataset = "phase13-risk-" + uuid.uuid4().hex
+    record = {
+        "symbol": "ABC", "record_key": "risk-1",
+        "event_time": "2026-11-02T20:00:00Z",
+        "available_at": "2026-11-02T20:00:01Z", "close": 100,
+    }
+    client.post("/data/market/batch-ingest", json={
+        "provider": "test-operator-declared", "dataset": dataset,
+        "license_status": "authorized", "records": [record],
+    })
+    payload = {
+        "dataset": dataset, "as_of": "2026-11-02T20:00:10Z",
+        "max_age_seconds": 30,
+        "positions": [{"asset": "ABC", "market_value": 80, "nav": 100}],
+        "max_gross_exposure": 0.7, "max_single_name_weight": 0.9,
+        "current_drawdown": 0.02, "max_drawdown": 0.2,
+    }
+    result = client.post("/platform/integration/data-to-risk", json=payload)
+    assert result.status_code == 200
+    assert result.json()["new_risk_allowed"] is False
+    assert "gross_exposure_limit" in result.json()["portfolio_risk"]["breaches"]
