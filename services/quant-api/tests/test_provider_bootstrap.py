@@ -1,17 +1,17 @@
 from osiris_api.provider_bootstrap import provider_readiness
 
 
-def test_provider_catalog_covers_all_required_market_families():
+def test_provider_catalog_covers_currently_implemented_market_families():
     result = provider_readiness({})
     classes = {
         asset_class
         for provider in result["providers"]
         for asset_class in provider["supported_asset_classes"]
     }
-    assert {
-        "equity", "crypto", "fx", "future", "option",
-        "commodity", "index", "fixed_income",
-    } <= classes
+    assert {"equity", "crypto", "fx", "future", "option", "index"} <= classes
+    # Do not advertise these families until a provider adapter actually supports them.
+    assert "commodity" not in classes
+    assert "fixed_income" not in classes
 
 
 def test_provider_readiness_reports_missing_environment_names_only():
