@@ -7,7 +7,7 @@ from .data_store import ResearchStore
 from .data_intelligence import audit_observations
 from .backtesting import simulate_signals
 from .phase5_backtesting import run_portfolio_backtest
-from .phase8_systems import audit_data_lineage, audit_backtest_integrity, portfolio_risk_governor, catalyst_impact_scenarios, observe_model_health, reconcile_paper_trades, audit_security_resilience, orchestrate_research_workflow
+from .phase9_systems import audit_global_instruments, analyze_counterparty_risk, process_corporate_actions, estimate_portfolio_capacity, aggregate_derivatives_exposure, audit_financial_graph, simulate_disaster_recovery, benchmark_performance\nfrom .phase8_systems import audit_data_lineage, audit_backtest_integrity, portfolio_risk_governor, catalyst_impact_scenarios, observe_model_health, reconcile_paper_trades, audit_security_resilience, orchestrate_research_workflow
 from .phase7_market_intelligence import (cross_asset_alpha, options_flow_intelligence, liquidity_forecast, detect_market_anomalies, offline_rl_evaluation, trade_surveillance)
 from .phase6_intelligence import (walk_forward_validation, portfolio_risk_diagnostics as phase6_portfolio_risk_diagnostics, execution_intelligence, model_validation, macro_intelligence, rank_strategies)
 from .institutional_modules import portfolio_risk, options_surface_audit, cross_market_correlation, alternative_data_intake, agent_research_proposal, command_center_snapshot
@@ -262,6 +262,39 @@ def phase8_security_resilience(p: dict[str, Any] = Body(...)):
 @app.post("/platform/workflow/research-orchestrate")
 def phase8_research_orchestrator(p: dict[str, Any] = Body(...)):
     return guarded(orchestrate_research_workflow, p.get("gates", {}))
+
+
+@app.post("/platform/instruments/global-coverage")
+def phase9_global_coverage(p: dict[str, Any] = Body(...)):
+    return guarded(audit_global_instruments, p.get("instruments", []))
+
+@app.post("/risk/counterparties/concentration")
+def phase9_counterparty_risk(p: dict[str, Any] = Body(...)):
+    return guarded(analyze_counterparty_risk, p.get("exposures", []), p.get("nav", 0), p.get("max_counterparty_weight", 0.25))
+
+@app.post("/portfolio/corporate-actions/audit")
+def phase9_corporate_actions(p: dict[str, Any] = Body(...)):
+    return guarded(process_corporate_actions, p.get("actions", []), p.get("tax_lots", []))
+
+@app.post("/research/portfolio/capacity")
+def phase9_portfolio_capacity(p: dict[str, Any] = Body(...)):
+    return guarded(estimate_portfolio_capacity, p.get("positions", []), p.get("participation_rate", 0.10), p.get("stress_volume_haircut", 0.50))
+
+@app.post("/research/derivatives/exposure")
+def phase9_derivatives_exposure(p: dict[str, Any] = Body(...)):
+    return guarded(aggregate_derivatives_exposure, p.get("positions", []))
+
+@app.post("/research/knowledge-graph/financial-audit")
+def phase9_financial_graph(p: dict[str, Any] = Body(...)):
+    return guarded(audit_financial_graph, p.get("nodes", []), p.get("edges", []))
+
+@app.post("/platform/resilience/disaster-recovery-simulate")
+def phase9_disaster_recovery(p: dict[str, Any] = Body(...)):
+    return guarded(simulate_disaster_recovery, p.get("services", []))
+
+@app.post("/research/performance/benchmark")
+def phase9_benchmark_performance(p: dict[str, Any] = Body(...)):
+    return guarded(benchmark_performance, p.get("portfolio_returns", []), p.get("benchmark_returns", []), p.get("periods_per_year", 252))
 
 @app.get("/platform/command-center")
 def command_center():
