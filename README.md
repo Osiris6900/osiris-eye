@@ -6,7 +6,7 @@ OSIRIS EYE is a research-first, multi-asset quantitative trading platform scaffo
 
 ## Architecture
 
-- `services/quant-api`: FastAPI service, shared SQLite point-in-time observation store, 63-module registry, research endpoints, risk checks, and tests.
+- `services/quant-api`: FastAPI service, shared SQLite point-in-time observation store, 87-module registry, research endpoints, risk checks, and tests.
 - `crates/risk-kernel`: Rust pre-trade risk primitives.
 - `apps/web`: TypeScript + Vite dashboard foundation.
 - `docs`: architecture, data contracts, shared API integration guide, module catalog, advanced intelligence specification, master engineering blueprint, and phased roadmap.
@@ -14,7 +14,7 @@ OSIRIS EYE is a research-first, multi-asset quantitative trading platform scaffo
 
 ## Platform module catalog
 
-The platform now registers 57 research and infrastructure capability foundations; registry status indicates implementation maturity, not production readiness. Deterministic Python primitives now cover alternative-event validation, order-flow imbalance, baseline portfolio weights, historical VaR/ES, model drift, strategy diagnostics, execution-cost estimation, macro regime labels, component health, and approval-gated AI task contracts. These are not complete services or validated trading signals.
+The platform now registers 87 research and infrastructure capability foundations; registry status indicates implementation maturity, not production readiness. Deterministic Python primitives now cover alternative-event validation, order-flow imbalance, baseline portfolio weights, historical VaR/ES, model drift, strategy diagnostics, execution-cost estimation, macro regime labels, component health, and approval-gated AI task contracts. These are not complete services or validated trading signals.
 
 ## Phase 7 institutional alpha & market intelligence
 
@@ -91,3 +91,8 @@ See [docs/ROADMAP.md](docs/ROADMAP.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE
 ### Phase 9 — Global Multi-Asset Intelligence
 
 Eight research/control prototypes extend the platform: global instrument coverage, counterparty concentration, corporate-action and tax-lot audit, portfolio capacity, derivatives Greeks aggregation, financial knowledge-graph integrity, disaster-recovery RTO/RPO checks, and benchmark-relative performance. See [Phase 9 documentation](docs/PHASE9_GLOBAL_MULTI_ASSET_INTELLIGENCE.md). These are caller-data diagnostics, not connected feeds, tax advice, calibrated risk models, production failover, or live execution.
+
+
+### Phase 10 — Institutional Intelligence & Capital Protection
+
+Eight additional prototype systems cover portfolio risk monitoring, fail-closed vendor selection, alpha experiment ranking, risk-budget allocation, AI-agent governance, execution TCA, systemic stress scenarios, and independent strategy approval gates. See [Phase 10 documentation](docs/PHASE10_INSTITUTIONAL_INTELLIGENCE.md). These are caller-supplied-data diagnostics and do not enable live execution or deployment.
