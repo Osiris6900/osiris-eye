@@ -736,3 +736,17 @@ def api_phase17_checkpoint_create(p: dict[str, Any] = Body(...)):
 @app.post("/platform/audit/checkpoint-verify")
 def api_phase17_checkpoint_verify(p: dict[str, Any] = Body(...)):
     return guarded(verify_audit_checkpoint, durable_audit_store, p.get("checkpoint", {}))
+
+
+from .phase18_audit_bundle import export_audit_bundle, verify_audit_bundle
+
+
+@app.post("/platform/audit/bundle-export")
+def api_phase18_audit_bundle_export(p: dict[str, Any] = Body(...)):
+    return guarded(export_audit_bundle, durable_audit_store, p.get("bundle_id", ""),
+                   p.get("checkpoint"))
+
+
+@app.post("/platform/audit/bundle-verify")
+def api_phase18_audit_bundle_verify(p: dict[str, Any] = Body(...)):
+    return guarded(verify_audit_bundle, p.get("bundle", {}))
