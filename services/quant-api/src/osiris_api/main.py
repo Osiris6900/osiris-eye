@@ -7,6 +7,9 @@ from .data_store import ResearchStore
 from .data_intelligence import audit_observations
 from .backtesting import simulate_signals
 from .phase5_backtesting import run_portfolio_backtest
+
+from .phase10_systems import (monitor_portfolio_risk, audit_vendor_failover, score_alpha_hypotheses, allocate_risk_budget, audit_agent_governance, analyze_execution_quality, simulate_systemic_stress, evaluate_strategy_approval)
+
 from .phase9_systems import audit_global_instruments, analyze_counterparty_risk, process_corporate_actions, estimate_portfolio_capacity, aggregate_derivatives_exposure, audit_financial_graph, simulate_disaster_recovery, benchmark_performance
 from .phase8_systems import audit_data_lineage, audit_backtest_integrity, portfolio_risk_governor, catalyst_impact_scenarios, observe_model_health, reconcile_paper_trades, audit_security_resilience, orchestrate_research_workflow
 from .phase7_market_intelligence import (cross_asset_alpha, options_flow_intelligence, liquidity_forecast, detect_market_anomalies, offline_rl_evaluation, trade_surveillance)
@@ -577,3 +580,41 @@ def api_portfolio_backtest(p: dict[str, Any] = Body(...)):
         periods_per_year=p.get("periods_per_year", 252),
         max_gross_leverage=p.get("max_gross_leverage", 1.0),
         initial_capital=p.get("initial_capital", 1_000_000.0))
+
+
+@app.post("/risk/portfolio/real-time-monitor")
+def api_phase10_risk_monitor(p: dict[str, Any] = Body(...)):
+    return guarded(monitor_portfolio_risk, p.get("positions", []), p.get("nav", 0),
+                   p.get("max_gross_leverage", 2.0), p.get("max_name_weight", 0.25),
+                   p.get("returns"), p.get("confidence", 0.95))
+
+@app.post("/platform/data/vendor-failover-audit")
+def api_phase10_vendor_failover(p: dict[str, Any] = Body(...)):
+    return guarded(audit_vendor_failover, p.get("feeds", []),
+                   p.get("max_age_seconds", 60), p.get("conflict_tolerance_bps", 5))
+
+@app.post("/research/alpha/factory-rank")
+def api_phase10_alpha_factory(p: dict[str, Any] = Body(...)):
+    return guarded(score_alpha_hypotheses, p.get("experiments", []))
+
+@app.post("/portfolio/capital/risk-budget")
+def api_phase10_risk_budget(p: dict[str, Any] = Body(...)):
+    return guarded(allocate_risk_budget, p.get("strategies", []),
+                   p.get("total_risk_budget", 0), p.get("max_strategy_weight", 0.4))
+
+@app.post("/platform/agents/governance-audit")
+def api_phase10_agent_governance(p: dict[str, Any] = Body(...)):
+    return guarded(audit_agent_governance, p.get("agents", []))
+
+@app.post("/research/execution/tca")
+def api_phase10_tca(p: dict[str, Any] = Body(...)):
+    return guarded(analyze_execution_quality, p.get("trades", []))
+
+@app.post("/research/risk/systemic-stress")
+def api_phase10_systemic_stress(p: dict[str, Any] = Body(...)):
+    return guarded(simulate_systemic_stress, p.get("exposures", []),
+                   p.get("shocks", {}), p.get("nav", 0))
+
+@app.post("/platform/strategies/approval-review")
+def api_phase10_strategy_approval(p: dict[str, Any] = Body(...)):
+    return guarded(evaluate_strategy_approval, p)
