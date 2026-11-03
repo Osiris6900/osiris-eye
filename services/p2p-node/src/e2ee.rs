@@ -18,6 +18,7 @@ const MAX_KEY_BINDING_LIFETIME_SECS: u64 = 30 * 24 * 60 * 60;
 const MAX_CLOCK_SKEW_SECS: u64 = 300;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct KeyBindingRecord {
     pub schema: String,
     pub peer_id: String,
@@ -272,6 +273,7 @@ const ENCRYPTED_ENVELOPE_SCHEMA: &str = "osiris.p2p.encrypted-envelope.v1";
 const MAX_ENVELOPE_LIFETIME_SECS: u64 = 24 * 60 * 60;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EncryptedEnvelope {
     pub schema: String,
     pub sender_peer_id: String,
