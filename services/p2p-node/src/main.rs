@@ -418,7 +418,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 SwarmEvent::OutgoingConnectionError { peer_id: target, connection_id, error } => {
                     emit!("outgoing_connection_error peer={target:?} connection={connection_id:?} error={error}");
                 }
-                SwarmEvent::IncomingConnectionError { connection_id, local_addr, send_back_addr, error } => {
+                SwarmEvent::IncomingConnectionError { connection_id, local_addr, send_back_addr, error, .. } => {
                     emit!("incoming_connection_error connection={connection_id:?} local={local_addr} remote={send_back_addr} error={error}");
                 }
                 SwarmEvent::ConnectionEstablished { peer_id, endpoint, connection_id, num_established, .. } => {
