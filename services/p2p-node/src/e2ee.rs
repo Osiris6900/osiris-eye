@@ -200,6 +200,8 @@ mod tests {
         assert_eq!(plaintext, b"observation");
         let wrong_peer = PeerId::random();
         assert_eq!(decrypt_for_recipient(&envelope, &sender_binding, &wrong_peer, 1, recipient_transport.private_key(), 160).err().unwrap(), "envelope_identity_or_time_check_failed");
+        let wrong_transport = TransportKeyPair::generate();
+        assert_eq!(decrypt_for_recipient(&envelope, &sender_binding, &recipient_peer, 1, wrong_transport.private_key(), 160).err().unwrap(), "envelope_decryption_failed");
     }
 
     #[test]
