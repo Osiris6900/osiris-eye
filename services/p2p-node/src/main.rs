@@ -1068,14 +1068,31 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         continue;
                     }
                     if e2ee_enabled {
-                        let recipients = if let Some(path) = env::var_os("OSIRIS_E2EE_RECIPIENTS_FILE") {
-                            fs::read_to_string(PathBuf::from(path))?
+                        let recipients_raw = if let Some(path) = env::var_os("OSIRIS_E2EE_RECIPIENTS_FILE") {
+                            match fs::read_to_string(PathBuf::from(path)) {
+                                Ok(value) => value,
+                                Err(error) => {
+                                    emit!("publish_rejected reason=recipient_file_read_error error={error}");
+                                    continue;
+                                }
+                            }
                         } else {
                             env::var("OSIRIS_E2EE_RECIPIENTS").unwrap_or_default()
                         };
-                        let recipients: Vec<&str> = recipients.split(',').map(str::trim).filter(|value| !value.is_empty()).collect();
-                        if recipients.is_empty() {
-                            emit!("publish_rejected reason=e2ee_recipients_required");
+                        if recipients_raw.len() > 16_384 {
+                            emit!("publish_rejected reason=recipient_configuration_too_large");
+                            continue;
+                        }
+                        let mut unique_recipients = HashSet::new();
+                        let recipients: Vec<String> = recipients_raw
+                            .split(',')
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                            .filter(|value| unique_recipients.insert((*value).to_owned()))
+                            .map(str::to_owned)
+                            .collect();
+                        if recipients.is_empty() || recipients.len() > 128 {
+                            emit!("publish_rejected reason=e2ee_recipient_count_out_of_range");
                             continue;
                         }
                         let plaintext = serde_json::to_vec(&envelope)?;
@@ -1096,7 +1113,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 continue;
                             };
                             let recipient_binding = match verify_key_binding(
-                                binding_record, SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(), binding_record.key_epoch
+                                binding_record,
+                                SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+                                binding_record.key_epoch,
                             ) {
                                 Ok(binding) => binding,
                                 Err(error) => {
@@ -1104,15 +1123,29 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                     continue;
                                 }
                             };
-                            let encrypted = encrypt_for_recipient(
-                                &key, transport_key_epoch, &recipient_peer.to_string(),
-                                &recipient_binding.transport_public_key, recipient_binding.key_epoch,
-                                &plaintext, SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-                                SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() + 3600,
-                            )?;
+                            let created_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+                            let encrypted = match encrypt_for_recipient(
+                                &key,
+                                transport_key_epoch,
+                                &recipient_peer.to_string(),
+                                &recipient_binding.transport_public_key,
+                                recipient_binding.key_epoch,
+                                &plaintext,
+                                created_at,
+                                created_at + 3600,
+                            ) {
+                                Ok(encrypted) => encrypted,
+                                Err(error) => {
+                                    emit!("publish_rejected recipient={recipient_peer} reason=encryption_error error={error}");
+                                    continue;
+                                }
+                            };
+                            let message_id = encrypted.message_id.clone();
                             let bytes = serde_json::to_vec(&encrypted)?;
-                            swarm.behaviour_mut().gossipsub.publish(encrypted_topic.clone(), bytes)?;
-                            emit!("encrypted_observation_published recipient={recipient_peer} message_id={}", encrypted.message_id);
+                            match swarm.behaviour_mut().gossipsub.publish(encrypted_topic.clone(), bytes) {
+                                Ok(_) => emit!("encrypted_observation_published recipient={recipient_peer} message_id={message_id}"),
+                                Err(error) => emit!("encrypted_observation_deferred recipient={recipient_peer} error={error}"),
+                            }
                         }
                     } else {
                         swarm.behaviour_mut().gossipsub.publish(topic.clone(), line.into_bytes())?;
