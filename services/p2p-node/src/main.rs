@@ -1,10 +1,12 @@
 mod peer_auth;
 mod revocation;
 mod e2ee;
+mod peer_key_store;
 
 use revocation::{RevocationRegistry, RevocationSyncMessage};
 use e2ee::{create_key_binding, decrypt_for_recipient, encrypt_for_recipient, verify_key_binding, EncryptedEnvelope, KeyBindingRecord, TransportKeyPair};
 use peer_auth::{is_peer_allowed, parse_revoked_peers, parse_trusted_peers};
+use peer_key_store::PeerKeyStore;
 use std::{collections::{HashMap, HashSet}, env, error::Error, fs::{self, OpenOptions}, io::{BufRead, BufReader as StdBufReader, Write}, net::SocketAddr, path::PathBuf, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
 
 macro_rules! emit {
@@ -33,7 +35,6 @@ const KEY_BINDING_TOPIC_NAME: &str = "osiris/e2ee/key-bindings/1";
 const ENCRYPTED_TOPIC_NAME: &str = "osiris/e2ee/messages/1";
 const REVOCATION_SYNC_PAGE_SIZE: usize = 128;
 const MAX_PENDING_REVOCATION_REQUESTS: usize = 256;
-const MAX_PEER_KEY_BINDINGS: usize = 4096;
 const REVOCATION_REQUEST_TTL: Duration = Duration::from_secs(120);
 
 const MAX_REPLAY_CACHE_BYTES: u64 = 64 * 1024 * 1024;
@@ -618,7 +619,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(".osiris-replay-cache"));
     let mut replay_guard = ReplayGuard::open(replay_path.clone())?;
-    let mut peer_key_bindings: HashMap<PeerId, KeyBindingRecord> = HashMap::new();
+    let peer_key_store_path = env::var_os("OSIRIS_PEER_KEY_STORE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(".osiris-peer-keys.sqlite3"));
+    let mut peer_key_store = PeerKeyStore::open(peer_key_store_path.clone())?;
+    emit!("peer_key_store=loaded bindings={} path={}", peer_key_store.len()?, peer_key_store_path.display());
     emit!("replay_protection=durable cache_entries={} cache_path={}", replay_guard.seen.len(), replay_path.display());
     for (bootstrap_peer, _) in &bootstrap_peers {
         if !is_peer_allowed(bootstrap_peer, &trusted_peers, &revoked_peers) {
@@ -827,24 +832,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         }
                         match serde_json::from_slice::<KeyBindingRecord>(&message.data) {
                             Ok(record) => {
-                                let minimum_epoch = peer_key_bindings.get(&authenticated_source)
-                                    .map(|existing| existing.key_epoch).unwrap_or(1);
+                                let peer_key = authenticated_source.to_string();
+                                let existing = peer_key_store.get(&peer_key)?;
+                                let minimum_epoch = existing.as_ref()
+                                    .map(|binding| binding.key_epoch).unwrap_or(1);
                                 match verify_key_binding(&record, SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(), minimum_epoch) {
                                     Ok(verified) if verified.peer_id == authenticated_source => {
-                                        if let Some(existing) = peer_key_bindings.get(&authenticated_source) {
-                                            if existing.key_epoch == record.key_epoch
-                                                && existing.transport_public_key != record.transport_public_key {
-                                                emit!("key_binding_rejected peer={authenticated_source} reason=key_changed_without_epoch_increment");
-                                                continue;
-                                            }
+                                        match peer_key_store.upsert_verified(&record) {
+                                            Ok(()) => emit!("key_binding_accepted peer={authenticated_source} epoch={} durable=true", verified.key_epoch),
+                                            Err(error) => emit!("key_binding_rejected peer={authenticated_source} reason=durable_store_rejected error={error}"),
                                         }
-                                        if !peer_key_bindings.contains_key(&authenticated_source)
-                                            && peer_key_bindings.len() >= MAX_PEER_KEY_BINDINGS {
-                                            emit!("key_binding_rejected peer={authenticated_source} reason=key_binding_store_capacity_exceeded");
-                                            continue;
-                                        }
-                                        peer_key_bindings.insert(authenticated_source, record);
-                                        emit!("key_binding_accepted peer={authenticated_source} epoch={}", verified.key_epoch);
                                     }
                                     Ok(_) => emit!("key_binding_rejected peer={authenticated_source} reason=publisher_peer_id_mismatch"),
                                     Err(error) => emit!("key_binding_rejected peer={authenticated_source} reason={error}"),
@@ -866,12 +863,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         match serde_json::from_slice::<EncryptedEnvelope>(&message.data) {
                             Ok(envelope) if envelope.sender_peer_id == authenticated_source.to_string()
                                 && envelope.recipient_peer_id == peer_id.to_string() => {
-                                let Some(binding_record) = peer_key_bindings.get(&authenticated_source) else {
+                                let Some(binding_record) = peer_key_store.get(&authenticated_source.to_string())? else {
                                     emit!("encrypted_message_rejected peer={authenticated_source} reason=sender_key_binding_missing");
                                     continue;
                                 };
                                 let sender_binding = match verify_key_binding(
-                                    binding_record,
+                                    &binding_record,
                                     SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
                                     envelope.sender_key_epoch,
                                 ) {
@@ -1113,12 +1110,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 emit!("publish_rejected recipient={recipient_peer} reason=recipient_not_allowed");
                                 continue;
                             }
-                            let Some(binding_record) = peer_key_bindings.get(&recipient_peer) else {
+                            let Some(binding_record) = peer_key_store.get(&recipient_peer.to_string())? else {
                                 emit!("publish_deferred recipient={recipient_peer} reason=recipient_key_binding_missing");
                                 continue;
                             };
                             let recipient_binding = match verify_key_binding(
-                                binding_record,
+                                &binding_record,
                                 SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
                                 binding_record.key_epoch,
                             ) {

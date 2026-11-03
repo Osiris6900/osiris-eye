@@ -48,6 +48,7 @@ def wait_for(predicate, timeout, description):
 def start_node(name, key_path, listen=None, bootstrap=None):
     env = os.environ.copy()
     env["OSIRIS_NODE_KEY"] = str(key_path)
+    env["OSIRIS_PEER_KEY_STORE"] = str(key_path.with_suffix(".peer-keys.sqlite3"))
     if listen:
         env["OSIRIS_LISTEN_ADDR"] = listen
     if bootstrap:
@@ -76,10 +77,12 @@ try:
         multiaddr = listen_line.split(" address=", 1)[1].split()[0]
         node_b = start_node("node-b", tmp / "node-b.key", "/ip4/127.0.0.1/tcp/0", multiaddr)
 
-        wait_for(lambda n, l: n == "node-a" and l.startswith("gossipsub_subscribed peer="), 20, "GossipSub subscription from node B")
-        wait_for(lambda n, l: n == "node-b" and l.startswith("gossipsub_subscribed peer="), 20, "GossipSub subscription from node A")
-        # GossipSub needs a heartbeat to form its mesh after subscription exchange.
-        time.sleep(1.5)
+        # A's subscription event confirms that the remote B peer has joined
+        # the observation topic. GossipSub does not guarantee a symmetric
+        # subscription event is emitted to both processes at the same time.
+        wait_for(lambda n, l: n == "node-a" and l.startswith("gossipsub_subscribed peer="), 30, "GossipSub subscription from node B")
+        # Allow a heartbeat for the mesh to settle before publishing.
+        time.sleep(2.0)
         envelope = {
             "schema": "osiris.observation.v1",
             "instrument": "P2P-PROCESS-TEST",
