@@ -1,8 +1,10 @@
 mod peer_auth;
 mod revocation;
 mod e2ee;
+mod e2ee;
 
 use revocation::{RevocationRegistry, RevocationSyncMessage};
+use e2ee::{create_key_binding, decrypt_for_recipient, encrypt_for_recipient, verify_key_binding, EncryptedEnvelope, KeyBindingRecord, TransportKeyPair};
 use peer_auth::{is_peer_allowed, parse_revoked_peers, parse_trusted_peers};
 use std::{collections::{HashMap, HashSet}, env, error::Error, fs::{self, OpenOptions}, io::{BufRead, BufReader as StdBufReader, Write}, net::SocketAddr, path::PathBuf, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
 
@@ -28,6 +30,8 @@ use tokio::{io::{self, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
 const PROTOCOL_VERSION: &str = "/osiris-eye/p2p/1.0.0";
 const TOPIC_NAME: &str = "osiris/observations/1";
 const REVOCATION_TOPIC_NAME: &str = "osiris/revocations/1";
+const KEY_BINDING_TOPIC_NAME: &str = "osiris/e2ee/key-bindings/1";
+const ENCRYPTED_TOPIC_NAME: &str = "osiris/e2ee/messages/1";
 const REVOCATION_SYNC_PAGE_SIZE: usize = 128;
 const MAX_PENDING_REVOCATION_REQUESTS: usize = 256;
 const REVOCATION_REQUEST_TTL: Duration = Duration::from_secs(120);
@@ -72,6 +76,28 @@ impl ReplayGuard {
     }
 
     /// Persist before accepting. A crash after sync may reject a retry, never accept a duplicate.
+
+    fn record_message_id_if_new(&mut self, message_id: &str) -> Result<bool, Box<dyn Error>> {
+        if message_id.is_empty() || message_id.len() > 128 {
+            return Err("invalid replay message ID".into());
+        }
+        let id = format!("{:x}", Sha256::digest(message_id.as_bytes()));
+        if self.seen.contains(&id) {
+            return Ok(false);
+        }
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        let entry = format!("{timestamp} {id}\n");
+        let current_size = fs::metadata(&self.path).map(|m| m.len()).unwrap_or(0);
+        if current_size.saturating_add(entry.len() as u64) > MAX_REPLAY_CACHE_BYTES {
+            return Err("replay cache reached 64 MiB capacity; refusing new encrypted messages".into());
+        }
+        let mut file = OpenOptions::new().create(true).append(true).open(&self.path)?;
+        file.write_all(entry.as_bytes())?;
+        file.sync_data()?;
+        self.seen.insert(id);
+        Ok(true)
+    }
+
     fn record_if_new(&mut self, envelope: &ObservationEnvelope) -> Result<bool, Box<dyn Error>> {
         let id = Self::message_id(envelope)?;
         if self.seen.contains(&id) {
@@ -294,6 +320,29 @@ fn load_or_create_identity() -> Result<identity::Keypair, Box<dyn Error>> {
     Ok(key)
 }
 
+
+fn load_or_create_transport_key() -> Result<TransportKeyPair, Box<dyn Error>> {
+    let path = env::var_os("OSIRIS_TRANSPORT_KEY")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(".osiris-transport-key"));
+    if path.exists() {
+        let bytes = fs::read(&path)?;
+        let key: [u8; 32] = bytes.try_into()
+            .map_err(|_| "transport key file must contain exactly 32 bytes")?;
+        return Ok(TransportKeyPair::from_private_bytes(key));
+    }
+    let key = TransportKeyPair::generate();
+    let mut file = OpenOptions::new().write(true).create_new(true).open(&path)?;
+    file.write_all(&key.private_bytes())?;
+    file.sync_all()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(key)
+}
+
 fn revocation_request_id(peer_id: &PeerId, cursor: Option<&str>) -> String {
     let now = SystemTime::now().duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos()).unwrap_or_default();
@@ -456,6 +505,13 @@ async fn serve_health_endpoint(
 async fn main() -> Result<(), Box<dyn Error>> {
     let key = load_or_create_identity()?;
     let peer_id = PeerId::from(key.public());
+    let e2ee_enabled = env::var("OSIRIS_E2EE_ENABLED").map(|value| value == "1").unwrap_or(false);
+    let transport_key = load_or_create_transport_key()?;
+    let transport_key_epoch = env::var("OSIRIS_TRANSPORT_KEY_EPOCH")
+        .ok().and_then(|value| value.parse::<u64>().ok()).unwrap_or(1);
+    if transport_key_epoch == 0 { return Err("OSIRIS_TRANSPORT_KEY_EPOCH must be positive".into()); }
+    let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+    let local_key_binding = create_key_binding(&key, &transport_key.public_key, transport_key_epoch, now, now + 30 * 24 * 60 * 60)?;
 
     let gossipsub_config = gossipsub::ConfigBuilder::default()
         .heartbeat_interval(Duration::from_secs(10))
@@ -469,6 +525,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     )?;
     let topic = gossipsub::IdentTopic::new(TOPIC_NAME);
     let revocation_topic = gossipsub::IdentTopic::new(REVOCATION_TOPIC_NAME);
+    let key_binding_topic = gossipsub::IdentTopic::new(KEY_BINDING_TOPIC_NAME);
+    let encrypted_topic = gossipsub::IdentTopic::new(ENCRYPTED_TOPIC_NAME);
     let mut behaviour = Behaviour {
         gossipsub,
         kademlia: kad::Behaviour::new(peer_id, MemoryStore::new(peer_id)),
@@ -480,6 +538,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     behaviour.kademlia.set_mode(Some(kad::Mode::Server));
     behaviour.gossipsub.subscribe(&topic)?;
     behaviour.gossipsub.subscribe(&revocation_topic)?;
+    behaviour.gossipsub.subscribe(&key_binding_topic)?;
+    behaviour.gossipsub.subscribe(&encrypted_topic)?;
 
     let mut swarm = SwarmBuilder::with_existing_identity(key)
         .with_tokio()
@@ -524,6 +584,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(".osiris-replay-cache"));
     let mut replay_guard = ReplayGuard::open(replay_path.clone())?;
+    let mut peer_key_bindings: HashMap<PeerId, KeyBindingRecord> = HashMap::new();
     emit!("replay_protection=durable cache_entries={} cache_path={}", replay_guard.seen.len(), replay_path.display());
     for (bootstrap_peer, _) in &bootstrap_peers {
         if !is_peer_allowed(bootstrap_peer, &trusted_peers, &revoked_peers) {
@@ -576,6 +637,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     emit!("OSIRIS EYE P2P node starting");
     emit!("peer_id={peer_id}");
     emit!("topic={TOPIC_NAME}");
+    emit!("e2ee_enabled={e2ee_enabled} key_binding_topic={KEY_BINDING_TOPIC_NAME} encrypted_topic={ENCRYPTED_TOPIC_NAME}");
+    emit!("transport_key_epoch={transport_key_epoch} transport_key_file_configured=true");
+    let binding_bytes = serde_json::to_vec(&local_key_binding)?;
+    let _ = swarm.behaviour_mut().gossipsub.publish(key_binding_topic.clone(), binding_bytes);
     emit!("bootstrap_peers={}", bootstrap_peers.len());
     emit!("bootstrap_reconnect_interval_seconds={reconnect_interval_secs}");
     emit!("revocation_sync_interval_seconds={revocation_sync_interval_secs}");
@@ -693,6 +758,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         continue;
                     }
                     emit!("gossipsub_subscribed peer={subscribed_peer_id}");
+                    let binding_bytes = serde_json::to_vec(&local_key_binding)?;
+                    let _ = swarm.behaviour_mut().gossipsub.publish(key_binding_topic.clone(), binding_bytes);
                     if revocation_registry.is_some() {
                         let request_id = revocation_request_id(&peer_id, None);
                         remember_revocation_request(&mut pending_revocation_requests, request_id.clone());
@@ -704,6 +771,100 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     propagation_source, message, ..
                 })) => {
                     let authenticated_source = message.source.unwrap_or(propagation_source);
+
+                    if message.topic.as_str() == KEY_BINDING_TOPIC_NAME {
+                        if !is_peer_allowed(&authenticated_source, &trusted_peers, &revoked_peers) {
+                            emit!("key_binding_rejected peer={authenticated_source} reason=peer_not_allowed");
+                            continue;
+                        }
+                        match serde_json::from_slice::<KeyBindingRecord>(&message.data) {
+                            Ok(record) => {
+                                let minimum_epoch = peer_key_bindings.get(&authenticated_source)
+                                    .map(|existing| existing.key_epoch).unwrap_or(1);
+                                match verify_key_binding(&record, SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(), minimum_epoch) {
+                                    Ok(verified) if verified.peer_id == authenticated_source => {
+                                        if let Some(existing) = peer_key_bindings.get(&authenticated_source) {
+                                            if existing.key_epoch == record.key_epoch
+                                                && existing.transport_public_key != record.transport_public_key {
+                                                emit!("key_binding_rejected peer={authenticated_source} reason=key_changed_without_epoch_increment");
+                                                continue;
+                                            }
+                                        }
+                                        peer_key_bindings.insert(authenticated_source, record);
+                                        emit!("key_binding_accepted peer={authenticated_source} epoch={}", verified.key_epoch);
+                                    }
+                                    Ok(_) => emit!("key_binding_rejected peer={authenticated_source} reason=publisher_peer_id_mismatch"),
+                                    Err(error) => emit!("key_binding_rejected peer={authenticated_source} reason={error}"),
+                                }
+                            }
+                            Err(error) => emit!("key_binding_rejected peer={authenticated_source} reason=invalid_record error={error}"),
+                        }
+                        continue;
+                    }
+                    if message.topic.as_str() == ENCRYPTED_TOPIC_NAME {
+                        if !e2ee_enabled {
+                            emit!("encrypted_message_ignored reason=e2ee_disabled");
+                            continue;
+                        }
+                        if !is_peer_allowed(&authenticated_source, &trusted_peers, &revoked_peers) {
+                            emit!("encrypted_message_rejected peer={authenticated_source} reason=peer_not_allowed");
+                            continue;
+                        }
+                        match serde_json::from_slice::<EncryptedEnvelope>(&message.data) {
+                            Ok(envelope) if envelope.sender_peer_id == authenticated_source.to_string()
+                                && envelope.recipient_peer_id == peer_id.to_string() => {
+                                let Some(binding_record) = peer_key_bindings.get(&authenticated_source) else {
+                                    emit!("encrypted_message_rejected peer={authenticated_source} reason=sender_key_binding_missing");
+                                    continue;
+                                };
+                                let sender_binding = match verify_key_binding(
+                                    binding_record,
+                                    SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+                                    envelope.sender_key_epoch,
+                                ) {
+                                    Ok(binding) if binding.key_epoch == envelope.sender_key_epoch => binding,
+                                    _ => {
+                                        emit!("encrypted_message_rejected peer={authenticated_source} reason=sender_key_binding_invalid");
+                                        continue;
+                                    }
+                                };
+                                let plaintext = match decrypt_for_recipient(
+                                    &envelope, &sender_binding, &peer_id, transport_key_epoch,
+                                    transport_key.private_key(),
+                                    SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+                                ) {
+                                    Ok(plaintext) => plaintext,
+                                    Err(error) => {
+                                        emit!("encrypted_message_rejected peer={authenticated_source} reason={error}");
+                                        continue;
+                                    }
+                                };
+                                match replay_guard.record_message_id_if_new(&envelope.message_id) {
+                                    Ok(true) => {}
+                                    Ok(false) => {
+                                        emit!("encrypted_message_rejected peer={authenticated_source} reason=replay_detected");
+                                        continue;
+                                    }
+                                    Err(error) => {
+                                        emit!("encrypted_message_rejected peer={authenticated_source} reason=replay_store_error error={error}");
+                                        continue;
+                                    }
+                                }
+                                match serde_json::from_slice::<ObservationEnvelope>(&plaintext) {
+                                    Ok(observation) if observation.validate().is_ok() => emit!(
+                                        "encrypted_observation_received peer={} instrument={} provider={} observed_at={} payload_sha256={} payload_bytes={}",
+                                        authenticated_source, observation.instrument, observation.provider,
+                                        observation.observed_at, observation.payload_sha256, observation.payload.len()
+                                    ),
+                                    _ => emit!("encrypted_message_rejected peer={authenticated_source} reason=invalid_plaintext_observation"),
+                                }
+                            }
+                            Ok(_) => emit!("encrypted_message_discarded reason=not_for_this_recipient_or_sender_mismatch"),
+                            Err(error) => emit!("encrypted_message_rejected peer={authenticated_source} reason=invalid_envelope error={error}"),
+                        }
+                        continue;
+                    }
+
                     if message.topic.as_str() == REVOCATION_TOPIC_NAME {
                         let authenticated_source = message.source.unwrap_or(propagation_source);
                         if !is_peer_allowed(&authenticated_source, &trusted_peers, &revoked_peers) {
@@ -854,7 +1015,48 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         eprintln!("publish_rejected reason={reason}");
                         continue;
                     }
-                    swarm.behaviour_mut().gossipsub.publish(topic.clone(), line.into_bytes())?;
+                    if e2ee_enabled {
+                        let recipients = env::var("OSIRIS_E2EE_RECIPIENTS").unwrap_or_default();
+                        let recipients: Vec<&str> = recipients.split(',').map(str::trim).filter(|value| !value.is_empty()).collect();
+                        if recipients.is_empty() {
+                            emit!("publish_rejected reason=e2ee_recipients_required");
+                            continue;
+                        }
+                        let plaintext = serde_json::to_vec(&envelope)?;
+                        for recipient in recipients {
+                            let recipient_peer: PeerId = match recipient.parse() {
+                                Ok(peer) => peer,
+                                Err(_) => {
+                                    emit!("publish_rejected reason=invalid_e2ee_recipient");
+                                    continue;
+                                }
+                            };
+                            let Some(binding_record) = peer_key_bindings.get(&recipient_peer) else {
+                                emit!("publish_deferred recipient={recipient_peer} reason=recipient_key_binding_missing");
+                                continue;
+                            };
+                            let recipient_binding = match verify_key_binding(
+                                binding_record, SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(), binding_record.key_epoch
+                            ) {
+                                Ok(binding) => binding,
+                                Err(error) => {
+                                    emit!("publish_rejected recipient={recipient_peer} reason=recipient_key_binding_invalid error={error}");
+                                    continue;
+                                }
+                            };
+                            let encrypted = encrypt_for_recipient(
+                                &key, transport_key_epoch, &recipient_peer.to_string(),
+                                &recipient_binding.transport_public_key, recipient_binding.key_epoch,
+                                &plaintext, SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+                                SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() + 3600,
+                            )?;
+                            let bytes = serde_json::to_vec(&encrypted)?;
+                            swarm.behaviour_mut().gossipsub.publish(encrypted_topic.clone(), bytes)?;
+                            emit!("encrypted_observation_published recipient={recipient_peer} message_id={}", encrypted.message_id);
+                        }
+                    } else {
+                        swarm.behaviour_mut().gossipsub.publish(topic.clone(), line.into_bytes())?;
+                    }
                 }
                 Some(_) => {}
                 None => {
