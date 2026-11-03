@@ -4,7 +4,7 @@ use futures::StreamExt;
 use libp2p::{
     core::{transport::OrTransport, upgrade, Transport},
     gossipsub, identity, noise, relay,
-    swarm::{NetworkBehaviour, Swarm, SwarmEvent, Config},
+    swarm::{Config, NetworkBehaviour, Swarm, SwarmEvent},
     tcp, yamux, Multiaddr, PeerId,
 };
 
@@ -65,32 +65,57 @@ async fn main() -> Result<(), Box<dyn Error>> {
         _ => None,
     }).ok_or("relay multiaddr must include /p2p/<relay-peer-id>")?;
 
-    let mut sender_circuit_addr: Option<Multiaddr> = None;
-    if role == "receiver" {
-        let circuit_addr = relay_addr.clone().with(libp2p::multiaddr::Protocol::P2pCircuit);
-        swarm.listen_on(circuit_addr)?;
-        emit!("relay_client_role=receiver");
-    } else {
-        let target: PeerId = env::var("OSIRIS_RELAY_TARGET_PEER")?.parse()?;
-        let circuit_addr = relay_addr.clone()
-            .with(libp2p::multiaddr::Protocol::P2pCircuit)
-            .with(libp2p::multiaddr::Protocol::P2p(target));
-        sender_circuit_addr = Some(circuit_addr.clone());
-        swarm.dial(circuit_addr)?;
-        emit!("relay_client_role=sender");
-    }
+    // Establish the ordinary relay-server connection first. Only request a
+    // reservation or circuit after that connection is established. This is
+    // the ordering used by libp2p's reference Circuit Relay client example.
+    swarm.dial(relay_addr.clone())?;
+    emit!("relay_client_role={role}");
     emit!("peer_id={peer_id}");
     emit!("relay_peer_id={relay_peer}");
 
-    let mut published = false;
+    let target = if role == "sender" {
+        Some(env::var("OSIRIS_RELAY_TARGET_PEER")?.parse::<PeerId>()?)
+    } else {
+        None
+    };
+    let mut relay_connected = false;
+    let mut receiver_reservation_accepted = false;
+    let mut sender_circuit_started = false;
     let mut sender_dial_attempts = 0_u8;
+    let mut published = false;
+
     loop {
         match swarm.select_next_some().await {
+            SwarmEvent::ConnectionEstablished { peer_id: connected_peer, endpoint, .. } => {
+                emit!("peer_connected={connected_peer} relayed={}", endpoint.is_relayed());
+                if connected_peer == relay_peer && !relay_connected {
+                    relay_connected = true;
+                    if role == "receiver" {
+                        let circuit_addr = relay_addr.clone()
+                            .with(libp2p::multiaddr::Protocol::P2pCircuit);
+                        swarm.listen_on(circuit_addr)?;
+                        emit!("relay_reservation_requested=true");
+                    } else if let Some(target_peer) = target {
+                        let circuit_addr = relay_addr.clone()
+                            .with(libp2p::multiaddr::Protocol::P2pCircuit)
+                            .with(libp2p::multiaddr::Protocol::P2p(target_peer));
+                        swarm.dial(circuit_addr)?;
+                        sender_circuit_started = true;
+                        emit!("relay_circuit_dial_started=true");
+                    }
+                }
+            }
             SwarmEvent::NewListenAddr { address, .. } => {
                 emit!("relay_reserved_address={address}");
             }
-            SwarmEvent::ConnectionEstablished { peer_id, endpoint, .. } => {
-                emit!("peer_connected={peer_id} relayed={}", endpoint.is_relayed());
+            SwarmEvent::Behaviour(BehaviourEvent::Relay(
+                relay::client::Event::ReservationReqAccepted { relay_peer_id: accepted_peer, renewal, .. }
+            )) => {
+                emit!("relay_client_event=ReservationReqAccepted relay_peer_id={accepted_peer} renewal={renewal}");
+                if role == "receiver" && accepted_peer == relay_peer && !renewal {
+                    receiver_reservation_accepted = true;
+                    emit!("relay_reservation_accepted=true");
+                }
             }
             SwarmEvent::Behaviour(BehaviourEvent::Relay(event)) => {
                 emit!("relay_client_event={event:?}");
@@ -111,18 +136,23 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     return Ok(());
                 }
             }
-            SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
-                emit!("connection_error peer={peer_id:?} error={error}");
-                if role == "sender" && sender_dial_attempts < 8 {
+            SwarmEvent::OutgoingConnectionError { peer_id: failed_peer, error, .. } => {
+                emit!("connection_error peer={failed_peer:?} error={error}");
+                if role == "sender" && sender_circuit_started && sender_dial_attempts < 3 {
                     sender_dial_attempts += 1;
                     emit!("relay_dial_retry={sender_dial_attempts}");
-                    tokio::time::sleep(Duration::from_millis(750)).await;
-                    swarm.dial(sender_circuit_addr.as_ref().ok_or("missing sender circuit address")?.clone())?;
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    let circuit_addr = relay_addr.clone()
+                        .with(libp2p::multiaddr::Protocol::P2pCircuit)
+                        .with(libp2p::multiaddr::Protocol::P2p(target.ok_or("missing target peer")?));
+                    swarm.dial(circuit_addr)?;
                 } else {
-                    return Err("relay client connection failed after retries".into());
+                    return Err("relay client connection failed".into());
                 }
             }
-            _ => {}
+            _ => {
+                let _ = receiver_reservation_accepted;
+            }
         }
     }
 }
