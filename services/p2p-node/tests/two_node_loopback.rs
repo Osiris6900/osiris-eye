@@ -7,6 +7,7 @@ use libp2p::{
     tcp, yamux, Multiaddr, PeerId, Swarm, SwarmBuilder,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 const TOPIC_NAME: &str = "osiris/observations/1";
 
@@ -17,6 +18,7 @@ struct ObservationEnvelope {
     observed_at: String,
     provider: String,
     payload_sha256: String,
+    payload: String,
 }
 
 #[derive(NetworkBehaviour)]
@@ -82,7 +84,8 @@ async fn two_local_nodes_exchange_signed_observation() {
         instrument: "BTC-USD".into(),
         observed_at: "2026-11-03T01:00:00Z".into(),
         provider: "loopback-test".into(),
-        payload_sha256: "a".repeat(64),
+        payload_sha256: format!("{:x}", Sha256::digest(b"loopback observation payload")),
+        payload: "loopback observation payload".into(),
     };
     let payload = serde_json::to_vec(&expected).unwrap();
     let topic = gossipsub::IdentTopic::new(TOPIC_NAME);
