@@ -34,10 +34,19 @@ Do not enable a registry with a placeholder or unverified authority key. Provisi
 
 ## Not yet implemented
 
-- Authenticated request correlation and per-request response routing (current requests and pages are broadcast on GossipSub).
+- Direct per-peer routing and responder diversity policy; protocol v2 correlates broadcast responses but does not provide private unicast.
 - Durable per-peer sequence checkpoints shared across registry snapshots.
 - Authority-key rotation with threshold/quorum authorization and rollback protection.
 - Expiry, un-revoke/appeal policy, and audit export.
 - Automated offline-node and partition-healing recovery tests, plus multi-region/load tests.
 
-The implementation now has periodic anti-entropy requests and bounded paginated registry exchange. A returning node can request current pages from connected peers, while accepted records continue to propagate through the mesh. Nodes must still be provisioned with the same authority key. Because GossipSub requests are broadcast rather than individually correlated, duplicate page responses are possible and are handled through monotonic sequence checks; this is not a substitute for authenticated request IDs or durable anti-entropy checkpoints. This is **not yet production-certified global synchronization**.
+The implementation now has periodic anti-entropy requests and bounded paginated registry exchange. A returning node can request current pages from connected peers, while accepted records continue to propagate through the mesh. Nodes must still be provisioned with the same authority key. Protocol v2 binds each request to the authenticated GossipSub publisher PeerId and each response to its request ID, intended requester, and authenticated responder PeerId. Multiple distinct responders may answer the same request. Legacy unbound SnapshotPage responses are rejected. Requests remain broadcast, so this is correlation rather than private routing; request IDs are bounded by a short-lived in-memory pending cache and are not durable across restart. This is **not yet production-certified global synchronization**.
+
+
+## Request-bound synchronization v2
+
+- A page request carries a 256-bit hexadecimal request ID and the requester PeerId. The receiver requires the declared requester to equal the authenticated GossipSub propagation source.
+- A page response echoes the request ID and requester PeerId, and declares its responder PeerId. The requester requires the ID to be pending, the requester field to match its own PeerId, and the responder field to match the authenticated GossipSub source.
+- Pending request IDs expire after 120 seconds and the in-memory cache is capped at 256 entries. Multiple peers may respond to the same broadcast request; a response does not consume the pending ID.
+- Legacy unbound page responses are rejected. This is not private unicast: GossipSub still broadcasts request and response payloads to topic subscribers.
+- Request IDs currently derive from the local PeerId, high-resolution time, and cursor. A future hardening step should use an OS CSPRNG nonce and persist anti-entropy checkpoints.
