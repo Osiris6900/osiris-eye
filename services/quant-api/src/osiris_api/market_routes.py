@@ -12,6 +12,7 @@ from .market_universe import ASSET_CLASSES, audit_instruments
 from .provider_bootstrap import provider_readiness
 from .provider_router import MultiProviderMarketDataRouter
 from .public_market_data import CoinbasePublicMarketDataAdapter
+from .global_public_market_data import BinancePublicSpotAdapter, StooqDailyEquityAdapter
 from .universal_aggregator import UniversalMarketDataAggregator
 
 router = APIRouter(tags=["market-data"])
@@ -24,6 +25,24 @@ if os.getenv("OSIRIS_PUBLIC_COINBASE_ENABLED", "true").strip().lower() in {"1", 
         "coinbase-public", CoinbasePublicMarketDataAdapter(granularity=granularity),
         supported_asset_classes=["crypto"],
         entitlement_reference="public-data:coinbase-exchange",
+    )
+
+
+# Additional public feeds: read-only data endpoints; no trading credentials required.
+if os.getenv("OSIRIS_PUBLIC_BINANCE_ENABLED", "true").strip().lower() in {"1", "true", "yes"}:
+    market_data_gateway.register_adapter(
+        "binance-public", BinancePublicSpotAdapter(
+            interval=os.getenv("OSIRIS_PUBLIC_BINANCE_INTERVAL", "1m")
+        ),
+        supported_asset_classes=["crypto"],
+        entitlement_reference="public-data:binance-spot",
+    )
+
+if os.getenv("OSIRIS_PUBLIC_STOOQ_ENABLED", "true").strip().lower() in {"1", "true", "yes"}:
+    market_data_gateway.register_adapter(
+        "stooq-daily", StooqDailyEquityAdapter(),
+        supported_asset_classes=["equity", "index", "fx", "commodity"],
+        entitlement_reference="public-data:stooq-daily",
     )
 
 
@@ -71,6 +90,26 @@ def market_data_instruments_audit(payload: dict[str, Any]):
         return audit_instruments(instruments)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/market-data/global-coverage")
+def market_data_global_coverage():
+    """Describe implemented public connectors and global asset-class ambitions honestly."""
+    providers = market_data_gateway.providers()["providers"]
+    return {
+        "asset_classes": list(ASSET_CLASSES),
+        "implemented_public_connectors": [
+            {"provider": "coinbase-public", "asset_classes": ["crypto"], "granularity": "configurable candles", "coverage": "Coinbase Exchange listed products"},
+            {"provider": "binance-public", "asset_classes": ["crypto"], "granularity": os.getenv("OSIRIS_PUBLIC_BINANCE_INTERVAL", "1m"), "coverage": "Binance Spot listed pairs"},
+            {"provider": "stooq-daily", "asset_classes": ["equity", "index", "fx", "commodity"], "granularity": "daily", "coverage": "Stooq-supported symbols with market suffix; verify symbol coverage per listing"},
+            {"provider": "interactive_brokers", "asset_classes": ["equity", "fx", "future", "option", "index"], "granularity": "broker entitlement dependent", "coverage": "only when paper adapter is explicitly configured"},
+        ],
+        "registered_provider_status": providers,
+        "global_coverage_complete": False,
+        "real_time_all_markets_verified": False,
+        "live_execution": False,
+        "note": "Connector support is not equivalent to full exchange coverage. Verify symbol mapping, data delay, exchange entitlements, rate limits and redistribution rights before production use.",
+    }
 
 
 @router.get("/market-data/providers")
