@@ -138,10 +138,10 @@ def main():
                 "OSIRIS_HEALTH_HTTP_ADDR=127.0.0.1:0 "
                 "OSIRIS_BOOTSTRAP_PEERS=" + shlex.quote(bootstrap) + "; "
                 + shlex.quote(remote_binary)
-                + " & child=\\$!; "
-                + "cleanup() { kill \\"\\$child\\" 2>/dev/null || true; "
-                + "wait \\"\\$child\\" 2>/dev/null || true; rm -rf \\"\\$tmp\\"; }; "
-                + "trap cleanup EXIT HUP INT TERM; wait \\"\\$child\\""
+                + " & child=$!; "
+                + "cleanup() { kill \\"$child\\" 2>/dev/null || true; "
+                + "wait \\"$child\\" 2>/dev/null || true; rm -rf \\"$tmp\\"; }; "
+                + "trap cleanup EXIT HUP INT TERM; wait \\"$child\\""
             )
             remote = subprocess.Popen(
                 ["ssh", "-T", *args.ssh_option, args.ssh_target, remote_command],
