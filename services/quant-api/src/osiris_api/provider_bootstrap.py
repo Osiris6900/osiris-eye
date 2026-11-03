@@ -12,9 +12,9 @@ from typing import Mapping
 # Asset coverage must be checked against provider product and exchange entitlements.
 PROVIDER_PROFILES: tuple[dict[str, object], ...] = (
     {"provider": "interactive_brokers", "label": "Interactive Brokers", "asset_classes": ["equity", "fx", "future", "option", "index"], "required_env": ["OSIRIS_IBKR_MODE", "OSIRIS_IBKR_HOST", "OSIRIS_IBKR_PORT", "OSIRIS_IBKR_CLIENT_ID", "OSIRIS_IBKR_ACCOUNT", "OSIRIS_IBKR_ENTITLEMENT_REFERENCE"], "integration_status": "read_only_paper_adapter_implemented"},
-    {"provider": "alpaca", "label": "Alpaca", "asset_classes": ["equity", "crypto", "option"], "required_env": ["OSIRIS_ALPACA_API_KEY", "OSIRIS_ALPACA_API_SECRET"], "integration_status": "adapter_not_implemented"},
-    {"provider": "binance", "label": "Binance", "asset_classes": ["crypto"], "required_env": ["OSIRIS_BINANCE_API_KEY", "OSIRIS_BINANCE_API_SECRET"], "integration_status": "adapter_not_implemented"},
-    {"provider": "coinbase", "label": "Coinbase", "asset_classes": ["crypto"], "required_env": ["OSIRIS_COINBASE_API_KEY", "OSIRIS_COINBASE_API_SECRET"], "integration_status": "adapter_not_implemented"},
+    {"provider": "stooq", "label": "Stooq", "asset_classes": ["equity"], "required_env": [], "integration_status": "public_daily_equity_adapter_implemented_no_key"},\n    {"provider": "alpaca", "label": "Alpaca", "asset_classes": ["equity", "crypto", "option"], "required_env": ["OSIRIS_ALPACA_API_KEY", "OSIRIS_ALPACA_API_SECRET"], "integration_status": "adapter_not_implemented"},
+    {"provider": "binance", "label": "Binance", "asset_classes": ["crypto"], "required_env": [], "integration_status": "public_spot_adapter_implemented_no_key"},
+    {"provider": "coinbase", "label": "Coinbase", "asset_classes": ["crypto"], "required_env": [], "integration_status": "public_exchange_adapter_implemented_no_key"},
     {"provider": "oanda", "label": "OANDA", "asset_classes": ["fx"], "required_env": ["OSIRIS_OANDA_API_TOKEN", "OSIRIS_OANDA_ACCOUNT_ID"], "integration_status": "adapter_not_implemented"},
     {"provider": "polygon", "label": "Polygon", "asset_classes": ["equity", "option", "index", "fx", "crypto"], "required_env": ["OSIRIS_POLYGON_API_KEY"], "integration_status": "adapter_not_implemented"},
     {"provider": "twelvedata", "label": "Twelve Data", "asset_classes": ["equity", "fx", "crypto", "index"], "required_env": ["OSIRIS_TWELVEDATA_API_KEY"], "integration_status": "adapter_not_implemented"},
