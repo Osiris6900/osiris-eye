@@ -146,6 +146,30 @@ fn peer_id_from_multiaddr(address: &Multiaddr) -> Option<PeerId> {
     })
 }
 
+fn parse_external_addresses(raw: Option<&str>) -> Result<Vec<Multiaddr>, Box<dyn Error>> {
+    let Some(raw) = raw else {
+        return Ok(Vec::new());
+    };
+
+    let mut addresses = Vec::new();
+    for entry in raw.split(',').map(str::trim).filter(|entry| !entry.is_empty()) {
+        let address: Multiaddr = entry.parse()?;
+        let has_tcp = address
+            .iter()
+            .any(|protocol| matches!(protocol, libp2p::multiaddr::Protocol::Tcp(_)));
+        let has_peer_id = peer_id_from_multiaddr(&address).is_some();
+        if !has_tcp || has_peer_id {
+            return Err(format!(
+                "external address must contain a TCP transport and must not contain /p2p/<peer-id>: {address}"
+            ).into());
+        }
+        if !addresses.contains(&address) {
+            addresses.push(address);
+        }
+    }
+    Ok(addresses)
+}
+
 fn parse_bootstrap_peers(
     swarm: &mut Swarm<Behaviour>,
 ) -> Result<Vec<(PeerId, Multiaddr)>, Box<dyn Error>> {
