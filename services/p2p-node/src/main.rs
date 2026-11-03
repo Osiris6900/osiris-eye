@@ -27,6 +27,7 @@ use tokio::{io::{self, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
 const PROTOCOL_VERSION: &str = "/osiris-eye/p2p/1.0.0";
 const TOPIC_NAME: &str = "osiris/observations/1";
 const REVOCATION_TOPIC_NAME: &str = "osiris/revocations/1";
+const REVOCATION_SYNC_PAGE_SIZE: usize = 128;
 
 const MAX_REPLAY_CACHE_BYTES: u64 = 64 * 1024 * 1024;
 
@@ -507,6 +508,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
         5,
         300,
     );
+    let revocation_sync_interval_secs = parse_interval_secs(
+        env::var("OSIRIS_REVOCATION_SYNC_INTERVAL_SECS").ok().as_deref(),
+        60,
+        30,
+        3600,
+    );
+    let mut revocation_sync_tick = tokio::time::interval(Duration::from_secs(revocation_sync_interval_secs));
+    revocation_sync_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut reconnect_tick = tokio::time::interval(Duration::from_secs(reconnect_interval_secs));
     reconnect_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let health_interval_secs = env::var("OSIRIS_HEALTH_INTERVAL_SECS")
@@ -532,6 +541,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     emit!("topic={TOPIC_NAME}");
     emit!("bootstrap_peers={}", bootstrap_peers.len());
     emit!("bootstrap_reconnect_interval_seconds={reconnect_interval_secs}");
+    emit!("revocation_sync_interval_seconds={revocation_sync_interval_secs}");
     emit!("health_interval_seconds={health_interval_secs}");
     emit!("Live trading and broker order submission are not part of this node.");
 
@@ -561,6 +571,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     connected_bootstrap_peers,
                     bootstrap_peers.len()
                 );
+            }
+            _ = revocation_sync_tick.tick(), if revocation_registry.is_some() => {
+                let request = serde_json::to_vec(&RevocationSyncMessage::SyncRequestPage { after_peer_id: None })?;
+                match swarm.behaviour_mut().gossipsub.publish(revocation_topic.clone(), request) {
+                    Ok(message_id) => emit!("revocation_anti_entropy_request_sent message_id={message_id}"),
+                    Err(error) => emit!("revocation_anti_entropy_request_deferred error={error}"),
+                }
             }
             _ = reconnect_tick.tick() => {
                 for (bootstrap_peer, address) in &bootstrap_peers {
@@ -638,7 +655,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     }
                     emit!("gossipsub_subscribed peer={peer_id}");
                     if revocation_registry.is_some() {
-                        let request = serde_json::to_vec(&RevocationSyncMessage::SyncRequest)?;
+                        let request = serde_json::to_vec(&RevocationSyncMessage::SyncRequestPage { after_peer_id: None })?;
                         let _ = swarm.behaviour_mut().gossipsub.publish(revocation_topic.clone(), request);
                     }
                 }
@@ -660,6 +677,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 let bytes = serde_json::to_vec(&snapshot)?;
                                 let _ = swarm.behaviour_mut().gossipsub.publish(revocation_topic.clone(), bytes);
                                 emit!("revocation_sync_snapshot_sent requester={propagation_source} records={}", registry.records().len());
+                            }
+                            Ok(RevocationSyncMessage::SyncRequestPage { after_peer_id }) => {
+                                let (records, next_cursor) = registry.page_after(after_peer_id.as_deref(), REVOCATION_SYNC_PAGE_SIZE);
+                                let count = records.len();
+                                let page = RevocationSyncMessage::SnapshotPage { records, next_cursor: next_cursor.clone() };
+                                let bytes = serde_json::to_vec(&page)?;
+                                let _ = swarm.behaviour_mut().gossipsub.publish(revocation_topic.clone(), bytes);
+                                emit!("revocation_sync_page_sent requester={propagation_source} records={count} next_page={}", next_cursor.is_some());
                             }
                             Ok(RevocationSyncMessage::Record(record)) => {
                                 match registry.apply(record.clone(), true) {
@@ -692,6 +717,29 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                     }
                                 }
                                 emit!("revocation_sync_snapshot_applied source={propagation_source} applied={applied}");
+                            }
+                            Ok(RevocationSyncMessage::SnapshotPage { records, next_cursor }) => {
+                                let mut applied = 0usize;
+                                for record in records {
+                                    match registry.apply(record.clone(), true) {
+                                        Ok(true) => {
+                                            let peer = record.peer_id.parse::<PeerId>()?;
+                                            revoked_peers.get_or_insert_with(HashSet::new).insert(peer);
+                                            let bytes = serde_json::to_vec(&RevocationSyncMessage::Record(record))?;
+                                            let _ = swarm.behaviour_mut().gossipsub.publish(revocation_topic.clone(), bytes);
+                                            let _ = swarm.disconnect_peer_id(peer);
+                                            applied += 1;
+                                        }
+                                        Ok(false) => {}
+                                        Err(error) => emit!("revocation_snapshot_record_rejected source={propagation_source} error={error}"),
+                                    }
+                                }
+                                emit!("revocation_sync_page_applied source={propagation_source} applied={applied} has_more={}", next_cursor.is_some());
+                                if let Some(cursor) = next_cursor {
+                                    let request = RevocationSyncMessage::SyncRequestPage { after_peer_id: Some(cursor) };
+                                    let bytes = serde_json::to_vec(&request)?;
+                                    let _ = swarm.behaviour_mut().gossipsub.publish(revocation_topic.clone(), bytes);
+                                }
                             }
                             Err(error) => emit!("revocation_sync_message_rejected peer={propagation_source} error={error}"),
                         }
