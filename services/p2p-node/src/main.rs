@@ -199,6 +199,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         swarm.behaviour_mut().kademlia.add_address(&peer, address);
                     }
                 }
+                SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Subscribed { peer_id, .. })) => {
+                    emit!("gossipsub_subscribed peer={peer_id}");
+                }
                 SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message {
                     propagation_source, message, ..
                 })) => {
