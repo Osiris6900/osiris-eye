@@ -702,6 +702,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message {
                     propagation_source, message, ..
                 })) => {
+                    let authenticated_source = message.source.unwrap_or(propagation_source);
                     if message.topic.as_str() == REVOCATION_TOPIC_NAME {
                         if !is_peer_allowed(&propagation_source, &trusted_peers, &revoked_peers) {
                             emit!("revocation_sync_message_rejected peer={propagation_source} reason=peer_not_allowed");
@@ -727,7 +728,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 emit!("revocation_sync_page_sent requester={propagation_source} records={count} next_page={}", next_cursor.is_some());
                             }
                             Ok(RevocationSyncMessage::SyncRequestPageV2 { request_id, requester_peer_id, after_peer_id }) => {
-                                if requester_peer_id != propagation_source.to_string() || request_id.len() != 64 || !request_id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                                if requester_peer_id != authenticated_source.to_string() || request_id.len() != 64 || !request_id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
                                     emit!("revocation_sync_request_rejected source={propagation_source} reason=invalid_request_binding");
                                     continue;
                                 }
@@ -775,7 +776,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                             }
                             Ok(RevocationSyncMessage::SnapshotPageV2 { request_id, requester_peer_id, responder_peer_id, records, next_cursor }) => {
                                 if requester_peer_id != peer_id.to_string()
-                                    || responder_peer_id != propagation_source.to_string()
+                                    || responder_peer_id != authenticated_source.to_string()
                                     || !pending_revocation_requests.contains_key(&request_id) {
                                     emit!("revocation_sync_response_rejected source={propagation_source} reason=unmatched_or_wrong_peer_binding");
                                     continue;
