@@ -186,13 +186,15 @@ impl RevocationRegistry {
             file.write_all(&bytes)?;
             file.sync_all()?;
             fs::rename(&temp, &self.path)?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                fs::set_permissions(&self.path, fs::Permissions::from_mode(0o600))?;
+            // The rename is the commit point. The temp file was created mode
+            // 0600, so no post-rename permission change can fail after commit.
+            // A directory fsync failure is reported but must not reject the
+            // already-visible revocation in the running process.
+            if let Ok(directory) = fs::File::open(parent) {
+                if let Err(error) = directory.sync_all() {
+                    eprintln!("revocation_registry_directory_fsync_warning={error}");
+                }
             }
-            let directory = fs::File::open(parent)?;
-            directory.sync_all()?;
             Ok(())
         })();
         if write_result.is_err() {
