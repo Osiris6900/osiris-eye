@@ -70,14 +70,27 @@ def main():
             addr_b = next(x for x in b.history if "listener_ready " in x).split(" address=",1)[1].split()[0]
             c = Node("peer-c", env_for("c", bootstrap=addr_b))
             a.wait("signed_revocation_registry=loaded records=1", 10)
-            # Match the stable event name emitted by the Rust P2P node.
-            b.wait("revocation_sync_page_v2_applied", 35)
-            b.wait("applied=1", 35)
-            c.wait("revocation_sync_page_v2_applied", 35)
-            c.wait("applied=1", 35)
-            for name in ("b", "c"):
-                persisted = json.loads((td / f"{name}.json").read_text())
-                assert any(row["peer_id"] == target for row in persisted), f"{name} did not persist revocation"
+            # GossipSub may deliver the signed Record before the matching
+            # SnapshotPageV2 response. In that valid ordering the page applies
+            # zero new records, so an "applied=1" log assertion is racy.
+            # The security property is durable convergence on every node.
+            deadline = time.monotonic() + 60
+            missing = {"b", "c"}
+            while time.monotonic() < deadline and missing:
+                for name in tuple(missing):
+                    registry_path = td / f"{name}.json"
+                    try:
+                        persisted = json.loads(registry_path.read_text())
+                    except (FileNotFoundError, json.JSONDecodeError):
+                        continue
+                    if any(row.get("peer_id") == target for row in persisted):
+                        missing.remove(name)
+                if missing:
+                    time.sleep(0.25)
+            assert not missing, (
+                f"nodes did not durably converge on signed revocation: {sorted(missing)}; "
+                f"b_logs={b.history}; c_logs={c.history}"
+            )
             print("THREE_NODE_SIGNED_REVOCATION_SYNC=PASS", flush=True)
         finally:
             stop_all()
