@@ -4,6 +4,7 @@ import pytest
 
 from osiris_api.p2p_e2ee import (
     ReplayGuard,
+    SQLiteReplayGuard,
     decrypt_from_peer,
     encrypt_for_peer,
     generate_transport_identity,
@@ -81,3 +82,35 @@ def test_replay_guard_is_bounded():
     assert not guard.check_and_record("a")
     assert guard.check_and_record("c")
     assert guard.check_and_record("a")
+
+
+
+def test_sqlite_replay_guard_survives_restart(tmp_path):
+    database = tmp_path / "replay.sqlite3"
+    first_process = SQLiteReplayGuard(database)
+    assert first_process.check_and_record("message-1")
+    assert not first_process.check_and_record("message-1")
+
+    restarted_process = SQLiteReplayGuard(database)
+    assert not restarted_process.check_and_record("message-1")
+    assert restarted_process.check_and_record("message-2")
+
+
+def test_sqlite_replay_guard_fails_closed_at_capacity(tmp_path):
+    guard = SQLiteReplayGuard(tmp_path / "bounded.sqlite3", capacity=1)
+    assert guard.check_and_record("message-1")
+    with pytest.raises(RuntimeError, match="replay_store_capacity_exceeded"):
+        guard.check_and_record("message-2")
+
+    restarted = SQLiteReplayGuard(tmp_path / "bounded.sqlite3", capacity=1)
+    assert not restarted.check_and_record("message-1")
+    with pytest.raises(RuntimeError, match="replay_store_capacity_exceeded"):
+        restarted.check_and_record("message-2")
+
+
+def test_sqlite_replay_guard_is_atomic_across_instances(tmp_path):
+    database = tmp_path / "concurrent.sqlite3"
+    first = SQLiteReplayGuard(database)
+    second = SQLiteReplayGuard(database)
+    assert first.check_and_record("one-shot")
+    assert not second.check_and_record("one-shot")
