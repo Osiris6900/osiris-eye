@@ -92,6 +92,7 @@ def main():
                 env["OSIRIS_NODE_KEY"] = str(bootstrap_key)
                 env["OSIRIS_LISTEN_ADDR"] = bootstrap_addr
                 env["OSIRIS_HEALTH_HTTP_ADDR"] = "127.0.0.1:0"
+                env["OSIRIS_BOOTSTRAP_RECONNECT_INTERVAL_SECS"] = "5"
                 node = Node(label, env)
                 nodes.append(node)
                 line = node.wait_for(
@@ -106,6 +107,7 @@ def main():
             client_env["OSIRIS_NODE_KEY"] = str(tmp / "client.key")
             client_env["OSIRIS_LISTEN_ADDR"] = "/ip4/127.0.0.1/tcp/0"
             client_env["OSIRIS_HEALTH_HTTP_ADDR"] = "127.0.0.1:0"
+            client_env["OSIRIS_BOOTSTRAP_RECONNECT_INTERVAL_SECS"] = "5"
             client_env["OSIRIS_BOOTSTRAP_PEERS"] = multiaddr
             client = Node("client", client_env)
             nodes.append(client)
@@ -114,6 +116,10 @@ def main():
                 lambda value: value.startswith("peer_id="), 10, "bootstrap Peer ID"
             )
             bootstrap_peer_id = peer_line.split("=", 1)[1]
+            client.wait_for(
+                lambda value: value == "bootstrap_reconnect_interval_seconds=5",
+                10, "configured reconnect interval",
+            )
             client.wait_for(
                 lambda value: value == f"peer_connected={bootstrap_peer_id}",
                 20, "initial bootstrap connection",
