@@ -5,7 +5,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CARGO = os.environ.get("CARGO", "cargo")
-BINARY = ROOT / "target" / "release" / "osiris-p2p-node"
+BINARY = ROOT / "services" / "p2p-node" / "target" / "release" / "osiris-p2p-node"
+if not BINARY.exists():
+    BINARY = ROOT / "target" / "release" / "osiris-p2p-node"
 PROCESSES = []
 
 class Node:
