@@ -1,0 +1,67 @@
+# OSIRIS EYE network configuration example.
+# Copy to a private deployment configuration; never commit secrets.
+# This file is a design/configuration contract, not an enabled P2P transport.
+
+config_schema_version: "1.0"
+
+network:
+  mode: "hybrid"
+  protocol:
+    family: "osiris-eye-p2p"
+    major: 1
+    minor: 0
+    patch: 0
+    minimum_compatible_major: 1
+    maximum_compatible_major: 1
+  environment: "development"
+
+owner_core:
+  authority: "local_owner"
+  require_owner_approval_for_trusted_nodes: true
+  allow_public_nodes_to_change_policy: false
+  allow_public_nodes_to_access_credentials: false
+  allow_public_nodes_to_submit_trading_orders: false
+
+nodes:
+  public_untrusted:
+    enabled: false
+    permissions:
+      - "peer_discovery"
+    compute_enabled: false
+  trusted:
+    enabled: false
+    require_explicit_allowlist: true
+    permissions:
+      - "peer_discovery"
+      - "approved_compute"
+    compute_enabled: false
+
+transport:
+  enabled: false
+  implementation: "not_configured"
+  bootstrap_peers: []
+  require_authenticated_handshake: true
+  encryption_required: true
+
+discovery:
+  enabled: false
+  provider: "not_configured"
+  signed_peer_records_required: true
+  peer_record_ttl_seconds: 300
+
+storage:
+  registry_backend: "sqlite_local"
+  shared_registry_required_for_multi_instance: true
+
+upgrades:
+  automatic_protocol_upgrade: false
+  require_signed_release: true
+  require_health_checks: true
+  allow_rollback: true
+  retain_previous_stable_release: true
+
+security:
+  public_nodes_receive_secrets: false
+  public_nodes_receive_broker_credentials: false
+  public_nodes_can_change_risk_limits: false
+  live_trading_enabled: false
