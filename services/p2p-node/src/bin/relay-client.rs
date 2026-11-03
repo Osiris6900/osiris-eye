@@ -56,7 +56,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         transport,
         behaviour,
         peer_id,
-        Config::with_tokio_executor(),
+        Config::with_tokio_executor()
+            .with_idle_connection_timeout(Duration::from_secs(120)),
     );
     let relay_addr: Multiaddr = env::var("OSIRIS_RELAY_MULTIADDR")?.parse()?;
     let relay_peer = relay_addr.iter().find_map(|p| match p {
