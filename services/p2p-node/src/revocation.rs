@@ -205,7 +205,6 @@ impl RevocationRegistry {
 mod tests {
     use super::*;
     use ed25519_dalek::{Signer, SigningKey};
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn signed_record(key: &SigningKey, peer: PeerId, sequence: u64) -> SignedRevocationRecord {
         let public = encode_hex(key.verifying_key().as_bytes());
