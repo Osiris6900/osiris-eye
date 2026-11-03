@@ -68,7 +68,30 @@ export OSIRIS_RELAY_LISTEN_ADDR=/ip4/0.0.0.0/tcp/4001
 
 Keep relay keys private. Review the built-in reservation/circuit limits before exposing a relay publicly. The current client allowlist is client-side configuration; it is not a network-wide authorization system or server-side ACL.
 
-## 7. Operator checklist before public launch
+## 7. Node health heartbeat
+
+The node emits a machine-readable `node_health` log line periodically. This is a lightweight liveness/peer-count signal for a process supervisor or log collector; it is not an HTTP health endpoint and does not prove that remote peers can reach the node.
+
+The default interval is 30 seconds. Configure it between 5 and 300 seconds:
+
+```bash
+export OSIRIS_HEALTH_INTERVAL_SECS=30
+```
+
+Example log:
+
+```text
+node_health status=alive peer_id=... uptime_seconds=120 connected_peers=4 bootstrap_peers_connected=2/2
+```
+
+- `status=alive` means the event loop is running and emitted a heartbeat.
+- `connected_peers` is the current number of connected libp2p peers.
+- `bootstrap_peers_connected` reports connected configured bootstrap peers versus the configured total.
+- A zero peer count is not automatically a process failure; a new or isolated node may be running without peers. Alert separately when expected bootstrap peers remain disconnected.
+
+Use a service manager (for example systemd) to restart a crashed process and collect stdout/stderr logs. Do not treat this heartbeat alone as a readiness or end-to-end network check.
+
+## 8. Operator checklist before public launch
 
 - [ ] Two or more independent hosts/regions are provisioned.
 - [ ] Each node has its own persistent key and Peer ID recorded securely.
