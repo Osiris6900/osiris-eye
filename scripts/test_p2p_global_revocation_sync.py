@@ -70,7 +70,7 @@ def main():
             addr_b = next(x for x in b.history if "listener_ready " in x).split(" address=",1)[1].split()[0]
             c = Node("peer-c", env_for("c", bootstrap=addr_b))
             a.wait(f"signed_revocation_registry=loaded records=1", 10)
-            b.wait("revocation_sync_snapshot_applied", 35)
+            b.wait("revocation_sync_page_applied", 35)
             b.wait("applied=1", 35)
             c.wait("revocation_sync_snapshot_applied", 35)
             c.wait("applied=1", 35)
