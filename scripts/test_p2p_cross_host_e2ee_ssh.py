@@ -139,9 +139,9 @@ def main():
                 "OSIRIS_BOOTSTRAP_PEERS=" + shlex.quote(bootstrap) + "; "
                 + shlex.quote(remote_binary)
                 + " & child=$!; "
-                + "cleanup() { kill \\"$child\\" 2>/dev/null || true; "
-                + "wait \\"$child\\" 2>/dev/null || true; rm -rf \\"$tmp\\"; }; "
-                + "trap cleanup EXIT HUP INT TERM; wait \\"$child\\""
+                + 'cleanup() { kill "$child" 2>/dev/null || true; '
+                + 'wait "$child" 2>/dev/null || true; rm -rf "$tmp"; }; '
+                + 'trap cleanup EXIT HUP INT TERM; wait "$child"'
             )
             remote = subprocess.Popen(
                 ["ssh", "-T", *args.ssh_option, args.ssh_target, remote_command],
