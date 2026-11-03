@@ -117,28 +117,35 @@ fn load_or_create_identity() -> Result<identity::Keypair, Box<dyn Error>> {
     Ok(key)
 }
 
+fn peer_id_from_multiaddr(address: &Multiaddr) -> Option<PeerId> {
+    address.iter().find_map(|protocol| match protocol {
+        libp2p::multiaddr::Protocol::P2p(peer_id) => Some(peer_id),
+        _ => None,
+    })
+}
+
 fn parse_bootstrap_peers(
     swarm: &mut Swarm<Behaviour>,
-) -> Result<usize, Box<dyn Error>> {
+) -> Result<Vec<(PeerId, Multiaddr)>, Box<dyn Error>> {
     let Some(raw) = env::var_os("OSIRIS_BOOTSTRAP_PEERS") else {
-        return Ok(0);
+        return Ok(Vec::new());
     };
 
-    let mut count = 0;
+    let mut peers = Vec::new();
     for entry in raw.to_string_lossy().split(',').map(str::trim).filter(|s| !s.is_empty()) {
         let address: Multiaddr = entry.parse()?;
-        let peer = address.iter().find_map(|protocol| match protocol {
-            libp2p::multiaddr::Protocol::P2p(peer_id) => Some(peer_id),
-            _ => None,
-        }).ok_or("bootstrap multiaddr must end with /p2p/<peer-id>")?;
+        let peer = peer_id_from_multiaddr(&address)
+            .ok_or("bootstrap multiaddr must include /p2p/<peer-id>")?;
         swarm.behaviour_mut().kademlia.add_address(&peer, address.clone());
-        swarm.dial(address)?;
-        count += 1;
+        if !peers.iter().any(|(known, _)| *known == peer) {
+            swarm.dial(address.clone())?;
+            peers.push((peer, address));
+        }
     }
-    if count > 0 {
+    if !peers.is_empty() {
         let _ = swarm.behaviour_mut().kademlia.bootstrap();
     }
-    Ok(count)
+    Ok(peers)
 }
 
 #[tokio::main]
@@ -180,11 +187,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .parse()?;
     swarm.listen_on(listen)?;
 
-    let bootstrap_count = parse_bootstrap_peers(&mut swarm)?;
+    let bootstrap_peers = parse_bootstrap_peers(&mut swarm)?;
+    let mut reconnect_tick = tokio::time::interval(Duration::from_secs(15));
+    reconnect_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     emit!("OSIRIS EYE P2P node starting");
     emit!("peer_id={peer_id}");
     emit!("topic={TOPIC_NAME}");
-    emit!("bootstrap_peers={bootstrap_count}");
+    emit!("bootstrap_peers={}", bootstrap_peers.len());
+    emit!("bootstrap_reconnect_interval_seconds=15");
     emit!("Live trading and broker order submission are not part of this node.");
 
     let stdin = BufReader::new(io::stdin());
@@ -192,6 +202,22 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     loop {
         tokio::select! {
+            _ = reconnect_tick.tick() => {
+                for (bootstrap_peer, address) in &bootstrap_peers {
+                    if !swarm.is_connected(bootstrap_peer) {
+                        match swarm.dial(address.clone()) {
+                            Ok(()) => emit!("bootstrap_reconnect_attempt peer={bootstrap_peer}"),
+                            Err(error) => emit!("bootstrap_reconnect_error peer={bootstrap_peer} error={error}"),
+                        }
+                    }
+                }
+                if !bootstrap_peers.is_empty() {
+                    match swarm.behaviour_mut().kademlia.bootstrap() {
+                        Ok(query_id) => emit!("dht_bootstrap_refresh={query_id:?}"),
+                        Err(error) => emit!("dht_bootstrap_refresh_skipped={error:?}"),
+                    }
+                }
+            }
             event = swarm.select_next_some() => match event {
                 SwarmEvent::NewListenAddr { address, .. } => {
                     emit!("listening={address}/p2p/{peer_id}");
@@ -204,7 +230,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Discovered(peers))) => {
                     for (peer, address) in peers {
-                        swarm.behaviour_mut().kademlia.add_address(&peer, address);
+                        swarm.behaviour_mut().kademlia.add_address(&peer, address.clone());
+                        if !swarm.is_connected(&peer) {
+                            match swarm.dial(address) {
+                                Ok(()) => emit!("mdns_peer_dial_started={peer}"),
+                                Err(error) => emit!("mdns_peer_dial_error peer={peer} error={error}"),
+                            }
+                        }
+                    }
+                }
+                SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Expired(peers))) => {
+                    for (peer, address) in peers {
+                        swarm.behaviour_mut().kademlia.remove_address(&peer, &address);
+                        emit!("mdns_peer_expired={peer}");
                     }
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Subscribed { peer_id, .. })) => {
