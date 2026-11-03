@@ -1,3 +1,6 @@
+mod peer_auth;
+
+use peer_auth::{is_trusted_peer, parse_trusted_peers};
 use std::{env, error::Error, fs, io::Write, net::SocketAddr, path::PathBuf, time::{Duration, Instant}};
 
 macro_rules! emit {
@@ -295,6 +298,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
     swarm.listen_on(listen)?;
 
     let bootstrap_peers = parse_bootstrap_peers(&mut swarm)?;
+    let trusted_peers = parse_trusted_peers(env::var("OSIRIS_TRUSTED_PEERS").ok().as_deref())?;
+    if let Some(allowed) = &trusted_peers {
+        for (bootstrap_peer, _) in &bootstrap_peers {
+            if !allowed.contains(bootstrap_peer) {
+                return Err(format!(
+                    "OSIRIS_TRUSTED_PEERS must include configured bootstrap peer {bootstrap_peer}"
+                ).into());
+            }
+        }
+        emit!("peer_authentication=allowlist trusted_peers={}", allowed.len());
+    } else {
+        emit!("peer_authentication=open");
+    }
     let mut reconnect_tick = tokio::time::interval(Duration::from_secs(15));
     reconnect_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let health_interval_secs = env::var("OSIRIS_HEALTH_INTERVAL_SECS")
@@ -379,6 +395,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     emit!("listening={address}/p2p/{peer_id}");
                 }
                 SwarmEvent::ConnectionEstablished { peer_id, .. } => {
+                    if !is_trusted_peer(&peer_id, &trusted_peers) {
+                        emit!("peer_rejected={peer_id} reason=not_in_trusted_peer_allowlist");
+                        let _ = swarm.disconnect_peer_id(peer_id);
+                        continue;
+                    }
                     emit!("peer_connected={peer_id}");
                 }
                 SwarmEvent::ConnectionClosed { peer_id, .. } => {
@@ -386,6 +407,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Discovered(peers))) => {
                     for (peer, address) in peers {
+                        if !is_trusted_peer(&peer, &trusted_peers) {
+                            emit!("mdns_peer_ignored={peer} reason=not_in_trusted_peer_allowlist");
+                            continue;
+                        }
                         swarm.behaviour_mut().kademlia.add_address(&peer, address.clone());
                         if !swarm.is_connected(&peer) {
                             match swarm.dial(address) {
@@ -402,11 +427,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     }
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Subscribed { peer_id, .. })) => {
+                    if !is_trusted_peer(&peer_id, &trusted_peers) {
+                        emit!("peer_rejected={peer_id} reason=not_in_trusted_peer_allowlist");
+                        let _ = swarm.disconnect_peer_id(peer_id);
+                        continue;
+                    }
                     emit!("gossipsub_subscribed peer={peer_id}");
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message {
                     propagation_source, message, ..
                 })) => {
+                    if !is_trusted_peer(&propagation_source, &trusted_peers) {
+                        emit!("message_rejected peer={propagation_source} reason=not_in_trusted_peer_allowlist");
+                        continue;
+                    }
                     match serde_json::from_slice::<ObservationEnvelope>(&message.data) {
                         Ok(envelope) if envelope.validate().is_ok() => {
                             emit!(

@@ -55,6 +55,18 @@ export OSIRIS_BOOTSTRAP_PEERS=/ip4/203.0.113.10/tcp/4001/p2p/REPLACE_WITH_BOOTST
 
 For resilience, configure more than one independently hosted bootstrap node, comma-separated. The bootstrap nodes must themselves advertise reachable addresses. mDNS discovery is useful on a local network; it is not a substitute for bootstrap configuration across the public Internet.
 
+### Optional core-node peer allowlist
+
+Each core P2P node can independently restrict authenticated connections and observation traffic to an operator-maintained Peer ID set:
+
+```bash
+export OSIRIS_TRUSTED_PEERS=12D3KooW...BOOTSTRAP_PEER,12D3KooW...PUBLISHER_PEER
+```
+
+Use real Peer IDs, comma-separated, with no placeholder values. When this variable is unset, the node remains in open-network mode. When set, it must contain at least one valid Peer ID and include every configured `OSIRIS_BOOTSTRAP_PEERS` Peer ID; otherwise startup fails. Unknown mDNS peers are not dialed, unknown inbound peers are disconnected, and messages from untrusted propagation sources are rejected.
+
+This is a per-node admission policy, not a network-wide identity registry, certificate authority, revocation service, or protection against a compromised trusted key. Every participating node must be configured consistently by its operator. Keep the allowlist current as peers are added or revoked.
+
 ## 6. Circuit Relay
 
 A relay is a separate process and should run on a host with a stable, publicly reachable TCP address. Relay service is opt-in:
@@ -66,7 +78,7 @@ export OSIRIS_RELAY_LISTEN_ADDR=/ip4/0.0.0.0/tcp/4001
 ./target/release/osiris-p2p-relay
 ```
 
-Keep relay keys private. Review the built-in reservation/circuit limits before exposing a relay publicly. The current client allowlist is client-side configuration; it is not a network-wide authorization system or server-side ACL.
+Keep relay keys private. Review the built-in reservation/circuit limits before exposing a relay publicly. Core-node and relay-client allowlists are independently configured per process; they are not a network-wide authorization system, identity registry, or centrally enforced server-side ACL.
 
 ## 7. Node health endpoint and heartbeat
 
