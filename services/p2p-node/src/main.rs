@@ -887,7 +887,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                         continue;
                                     }
                                 };
-                                match replay_guard.record_message_id_if_new(&envelope.message_id) {
+                                match replay_guard.record_message_id_if_new(&format!("{}:{}", envelope.sender_peer_id, envelope.message_id)) {
                                     Ok(true) => {}
                                     Ok(false) => {
                                         emit!("encrypted_message_rejected peer={authenticated_source} reason=replay_detected");
@@ -1069,7 +1069,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     }
                     if e2ee_enabled {
                         let recipients = if let Some(path) = env::var_os("OSIRIS_E2EE_RECIPIENTS_FILE") {
-                            fs::read_to_string(path)?
+                            fs::read_to_string(PathBuf::from(path))?
                         } else {
                             env::var("OSIRIS_E2EE_RECIPIENTS").unwrap_or_default()
                         };
