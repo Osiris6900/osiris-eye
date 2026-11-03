@@ -16,6 +16,7 @@ use libp2p::{
     tcp, yamux, Multiaddr, PeerId, Swarm, SwarmBuilder,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tokio::io::{self, AsyncBufReadExt, BufReader};
 
 const PROTOCOL_VERSION: &str = "/osiris-eye/p2p/1.0.0";
@@ -28,6 +29,7 @@ struct ObservationEnvelope {
     observed_at: String,
     provider: String,
     payload_sha256: String,
+    payload: String,
 }
 
 impl ObservationEnvelope {
@@ -36,8 +38,11 @@ impl ObservationEnvelope {
         if self.instrument.trim().is_empty() || self.instrument.len() > 64 { return Err("invalid_instrument"); }
         if self.provider.trim().is_empty() || self.provider.len() > 64 { return Err("invalid_provider"); }
         if self.observed_at.trim().is_empty() || self.observed_at.len() > 40 { return Err("invalid_observed_at"); }
+        if self.payload.len() > 1_048_576 { return Err("payload_too_large"); }
         let digest = self.payload_sha256.as_bytes();
         if digest.len() != 64 || !digest.iter().all(u8::is_ascii_hexdigit) { return Err("invalid_payload_sha256"); }
+        let actual = format!("{:x}", Sha256::digest(self.payload.as_bytes()));
+        if !actual.eq_ignore_ascii_case(&self.payload_sha256) { return Err("payload_hash_mismatch"); }
         Ok(())
     }
 }
@@ -45,15 +50,18 @@ impl ObservationEnvelope {
 #[cfg(test)]
 mod tests {
     use super::ObservationEnvelope;
+    use sha2::{Digest, Sha256};
     fn valid() -> ObservationEnvelope {
         ObservationEnvelope { schema: "osiris.observation.v1".into(), instrument: "BTC-USD".into(),
             observed_at: "2026-11-03T00:00:00Z".into(), provider: "coinbase-public".into(),
-            payload_sha256: "a".repeat(64) }
+            payload_sha256: format!("{:x}", Sha256::digest(b"test-payload")), payload: "test-payload".into() }
     }
     #[test] fn accepts_valid_envelope() { assert!(valid().validate().is_ok()); }
     #[test] fn rejects_wrong_schema() { let mut v=valid(); v.schema="v0".into(); assert_eq!(v.validate(),Err("unsupported_schema")); }
     #[test] fn rejects_bad_digest() { let mut v=valid(); v.payload_sha256="xyz".into(); assert_eq!(v.validate(),Err("invalid_payload_sha256")); }
     #[test] fn rejects_empty_instrument() { let mut v=valid(); v.instrument.clear(); assert_eq!(v.validate(),Err("invalid_instrument")); }
+    #[test] fn rejects_payload_hash_mismatch() { let mut v=valid(); v.payload.push_str("-tampered"); assert_eq!(v.validate(),Err("payload_hash_mismatch")); }
+    #[test] fn rejects_oversized_payload() { let mut v=valid(); v.payload="x".repeat(1_048_577); assert_eq!(v.validate(),Err("payload_too_large")); }
     #[test] fn rejects_empty_provider() { let mut v=valid(); v.provider.clear(); assert_eq!(v.validate(),Err("invalid_provider")); }
 }
 
@@ -138,7 +146,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let key = load_or_create_identity()?;
     let peer_id = PeerId::from(key.public());
 
-    let mut gossipsub_config = gossipsub::ConfigBuilder::default()
+    let gossipsub_config = gossipsub::ConfigBuilder::default()
         .heartbeat_interval(Duration::from_secs(10))
         .validation_mode(gossipsub::ValidationMode::Strict)
         .build()?;
@@ -208,9 +216,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     match serde_json::from_slice::<ObservationEnvelope>(&message.data) {
                         Ok(envelope) if envelope.validate().is_ok() => {
                             emit!(
-                                "observation_received peer={} instrument={} provider={} observed_at={} payload_sha256={}",
+                                "observation_received peer={} instrument={} provider={} observed_at={} payload_sha256={} payload_bytes={}",
                                 propagation_source, envelope.instrument, envelope.provider,
-                                envelope.observed_at, envelope.payload_sha256
+                                envelope.observed_at, envelope.payload_sha256, envelope.payload.len()
                             );
                         }
                         _ => eprintln!("rejected_message peer={propagation_source} reason=invalid_envelope"),
