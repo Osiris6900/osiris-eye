@@ -29,6 +29,8 @@ jobs:
         run: pip install -e "services/quant-api[dev]"
       - name: Run Python tests
         run: pytest -q services/quant-api/tests
+      - name: Syntax-check cross-host P2P test helper
+        run: python -m py_compile scripts/test_p2p_cross_host_ssh.py
 
   rust:
     runs-on: ubuntu-latest
