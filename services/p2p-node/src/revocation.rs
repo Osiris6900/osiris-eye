@@ -85,8 +85,10 @@ fn encode_hex(bytes: &[u8]) -> String {
 #[serde(tag = "kind", content = "payload", rename_all = "snake_case")]
 pub enum RevocationSyncMessage {
     SyncRequest,
+    SyncRequestPage { after_peer_id: Option<String> },
     Record(SignedRevocationRecord),
     Snapshot(Vec<SignedRevocationRecord>),
+    SnapshotPage { records: Vec<SignedRevocationRecord>, next_cursor: Option<String> },
 }
 
 #[derive(Debug)]
@@ -127,6 +129,20 @@ impl RevocationRegistry {
 
     pub fn records(&self) -> Vec<SignedRevocationRecord> {
         self.records.values().cloned().collect()
+    }
+
+    /// Return a stable, bounded page ordered by PeerId for anti-entropy synchronization.
+    pub fn page_after(&self, after_peer_id: Option<&str>, limit: usize) -> (Vec<SignedRevocationRecord>, Option<String>) {
+        let mut records: Vec<_> = self.records.values()
+            .filter(|record| after_peer_id.map_or(true, |cursor| record.peer_id.as_str() > cursor))
+            .cloned()
+            .collect();
+        records.sort_by(|a, b| a.peer_id.cmp(&b.peer_id));
+        let page_limit = limit.clamp(1, 512);
+        let has_more = records.len() > page_limit;
+        records.truncate(page_limit);
+        let next_cursor = if has_more { records.last().map(|record| record.peer_id.clone()) } else { None };
+        (records, next_cursor)
     }
 
     pub fn revoked_peer_ids(&self) -> Result<Vec<PeerId>, Box<dyn Error>> {
@@ -170,6 +186,30 @@ mod tests {
         };
         record.signature = encode_hex(&key.sign(&record.payload().unwrap()).to_bytes());
         record
+    }
+
+    #[test]
+    fn registry_pages_are_bounded_sorted_and_resume_after_cursor() {
+        let key = SigningKey::from_bytes(&[11u8; 32]);
+        let authority = encode_hex(key.verifying_key().as_bytes());
+        let mut registry = RevocationRegistry::open(
+            std::env::temp_dir().join(format!("osiris-revocations-pages-{}", std::process::id())),
+            authority,
+        ).unwrap();
+        let peers = [PeerId::random(), PeerId::random(), PeerId::random(), PeerId::random()];
+        for peer in peers {
+            registry.apply(signed_record(&key, peer, 1), false).unwrap();
+        }
+        let mut sorted: Vec<_> = registry.records().iter().map(|record| record.peer_id.clone()).collect();
+        sorted.sort();
+        let (first, cursor) = registry.page_after(None, 2);
+        assert_eq!(first.len(), 2);
+        assert_eq!(cursor.as_deref(), Some(sorted[1].as_str()));
+        let (second, next) = registry.page_after(cursor.as_deref(), 2);
+        assert_eq!(second.len(), 2);
+        assert_eq!(next, None);
+        assert!(first.iter().all(|record| record.peer_id <= sorted[1]));
+        assert!(second.iter().all(|record| record.peer_id > sorted[1]));
     }
 
     #[test]
