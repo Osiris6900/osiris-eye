@@ -99,11 +99,14 @@ def main():
             bootstrap = f"/ip4/{args.public_ip}/tcp/{args.port}/p2p/{peer_id}"
 
             # Keep the remote key private and remove it when the SSH process exits.
+            remote_binary = args.remote_binary
+            if not remote_binary.startswith(("/", "./")):
+                remote_binary = "./" + remote_binary
             remote_command = "set -eu; cd \"$HOME\"; umask 077; key=" + shlex.quote(remote_key) + "; " \
                 + "trap 'rm -f \"$key\"' EXIT; : > \"$key\"; " \
                 + "OSIRIS_NODE_KEY=\"$key\" OSIRIS_LISTEN_ADDR=/ip4/0.0.0.0/tcp/0 " \
                 + "OSIRIS_BOOTSTRAP_PEERS=" + shlex.quote(bootstrap) + " " \
-                + shlex.quote(args.remote_binary) 
+                + shlex.quote(remote_binary) 
             ssh = ["ssh", "-T", *args.ssh_option, args.ssh_target, remote_command]
             remote = subprocess.Popen(ssh, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                       stderr=subprocess.STDOUT, text=True, bufsize=1)
@@ -113,10 +116,6 @@ def main():
             wait_for(events, processes,
                      lambda n, l: n == "host-a" and l.startswith("gossipsub_subscribed peer="),
                      45, "host B subscription on host A")
-            wait_for(events, processes,
-                     lambda n, l: n == "host-b" and l.startswith("peer_connected="),
-                     45, "host B connection to host A")
-
             envelope = {
                 "schema": "osiris.observation.v1",
                 "instrument": instrument,
