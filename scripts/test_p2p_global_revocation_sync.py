@@ -72,7 +72,7 @@ def main():
             a.wait(f"signed_revocation_registry=loaded records=1", 10)
             b.wait("revocation_sync_page_applied", 35)
             b.wait("applied=1", 35)
-            c.wait("revocation_sync_snapshot_applied", 35)
+            c.wait("revocation_sync_page_applied", 35)
             c.wait("applied=1", 35)
             for name in ("b", "c"):
                 persisted = json.loads((td / f"{name}.json").read_text())
