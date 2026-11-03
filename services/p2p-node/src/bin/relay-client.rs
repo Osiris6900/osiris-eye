@@ -1,4 +1,4 @@
-use std::{env, error::Error, fs, io::Write, path::PathBuf, time::Duration};
+use std::{collections::HashSet, env, error::Error, fs, io::Write, path::PathBuf, time::Duration};
 
 use futures::StreamExt;
 use libp2p::{
@@ -30,6 +30,53 @@ fn load_or_create_identity(role: &str) -> Result<identity::Keypair, Box<dyn Erro
     }
     eprintln!("Created relay-client identity at {} (keep this file private)", path.display());
     Ok(key)
+}
+
+/// When configured, only peers in OSIRIS_RELAY_TRUSTED_PEERS may connect or
+/// exchange GossipSub traffic. An unset variable preserves open-network mode.
+fn parse_trusted_peers() -> Result<Option<HashSet<PeerId>>, Box<dyn Error>> {
+    let Some(raw) = env::var_os("OSIRIS_RELAY_TRUSTED_PEERS") else {
+        return Ok(None);
+    };
+
+    let raw = raw.to_string_lossy();
+    let mut peers = HashSet::new();
+    for entry in raw.split(',').map(str::trim).filter(|entry| !entry.is_empty()) {
+        peers.insert(entry.parse::<PeerId>()?);
+    }
+    if peers.is_empty() {
+        return Err("OSIRIS_RELAY_TRUSTED_PEERS was set but contained no peer IDs".into());
+    }
+    Ok(Some(peers))
+}
+
+fn is_trusted_peer(peer: &PeerId, trusted_peers: &Option<HashSet<PeerId>>) -> bool {
+    trusted_peers.as_ref().is_none_or(|peers| peers.contains(peer))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_trusted_peer, HashSet, PeerId};
+
+    #[test]
+    fn open_mode_accepts_any_authenticated_peer() {
+        assert!(is_trusted_peer(&PeerId::random(), &None));
+    }
+
+    #[test]
+    fn allowlist_rejects_unknown_peer() {
+        let allowed = PeerId::random();
+        let unknown = PeerId::random();
+        let trusted = Some(HashSet::from([allowed]));
+        assert!(!is_trusted_peer(&unknown, &trusted));
+    }
+
+    #[test]
+    fn allowlist_accepts_listed_peer() {
+        let allowed = PeerId::random();
+        let trusted = Some(HashSet::from([allowed]));
+        assert!(is_trusted_peer(&allowed, &trusted));
+    }
 }
 
 macro_rules! emit {
@@ -87,19 +134,33 @@ async fn main() -> Result<(), Box<dyn Error>> {
         _ => None,
     }).ok_or("relay multiaddr must include /p2p/<relay-peer-id>")?;
 
-    // Establish the ordinary relay-server connection first. Only request a
-    // reservation or circuit after that connection is established. This is
-    // the ordering used by libp2p's reference Circuit Relay client example.
-    swarm.dial(relay_addr.clone())?;
-    emit!("relay_client_role={role}");
-    emit!("peer_id={peer_id}");
-    emit!("relay_peer_id={relay_peer}");
-
     let target = if role == "sender" {
         Some(env::var("OSIRIS_RELAY_TARGET_PEER")?.parse::<PeerId>()?)
     } else {
         None
     };
+    let trusted_peers = parse_trusted_peers()?;
+    if let Some(allowed) = &trusted_peers {
+        if !allowed.contains(&relay_peer) {
+            return Err("OSIRIS_RELAY_TRUSTED_PEERS must include the configured relay peer".into());
+        }
+        if let Some(target_peer) = target {
+            if !allowed.contains(&target_peer) {
+                return Err("OSIRIS_RELAY_TRUSTED_PEERS must include OSIRIS_RELAY_TARGET_PEER".into());
+            }
+        }
+        emit!("peer_authentication=allowlist trusted_peers={}", allowed.len());
+    } else {
+        emit!("peer_authentication=open");
+    }
+
+    // Establish the ordinary relay-server connection first. Only request a
+    // reservation or circuit after that connection is established.
+    swarm.dial(relay_addr.clone())?;
+    emit!("relay_client_role={role}");
+    emit!("peer_id={peer_id}");
+    emit!("relay_peer_id={relay_peer}");
+
     let mut relay_connected = false;
     let mut receiver_reservation_accepted = false;
     let mut sender_circuit_started = false;
@@ -109,6 +170,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     loop {
         match swarm.select_next_some().await {
             SwarmEvent::ConnectionEstablished { peer_id: connected_peer, endpoint, .. } => {
+                if !is_trusted_peer(&connected_peer, &trusted_peers) {
+                    emit!("peer_rejected={connected_peer} reason=not_in_trusted_peer_allowlist");
+                    let _ = swarm.disconnect_peer_id(connected_peer);
+                    continue;
+                }
                 emit!("peer_connected={connected_peer} relayed={}", endpoint.is_relayed());
                 if connected_peer == relay_peer && !relay_connected {
                     relay_connected = true;
@@ -143,6 +209,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 emit!("relay_client_event={event:?}");
             }
             SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Subscribed { peer_id, .. })) => {
+                if !is_trusted_peer(&peer_id, &trusted_peers) {
+                    emit!("peer_rejected={peer_id} reason=not_in_trusted_peer_allowlist");
+                    continue;
+                }
                 emit!("gossipsub_subscribed peer={peer_id}");
                 if role == "sender" && !published {
                     let payload = r#"{ "schema":"osiris.observation.v1","instrument":"BTC-USD","provider":"relay-test","payload":"three-process-relay-ok" }"#.to_string();
@@ -152,6 +222,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
             SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message { propagation_source, message, .. })) => {
+                if !is_trusted_peer(&propagation_source, &trusted_peers) {
+                    emit!("message_rejected peer={propagation_source} reason=not_in_trusted_peer_allowlist");
+                    continue;
+                }
                 let payload = String::from_utf8_lossy(&message.data);
                 if payload.contains("three-process-relay-ok") {
                     emit!("relay_observation_received peer={propagation_source} payload={payload}");
@@ -165,6 +239,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 emit!("relay_listener_closed listener_id={listener_id:?} reason={reason:?}");
             }
             SwarmEvent::ConnectionClosed { peer_id: closed_peer, cause, .. } => {
+                if closed_peer == relay_peer {
+                    relay_connected = false;
+                }
                 emit!("connection_closed peer={closed_peer} cause={cause:?}");
             }
             SwarmEvent::OutgoingConnectionError { peer_id: failed_peer, error, .. } => {
