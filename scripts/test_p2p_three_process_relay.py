@@ -43,7 +43,7 @@ class Process:
             if any(needle in line for line in self.history):
                 return next(line for line in self.history if needle in line)
             if self.proc.poll() is not None:
-                raise RuntimeError(f"{self.name} exited {self.proc.returncode}; expected {needle}")
+                raise RuntimeError(f"{self.name} exited {self.proc.returncode}; expected {needle}; logs={self.history}")
             try:
                 line = self.lines.get(timeout=0.2)
                 if needle in line:
@@ -90,10 +90,10 @@ def main():
         receiver_peer_line = receiver.wait_for("peer_id=", timeout=10)
         receiver_peer_id = receiver_peer_line.split("=", 1)[1]
 
-        # The relay server's ReservationReqAccepted event is the authoritative
-        # signal that the receiver has a usable reservation. The client swarm
-        # does not guarantee a NewListenAddr event for this relay listener.
-        relay_proc.wait_for("ReservationReqAccepted", timeout=20)
+        # Wait for the receiver's own relay-client behaviour to confirm the
+        # reservation. The relay server's accepted-request event can be logged
+        # before the response reaches the client, which caused a race.
+        receiver.wait_for("ReservationReqAccepted", timeout=20)
 
         sender_env = base_env | {
             "OSIRIS_RELAY_CLIENT_ROLE": "sender",
