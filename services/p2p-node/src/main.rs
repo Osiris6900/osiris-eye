@@ -765,7 +765,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                     emit!("revocation_sync_response_rejected source={propagation_source} reason=unmatched_or_wrong_peer_binding");
                                     continue;
                                 }
-                                pending_revocation_requests.remove(&request_id);
                                 let mut applied = 0usize;
                                 for record in records {
                                     match registry.apply(record.clone(), true) {
@@ -792,28 +791,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                     let _ = swarm.behaviour_mut().gossipsub.publish(revocation_topic.clone(), bytes);
                                 }
                             }
-                            Ok(RevocationSyncMessage::SnapshotPage { records, next_cursor }) => {
-                                let mut applied = 0usize;
-                                for record in records {
-                                    match registry.apply(record.clone(), true) {
-                                        Ok(true) => {
-                                            let peer = record.peer_id.parse::<PeerId>()?;
-                                            revoked_peers.get_or_insert_with(HashSet::new).insert(peer);
-                                            let bytes = serde_json::to_vec(&RevocationSyncMessage::Record(record))?;
-                                            let _ = swarm.behaviour_mut().gossipsub.publish(revocation_topic.clone(), bytes);
-                                            let _ = swarm.disconnect_peer_id(peer);
-                                            applied += 1;
-                                        }
-                                        Ok(false) => {}
-                                        Err(error) => emit!("revocation_snapshot_record_rejected source={propagation_source} error={error}"),
-                                    }
-                                }
-                                emit!("revocation_sync_page_applied source={propagation_source} applied={applied} has_more={}", next_cursor.is_some());
-                                if let Some(cursor) = next_cursor {
-                                    let request = RevocationSyncMessage::SyncRequestPage { after_peer_id: Some(cursor) };
-                                    let bytes = serde_json::to_vec(&request)?;
-                                    let _ = swarm.behaviour_mut().gossipsub.publish(revocation_topic.clone(), bytes);
-                                }
+                            Ok(RevocationSyncMessage::SnapshotPage { .. }) => {
+                                emit!("revocation_sync_response_rejected source={propagation_source} reason=legacy_unbound_page");
                             }
                             Err(error) => emit!("revocation_sync_message_rejected peer={propagation_source} error={error}"),
                         }
