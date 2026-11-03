@@ -4,6 +4,8 @@ on:
   pull_request:
     types: [closed]
     branches: [main]
+  push:
+    branches: [main]
 
 permissions:
   contents: write
@@ -16,8 +18,11 @@ concurrency:
 jobs:
   next-p2p-milestone:
     if: >-
-      github.event.pull_request.merged == true &&
-      contains(github.event.pull_request.title, 'P2P')
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.merged == true &&
+       contains(github.event.pull_request.title, 'P2P')) ||
+      (github.event_name == 'push' &&
+       contains(github.event.head_commit.message, 'P2P'))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -44,7 +49,7 @@ jobs:
           prompt: |
             You are the autonomous implementation agent for Osiris Eye's Rust/libp2p P2P network.
 
-            A P2P milestone PR has just merged into main. Inspect the repository state, especially:
+            A P2P milestone has just landed on main. Inspect the repository state, especially:
             - services/p2p-node/src/main.rs
             - services/p2p-node/src/bin/relay-client.rs
             - scripts/test_p2p_*.py
@@ -61,11 +66,11 @@ jobs:
             5. Do not claim Internet-wide reachability from localhost tests.
             6. Do not add credentials, API keys, or secrets to files or logs.
             7. Do not modify this workflow or the Codex prompt/configuration.
-            8. Do not merge anything. The workflow will open a PR; normal CI and human/repository safeguards remain in force.
+            8. Do not merge anything. The workflow will open a PR; normal CI and repository safeguards remain in force.
             9. If no safe, non-duplicate milestone can be identified, make no code changes and explain why.
 
             Run the relevant local checks that are available. Summarize exactly what changed, tests run, and remaining limitations in codex-next-p2p-summary.md.
-      
+
       - name: Run Rust validation
         run: |
           cargo fmt --all -- --check
