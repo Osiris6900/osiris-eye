@@ -168,24 +168,26 @@ class SQLiteReplayGuard:
         if capacity < 1:
             raise ValueError("capacity_must_be_positive")
         self.database_path = str(database_path)
+        if self.database_path == ":memory:":
+            raise ValueError("durable_replay_store_requires_file_path")
         self.capacity = capacity
-        if self.database_path != ":memory:":
-            Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as connection:
-            if self.database_path != ":memory:":
-                connection.execute("PRAGMA journal_mode=WAL")
+        Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
+        connection = self._connect()
+        try:
+            connection.execute("PRAGMA journal_mode=WAL")
             connection.execute(
                 """CREATE TABLE IF NOT EXISTS replay_messages (
                     message_id TEXT PRIMARY KEY,
                     first_seen INTEGER NOT NULL
                 )"""
             )
-        if self.database_path != ":memory:":
-            try:
-                Path(self.database_path).chmod(0o600)
-            except OSError:
-                # Permission hardening is best-effort on platforms without POSIX modes.
-                pass
+        finally:
+            connection.close()
+        try:
+            Path(self.database_path).chmod(0o600)
+        except OSError:
+            # Permission hardening is best-effort on platforms without POSIX modes.
+            pass
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(
