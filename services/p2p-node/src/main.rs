@@ -190,6 +190,94 @@ mod tests {
         assert!(super::ReplayGuard::open(path.clone()).is_err());
         let _ = std::fs::remove_file(path);
     }
+    #[test]
+    fn encrypted_replay_is_rejected_after_decryption_and_across_restart() {
+        use super::e2ee::{create_key_binding, decrypt_for_recipient, encrypt_for_recipient, verify_key_binding, TransportKeyPair};
+        use libp2p::{identity, PeerId};
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let sender = identity::Keypair::generate_ed25519();
+        let sender_transport = TransportKeyPair::generate();
+        let recipient = identity::Keypair::generate_ed25519();
+        let recipient_transport = TransportKeyPair::generate();
+        let sender_peer = PeerId::from(sender.public());
+        let recipient_peer = PeerId::from(recipient.public());
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let binding_record = create_key_binding(
+            &sender, &sender_transport.public_key, 1, now.saturating_sub(5), now + 300,
+        ).unwrap();
+        let sender_binding = verify_key_binding(&binding_record, now, 1).unwrap();
+        let observation = serde_json::to_vec(&valid()).unwrap();
+        let envelope = encrypt_for_recipient(
+            &sender, 1, &recipient_peer.to_string(), &recipient_transport.public_key,
+            1, &observation, now, now + 120,
+        ).unwrap();
+        let plaintext = decrypt_for_recipient(
+            &envelope, &sender_binding, &recipient_peer, 1,
+            recipient_transport.private_key(), now,
+        ).unwrap();
+        let decoded: ObservationEnvelope = serde_json::from_slice(&plaintext).unwrap();
+        assert!(decoded.validate().is_ok());
+
+        let replay_key = format!("{sender_peer}:{}", envelope.message_id);
+        let path = std::env::temp_dir().join(format!(
+            "osiris-e2ee-acceptance-{}-{}.cache",
+            std::process::id(),
+            now,
+        ));
+        {
+            let mut guard = super::ReplayGuard::open(path.clone()).unwrap();
+            assert!(guard.record_message_id_if_new(&replay_key).unwrap());
+            assert!(!guard.record_message_id_if_new(&replay_key).unwrap());
+        }
+        {
+            let mut restarted = super::ReplayGuard::open(path.clone()).unwrap();
+            assert!(!restarted.record_message_id_if_new(&replay_key).unwrap());
+        }
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn invalid_encrypted_envelope_is_not_committed_to_replay_cache() {
+        use super::e2ee::{create_key_binding, decrypt_for_recipient, encrypt_for_recipient, verify_key_binding, TransportKeyPair};
+        use libp2p::{identity, PeerId};
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let sender = identity::Keypair::generate_ed25519();
+        let sender_transport = TransportKeyPair::generate();
+        let recipient = identity::Keypair::generate_ed25519();
+        let recipient_transport = TransportKeyPair::generate();
+        let recipient_peer = PeerId::from(recipient.public());
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let binding_record = create_key_binding(
+            &sender, &sender_transport.public_key, 1, now.saturating_sub(5), now + 300,
+        ).unwrap();
+        let sender_binding = verify_key_binding(&binding_record, now, 1).unwrap();
+        let mut envelope = encrypt_for_recipient(
+            &sender, 1, &recipient_peer.to_string(), &recipient_transport.public_key,
+            1, &serde_json::to_vec(&valid()).unwrap(), now, now + 120,
+        ).unwrap();
+        envelope.expires_at = envelope.expires_at.saturating_add(1);
+        assert_eq!(
+            decrypt_for_recipient(
+                &envelope, &sender_binding, &recipient_peer, 1,
+                recipient_transport.private_key(), now,
+            ).err(),
+            Some("envelope_signature_invalid"),
+        );
+
+        let path = std::env::temp_dir().join(format!(
+            "osiris-e2ee-invalid-{}-{}.cache",
+            std::process::id(),
+            now,
+        ));
+        let guard = super::ReplayGuard::open(path.clone()).unwrap();
+        let replay_key = format!("{}:{}", envelope.sender_peer_id, envelope.message_id);
+        let replay_digest = format!("{:x}", Sha256::digest(replay_key.as_bytes()));
+        assert!(!guard.seen.contains(&replay_digest));
+        let _ = std::fs::remove_file(path);
+    }
+
     #[test] fn accepts_valid_envelope() { assert!(valid().validate().is_ok()); }
     #[test] fn rejects_wrong_schema() { let mut v=valid(); v.schema="v0".into(); assert_eq!(v.validate(),Err("unsupported_schema")); }
     #[test] fn rejects_bad_digest() { let mut v=valid(); v.payload_sha256="xyz".into(); assert_eq!(v.validate(),Err("invalid_payload_sha256")); }
