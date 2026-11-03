@@ -11,7 +11,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from typing import Any
 
-_SYMBOL = re.compile(r"^[A-Z0-9._-]{1,32}$")
+_SYMBOL = re.compile(r"^[a-z0-9._-]{1,32}$")
 _BINANCE_INTERVALS = {"1m", "5m", "15m", "1h", "4h", "1d"}
 _STOOQ_INTERVALS = {"d"}
 
