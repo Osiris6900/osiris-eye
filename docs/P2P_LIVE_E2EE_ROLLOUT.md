@@ -19,7 +19,7 @@ When the flag is absent or not `1`, the legacy plaintext observation topic remai
 Set these on each node before enabling E2EE:
 
 - `OSIRIS_E2EE_ENABLED=1`
-- `OSIRIS_E2EE_RECIPIENTS=<comma-separated recipient PeerIds>` on publishing nodes
+- `OSIRIS_E2EE_RECIPIENTS=<comma-separated recipient PeerIds>` or `OSIRIS_E2EE_RECIPIENTS_FILE=<path>` on publishing nodes (the file is read for each observation, so recipient lists can be updated without restarting)
 - `OSIRIS_TRANSPORT_KEY=<private key file path>` (optional; defaults to `.osiris-transport-key`)
 - `OSIRIS_TRANSPORT_KEY_EPOCH=<positive integer>` (defaults to `1`; increment when rotating the X25519 transport key)
 - Existing `OSIRIS_NODE_KEY`, `OSIRIS_TRUSTED_PEERS`, and `OSIRIS_REVOKED_PEERS` controls remain applicable.
@@ -28,7 +28,7 @@ The transport private key file is created with owner-only permissions on Unix. B
 
 ## Important limitations / rollout gates
 
-- Key bindings are currently held in process memory; durable peer-key/epoch storage and rollback protection across restarts are still required.
+- Key bindings are currently held in process memory; durable peer-key/epoch storage and rollback protection across restarts are still required. Local signed key bindings are republished on peer subscription and refreshed every 24 hours.
 - Cross-host two-node and three-node tests (including a non-recipient observer) are still required before broad rollout.
 - No independent cryptographic audit has been completed.
 - This v1 construction does not claim forward secrecy against later compromise of the recipient's long-term X25519 private key.
