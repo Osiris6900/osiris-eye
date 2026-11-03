@@ -41,7 +41,7 @@ if os.getenv("OSIRIS_PUBLIC_BINANCE_ENABLED", "true").strip().lower() in {"1", "
 if os.getenv("OSIRIS_PUBLIC_STOOQ_ENABLED", "true").strip().lower() in {"1", "true", "yes"}:
     market_data_gateway.register_adapter(
         "stooq-daily", StooqDailyEquityAdapter(),
-        supported_asset_classes=["equity", "index", "fx", "commodity"],
+        supported_asset_classes=["equity"],
         entitlement_reference="public-data:stooq-daily",
     )
 
@@ -101,7 +101,7 @@ def market_data_global_coverage():
         "implemented_public_connectors": [
             {"provider": "coinbase-public", "asset_classes": ["crypto"], "granularity": "configurable candles", "coverage": "Coinbase Exchange listed products"},
             {"provider": "binance-public", "asset_classes": ["crypto"], "granularity": os.getenv("OSIRIS_PUBLIC_BINANCE_INTERVAL", "1m"), "coverage": "Binance Spot listed pairs"},
-            {"provider": "stooq-daily", "asset_classes": ["equity", "index", "fx", "commodity"], "granularity": "daily", "coverage": "Stooq-supported symbols with market suffix; verify symbol coverage per listing"},
+            {"provider": "stooq-daily", "asset_classes": ["equity"], "granularity": "daily", "coverage": "Stooq-supported symbols with market suffix; verify symbol coverage per listing"},
             {"provider": "interactive_brokers", "asset_classes": ["equity", "fx", "future", "option", "index"], "granularity": "broker entitlement dependent", "coverage": "only when paper adapter is explicitly configured"},
         ],
         "registered_provider_status": providers,
