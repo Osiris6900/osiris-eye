@@ -1,5 +1,7 @@
 mod peer_auth;
+mod revocation;
 
+use revocation::RevocationRegistry;
 use peer_auth::{is_peer_allowed, parse_revoked_peers, parse_trusted_peers};
 use std::{collections::HashSet, env, error::Error, fs::{self, OpenOptions}, io::{BufRead, BufReader as StdBufReader, Write}, net::SocketAddr, path::PathBuf, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
 
@@ -462,7 +464,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let bootstrap_peers = parse_bootstrap_peers(&mut swarm)?;
     let trusted_peers = parse_trusted_peers(env::var("OSIRIS_TRUSTED_PEERS").ok().as_deref())?;
-    let revoked_peers = parse_revoked_peers(env::var("OSIRIS_REVOKED_PEERS").ok().as_deref())?;
+    let mut revoked_peer_set = parse_revoked_peers(env::var("OSIRIS_REVOKED_PEERS").ok().as_deref())?
+        .unwrap_or_default();
+    let authority_key = env::var("OSIRIS_REVOCATION_AUTHORITY_PUBLIC_KEY").ok();
+    let registry_path = env::var_os("OSIRIS_REVOCATION_REGISTRY")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(".osiris-revocations.json"));
+    if let Some(authority_key) = authority_key {
+        let registry = RevocationRegistry::open(registry_path.clone(), authority_key)?;
+        let signed_peers = registry.revoked_peer_ids()?;
+        revoked_peer_set.extend(signed_peers);
+        emit!("signed_revocation_registry=loaded records={} path={}", revoked_peer_set.len(), registry_path.display());
+    } else {
+        emit!("signed_revocation_registry=disabled reason=authority_public_key_not_configured");
+    }
+    let revoked_peers = if revoked_peer_set.is_empty() { None } else { Some(revoked_peer_set) };
     let replay_path = env::var_os("OSIRIS_REPLAY_CACHE")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(".osiris-replay-cache"));
