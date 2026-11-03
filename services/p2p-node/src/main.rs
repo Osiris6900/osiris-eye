@@ -311,20 +311,6 @@ fn remember_revocation_request(pending: &mut HashMap<String, Instant>, request_i
     pending.insert(request_id, now);
 }
 
-static REVOCATION_REQUEST_COUNTER: AtomicU64 = AtomicU64::new(1);
-
-fn new_revocation_request(peer_id: &PeerId, after_peer_id: Option<String>) -> RevocationSyncMessage {
-    let counter = REVOCATION_REQUEST_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
-    let material = format!("{peer_id}:{now}:{counter}");
-    let request_id = format!("{:x}", Sha256::digest(material.as_bytes()));
-    RevocationSyncMessage::SyncRequestPageV2 {
-        request_id,
-        requester_peer_id: peer_id.to_string(),
-        after_peer_id,
-    }
-}
-
 fn parse_interval_secs(raw: Option<&str>, default: u64, min: u64, max: u64) -> u64 {
     raw.and_then(|value| value.parse::<u64>().ok())
         .unwrap_or(default)
@@ -533,7 +519,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
         None
     };
     let mut revoked_peers = if revoked_peer_set.is_empty() { None } else { Some(revoked_peer_set) };
-    let mut pending_revocation_requests: HashMap<String, Instant> = HashMap::new();
     let replay_path = env::var_os("OSIRIS_REPLAY_CACHE")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(".osiris-replay-cache"));
@@ -700,13 +685,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         emit!("mdns_peer_expired={peer}");
                     }
                 }
-                SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Subscribed { peer_id, .. })) => {
-                    if !is_peer_allowed(&peer_id, &trusted_peers, &revoked_peers) {
-                        emit!("peer_rejected={peer_id} reason=not_in_trusted_peer_allowlist");
-                        let _ = swarm.disconnect_peer_id(peer_id);
+                SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Subscribed { peer_id: subscribed_peer_id, .. })) => {
+                    if !is_peer_allowed(&subscribed_peer_id, &trusted_peers, &revoked_peers) {
+                        emit!("peer_rejected={subscribed_peer_id} reason=not_in_trusted_peer_allowlist");
+                        let _ = swarm.disconnect_peer_id(subscribed_peer_id);
                         continue;
                     }
-                    emit!("gossipsub_subscribed peer={peer_id}");
+                    emit!("gossipsub_subscribed peer={subscribed_peer_id}");
                     if revocation_registry.is_some() {
                         let request_id = revocation_request_id(&peer_id, None);
                         remember_revocation_request(&mut pending_revocation_requests, request_id.clone());
@@ -728,27 +713,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
                             emit!("revocation_sync_disabled reason=authority_key_not_configured");
                             continue;
                         };
+                        pending_revocation_requests.retain(|_, created| created.elapsed() <= REVOCATION_REQUEST_TTL);
                         match serde_json::from_slice::<RevocationSyncMessage>(&message.data) {
                             Ok(RevocationSyncMessage::SyncRequest) => {
                                 let snapshot = RevocationSyncMessage::Snapshot(registry.records());
                                 let bytes = serde_json::to_vec(&snapshot)?;
                                 let _ = swarm.behaviour_mut().gossipsub.publish(revocation_topic.clone(), bytes);
                                 emit!("revocation_sync_snapshot_sent requester={propagation_source} records={}", registry.records().len());
-                            }
-                            Ok(RevocationSyncMessage::SyncRequestPageV2 { request_id, requester_peer_id, after_peer_id }) => {
-                                if requester_peer_id != authenticated_source.to_string() || request_id.len() != 64 || !request_id.bytes().all(|b| b.is_ascii_hexdigit()) {
-                                    emit!("revocation_sync_v2_request_rejected source={propagation_source} reason=invalid_request_binding");
-                                    continue;
-                                }
-                                let (records, next_cursor) = registry.page_after(after_peer_id.as_deref(), REVOCATION_SYNC_PAGE_SIZE);
-                                let response = RevocationSyncMessage::SnapshotPageV2 {
-                                    request_id,
-                                    requester_peer_id,
-                                    responder_peer_id: peer_id.to_string(),
-                                    records,
-                                    next_cursor,
-                                };
-                                let _ = swarm.behaviour_mut().gossipsub.publish(revocation_topic.clone(), serde_json::to_vec(&response)?);
                             }
                             Ok(RevocationSyncMessage::SyncRequestPage { after_peer_id }) => {
                                 let (records, next_cursor) = registry.page_after(after_peer_id.as_deref(), REVOCATION_SYNC_PAGE_SIZE);
