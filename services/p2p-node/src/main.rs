@@ -1,7 +1,6 @@
 mod peer_auth;
 mod revocation;
 mod e2ee;
-mod e2ee;
 
 use revocation::{RevocationRegistry, RevocationSyncMessage};
 use e2ee::{create_key_binding, decrypt_for_recipient, encrypt_for_recipient, verify_key_binding, EncryptedEnvelope, KeyBindingRecord, TransportKeyPair};
@@ -576,7 +575,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     behaviour.gossipsub.subscribe(&key_binding_topic)?;
     behaviour.gossipsub.subscribe(&encrypted_topic)?;
 
-    let mut swarm = SwarmBuilder::with_existing_identity(key)
+    let mut swarm = SwarmBuilder::with_existing_identity(key.clone())
         .with_tokio()
         .with_tcp(tcp::Config::default(), noise::Config::new, yamux::Config::default)?
         .with_behaviour(|_| behaviour)?
