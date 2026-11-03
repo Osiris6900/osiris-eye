@@ -134,6 +134,10 @@ pub fn verify_key_binding(
     if record.schema != KEY_BINDING_SCHEMA {
         return Err("unsupported_key_binding_schema");
     }
+    if record.peer_id.len() > 128 || record.identity_public_key.len() > 256
+        || record.transport_public_key.len() != 43 || record.signature.len() != 86 {
+        return Err("key_binding_field_size_invalid");
+    }
     if record.key_epoch == 0 || record.key_epoch < minimum_epoch {
         return Err("key_binding_epoch_rollback");
     }
@@ -348,6 +352,7 @@ pub fn encrypt_for_recipient(
     expires_at: u64,
 ) -> Result<EncryptedEnvelope, &'static str> {
     if plaintext.len() > 1_048_576
+        || recipient_peer_id.is_empty() || recipient_peer_id.len() > 128
         || sender_key_epoch == 0
         || recipient_key_epoch == 0
         || expires_at <= created_at
@@ -423,6 +428,15 @@ pub fn decrypt_for_recipient(
         return Err("envelope_identity_or_time_check_failed");
     }
 
+    if envelope.sender_peer_id.len() > 128 || envelope.recipient_peer_id.len() > 128
+        || envelope.ephemeral_public_key.len() != 43
+        || envelope.salt.len() != 43
+        || envelope.nonce.len() != 16
+        || envelope.message_id.len() != 22
+        || envelope.signature.len() != 86
+        || envelope.ciphertext.len() > 1_398_123 {
+        return Err("envelope_field_size_invalid");
+    }
     let ephemeral_bytes = STANDARD_NO_PAD.decode(&envelope.ephemeral_public_key)
         .map_err(|_| "invalid_ephemeral_key_encoding")?;
     let ephemeral_bytes: [u8; 32] = ephemeral_bytes.try_into()
