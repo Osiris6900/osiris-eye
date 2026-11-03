@@ -26,11 +26,13 @@ replay-cache, and E2EE state for every run. Pin the tested commit SHA.
    verify A's binding.
 3. A constructs one observation addressed only to B's PeerId.
 4. B decrypts and reports the exact instrument identifier and payload SHA-256.
-5. C receives only ciphertext/opaque routing metadata, never the plaintext
-   instrument or payload digest.
-6. C cannot decrypt the envelope using its own key material; the negative
-   assertion must be based on the actual receive/decrypt path, not merely on
-   the absence of a success log.
+5. C receives the encrypted-topic envelope and drops it because its PeerId is
+   not the addressed recipient; C must not emit the plaintext instrument or
+   payload digest.
+6. This cross-host test proves recipient-gated discard, not a deliberate
+   decryption attempt on C. Wrong-recipient and wrong-private-key cryptographic
+   failures remain covered by the E2EE primitive tests; do not claim C attempted
+   decryption when the live node correctly rejects the envelope before decrypting.
 7. A records the exact recipient set and a run correlation ID. Logs must not
    contain private keys, secret material, or plaintext payload.
 8. The test fails closed on disconnect, stale key binding, invalid signature,
@@ -43,7 +45,7 @@ A passing run must retain:
 - PeerIds for A, B, and C (public identifiers only);
 - recipient-set assertion showing B included and C excluded;
 - B's exact decrypted payload digest;
-- C's explicit decrypt-rejection result;
+- C's explicit non-recipient discard result;
 - sanitized logs and test exit status.
 
 ## Security boundaries
@@ -62,8 +64,8 @@ authorized by this test.
    only if the current message path does not expose a testable result.
 3. Add a manually dispatched three-host GitHub Actions workflow using three
    independent hosted runners on the private test overlay.
-4. Verify the workflow's logs prove both recipient success and non-recipient
-   cryptographic rejection; a green build alone is insufficient.
+4. Verify the workflow's logs prove recipient success and the observer's
+   recipient-gated discard; a green build alone is insufficient.
 5. Run at least one separate-host acceptance and retain its evidence before
    marking this gate complete.
 
