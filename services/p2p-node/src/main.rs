@@ -3,7 +3,7 @@ mod revocation;
 
 use revocation::{RevocationRegistry, RevocationSyncMessage};
 use peer_auth::{is_peer_allowed, parse_revoked_peers, parse_trusted_peers};
-use std::{collections::HashSet, env, error::Error, fs::{self, OpenOptions}, io::{BufRead, BufReader as StdBufReader, Write}, net::SocketAddr, path::PathBuf, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
+use std::{collections::{HashMap, HashSet}, env, error::Error, fs::{self, OpenOptions}, io::{BufRead, BufReader as StdBufReader, Write}, net::SocketAddr, path::PathBuf, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
 
 macro_rules! emit {
     ($($arg:tt)*) => {{
@@ -28,6 +28,8 @@ const PROTOCOL_VERSION: &str = "/osiris-eye/p2p/1.0.0";
 const TOPIC_NAME: &str = "osiris/observations/1";
 const REVOCATION_TOPIC_NAME: &str = "osiris/revocations/1";
 const REVOCATION_SYNC_PAGE_SIZE: usize = 128;
+const MAX_PENDING_REVOCATION_REQUESTS: usize = 256;
+const REVOCATION_REQUEST_TTL: Duration = Duration::from_secs(120);
 
 const MAX_REPLAY_CACHE_BYTES: u64 = 64 * 1024 * 1024;
 
@@ -151,6 +153,21 @@ mod tests {
     #[test] fn rejects_payload_hash_mismatch() { let mut v=valid(); v.payload.push_str("-tampered"); assert_eq!(v.validate(),Err("payload_hash_mismatch")); }
     #[test] fn rejects_oversized_payload() { let mut v=valid(); v.payload="x".repeat(1_048_577); assert_eq!(v.validate(),Err("payload_too_large")); }
     #[test] fn rejects_empty_provider() { let mut v=valid(); v.provider.clear(); assert_eq!(v.validate(),Err("invalid_provider")); }
+    #[test] fn request_bound_revocation_ids_are_fixed_length_and_cursor_sensitive() {
+        let peer = PeerId::random();
+        let first = super::revocation_request_id(&peer, None);
+        let second = super::revocation_request_id(&peer, Some("cursor"));
+        assert_eq!(first.len(), 64);
+        assert!(first.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        assert_ne!(first, second);
+    }
+    #[test] fn pending_revocation_requests_are_bounded() {
+        let mut pending = std::collections::HashMap::new();
+        for index in 0..(super::MAX_PENDING_REVOCATION_REQUESTS + 10) {
+            super::remember_revocation_request(&mut pending, format!("{index:064x}"));
+        }
+        assert_eq!(pending.len(), super::MAX_PENDING_REVOCATION_REQUESTS);
+    }
     #[test] fn reconnect_interval_uses_default_when_unset_or_invalid() {
         assert_eq!(super::parse_interval_secs(None, 15, 5, 300), 15);
         assert_eq!(super::parse_interval_secs(Some("bad"), 15, 5, 300), 15);
@@ -274,6 +291,24 @@ fn load_or_create_identity() -> Result<identity::Keypair, Box<dyn Error>> {
     let key = write_node_identity(&path)?;
     eprintln!("Created node identity at {} (keep this file private)", path.display());
     Ok(key)
+}
+
+fn revocation_request_id(peer_id: &PeerId, cursor: Option<&str>) -> String {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos()).unwrap_or_default();
+    let material = format!("osiris.revocation.request.v2|{peer_id}|{now}|{}", cursor.unwrap_or(""));
+    format!("{:x}", Sha256::digest(material.as_bytes()))
+}
+
+fn remember_revocation_request(pending: &mut HashMap<String, Instant>, request_id: String) {
+    let now = Instant::now();
+    pending.retain(|_, created| now.duration_since(*created) <= REVOCATION_REQUEST_TTL);
+    if pending.len() >= MAX_PENDING_REVOCATION_REQUESTS {
+        if let Some(oldest) = pending.iter().min_by_key(|(_, created)| **created).map(|(id, _)| id.clone()) {
+            pending.remove(&oldest);
+        }
+    }
+    pending.insert(request_id, now);
 }
 
 fn parse_interval_secs(raw: Option<&str>, default: u64, min: u64, max: u64) -> u64 {
@@ -514,6 +549,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         30,
         3600,
     );
+    let mut pending_revocation_requests: HashMap<String, Instant> = HashMap::new();
     let mut revocation_sync_tick = tokio::time::interval(Duration::from_secs(revocation_sync_interval_secs));
     revocation_sync_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut reconnect_tick = tokio::time::interval(Duration::from_secs(reconnect_interval_secs));
@@ -573,9 +609,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 );
             }
             _ = revocation_sync_tick.tick(), if revocation_registry.is_some() => {
-                let request = serde_json::to_vec(&RevocationSyncMessage::SyncRequestPage { after_peer_id: None })?;
+                let request_id = revocation_request_id(&peer_id, None);
+                remember_revocation_request(&mut pending_revocation_requests, request_id.clone());
+                let request = serde_json::to_vec(&RevocationSyncMessage::SyncRequestPageV2 { request_id: request_id.clone(), requester_peer_id: peer_id.to_string(), after_peer_id: None })?;
                 match swarm.behaviour_mut().gossipsub.publish(revocation_topic.clone(), request) {
-                    Ok(message_id) => emit!("revocation_anti_entropy_request_sent message_id={message_id}"),
+                    Ok(message_id) => emit!("revocation_anti_entropy_request_sent request_id={request_id} message_id={message_id}"),
                     Err(error) => emit!("revocation_anti_entropy_request_deferred error={error}"),
                 }
             }
@@ -647,23 +685,27 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         emit!("mdns_peer_expired={peer}");
                     }
                 }
-                SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Subscribed { peer_id, .. })) => {
-                    if !is_peer_allowed(&peer_id, &trusted_peers, &revoked_peers) {
-                        emit!("peer_rejected={peer_id} reason=not_in_trusted_peer_allowlist");
-                        let _ = swarm.disconnect_peer_id(peer_id);
+                SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Subscribed { peer_id: subscribed_peer_id, .. })) => {
+                    if !is_peer_allowed(&subscribed_peer_id, &trusted_peers, &revoked_peers) {
+                        emit!("peer_rejected={subscribed_peer_id} reason=not_in_trusted_peer_allowlist");
+                        let _ = swarm.disconnect_peer_id(subscribed_peer_id);
                         continue;
                     }
-                    emit!("gossipsub_subscribed peer={peer_id}");
+                    emit!("gossipsub_subscribed peer={subscribed_peer_id}");
                     if revocation_registry.is_some() {
-                        let request = serde_json::to_vec(&RevocationSyncMessage::SyncRequestPage { after_peer_id: None })?;
+                        let request_id = revocation_request_id(&peer_id, None);
+                        remember_revocation_request(&mut pending_revocation_requests, request_id.clone());
+                        let request = serde_json::to_vec(&RevocationSyncMessage::SyncRequestPageV2 { request_id, requester_peer_id: peer_id.to_string(), after_peer_id: None })?;
                         let _ = swarm.behaviour_mut().gossipsub.publish(revocation_topic.clone(), request);
                     }
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message {
                     propagation_source, message, ..
                 })) => {
+                    let authenticated_source = message.source.unwrap_or(propagation_source);
                     if message.topic.as_str() == REVOCATION_TOPIC_NAME {
-                        if !is_peer_allowed(&propagation_source, &trusted_peers, &revoked_peers) {
+                        let authenticated_source = message.source.unwrap_or(propagation_source);
+                        if !is_peer_allowed(&authenticated_source, &trusted_peers, &revoked_peers) {
                             emit!("revocation_sync_message_rejected peer={propagation_source} reason=peer_not_allowed");
                             continue;
                         }
@@ -671,6 +713,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                             emit!("revocation_sync_disabled reason=authority_key_not_configured");
                             continue;
                         };
+                        pending_revocation_requests.retain(|_, created| created.elapsed() <= REVOCATION_REQUEST_TTL);
                         match serde_json::from_slice::<RevocationSyncMessage>(&message.data) {
                             Ok(RevocationSyncMessage::SyncRequest) => {
                                 let snapshot = RevocationSyncMessage::Snapshot(registry.records());
@@ -685,6 +728,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 let bytes = serde_json::to_vec(&page)?;
                                 let _ = swarm.behaviour_mut().gossipsub.publish(revocation_topic.clone(), bytes);
                                 emit!("revocation_sync_page_sent requester={propagation_source} records={count} next_page={}", next_cursor.is_some());
+                            }
+                            Ok(RevocationSyncMessage::SyncRequestPageV2 { request_id, requester_peer_id, after_peer_id }) => {
+                                if requester_peer_id != authenticated_source.to_string() || request_id.len() != 64 || !request_id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                                    emit!("revocation_sync_request_rejected source={propagation_source} reason=invalid_request_binding");
+                                    continue;
+                                }
+                                let (records, next_cursor) = registry.page_after(after_peer_id.as_deref(), REVOCATION_SYNC_PAGE_SIZE);
+                                let count = records.len();
+                                let page = RevocationSyncMessage::SnapshotPageV2 {
+                                    request_id: request_id.clone(), requester_peer_id,
+                                    responder_peer_id: peer_id.to_string(), records, next_cursor: next_cursor.clone(),
+                                };
+                                let bytes = serde_json::to_vec(&page)?;
+                                let _ = swarm.behaviour_mut().gossipsub.publish(revocation_topic.clone(), bytes);
+                                emit!("revocation_sync_page_v2_sent request_id={request_id} requester={propagation_source} records={count} next_page={}", next_cursor.is_some());
                             }
                             Ok(RevocationSyncMessage::Record(record)) => {
                                 match registry.apply(record.clone(), true) {
@@ -718,28 +776,41 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 }
                                 emit!("revocation_sync_snapshot_applied source={propagation_source} applied={applied}");
                             }
-                            Ok(RevocationSyncMessage::SnapshotPage { records, next_cursor }) => {
+                            Ok(RevocationSyncMessage::SnapshotPageV2 { request_id, requester_peer_id, responder_peer_id, records, next_cursor }) => {
+                                if requester_peer_id != peer_id.to_string()
+                                    || responder_peer_id != authenticated_source.to_string()
+                                    || !pending_revocation_requests.contains_key(&request_id) {
+                                    emit!("revocation_sync_response_rejected source={propagation_source} reason=unmatched_or_wrong_peer_binding");
+                                    continue;
+                                }
                                 let mut applied = 0usize;
                                 for record in records {
                                     match registry.apply(record.clone(), true) {
                                         Ok(true) => {
-                                            let peer = record.peer_id.parse::<PeerId>()?;
-                                            revoked_peers.get_or_insert_with(HashSet::new).insert(peer);
+                                            let revoked_peer = record.peer_id.parse::<PeerId>()?;
+                                            revoked_peers.get_or_insert_with(HashSet::new).insert(revoked_peer);
                                             let bytes = serde_json::to_vec(&RevocationSyncMessage::Record(record))?;
                                             let _ = swarm.behaviour_mut().gossipsub.publish(revocation_topic.clone(), bytes);
-                                            let _ = swarm.disconnect_peer_id(peer);
+                                            let _ = swarm.disconnect_peer_id(revoked_peer);
                                             applied += 1;
                                         }
                                         Ok(false) => {}
                                         Err(error) => emit!("revocation_snapshot_record_rejected source={propagation_source} error={error}"),
                                     }
                                 }
-                                emit!("revocation_sync_page_applied source={propagation_source} applied={applied} has_more={}", next_cursor.is_some());
+                                emit!("revocation_sync_page_v2_applied request_id={request_id} source={propagation_source} applied={applied} has_more={}", next_cursor.is_some());
                                 if let Some(cursor) = next_cursor {
-                                    let request = RevocationSyncMessage::SyncRequestPage { after_peer_id: Some(cursor) };
+                                    let next_id = revocation_request_id(&peer_id, Some(&cursor));
+                                    remember_revocation_request(&mut pending_revocation_requests, next_id.clone());
+                                    let request = RevocationSyncMessage::SyncRequestPageV2 {
+                                        request_id: next_id, requester_peer_id: peer_id.to_string(), after_peer_id: Some(cursor),
+                                    };
                                     let bytes = serde_json::to_vec(&request)?;
                                     let _ = swarm.behaviour_mut().gossipsub.publish(revocation_topic.clone(), bytes);
                                 }
+                            }
+                            Ok(RevocationSyncMessage::SnapshotPage { .. }) => {
+                                emit!("revocation_sync_response_rejected source={propagation_source} reason=legacy_unbound_page");
                             }
                             Err(error) => emit!("revocation_sync_message_rejected peer={propagation_source} error={error}"),
                         }
