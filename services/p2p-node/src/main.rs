@@ -67,6 +67,15 @@ mod tests {
     #[test] fn rejects_payload_hash_mismatch() { let mut v=valid(); v.payload.push_str("-tampered"); assert_eq!(v.validate(),Err("payload_hash_mismatch")); }
     #[test] fn rejects_oversized_payload() { let mut v=valid(); v.payload="x".repeat(1_048_577); assert_eq!(v.validate(),Err("payload_too_large")); }
     #[test] fn rejects_empty_provider() { let mut v=valid(); v.provider.clear(); assert_eq!(v.validate(),Err("invalid_provider")); }
+    #[test] fn reconnect_interval_uses_default_when_unset_or_invalid() {
+        assert_eq!(super::parse_interval_secs(None, 15, 5, 300), 15);
+        assert_eq!(super::parse_interval_secs(Some("bad"), 15, 5, 300), 15);
+    }
+    #[test] fn reconnect_interval_is_clamped_to_safe_bounds() {
+        assert_eq!(super::parse_interval_secs(Some("1"), 15, 5, 300), 5);
+        assert_eq!(super::parse_interval_secs(Some("999"), 15, 5, 300), 300);
+        assert_eq!(super::parse_interval_secs(Some("45"), 15, 5, 300), 45);
+    }
     #[test] fn parses_public_tcp_external_addresses() {
         let addresses = parse_external_addresses(Some("/ip4/203.0.113.10/tcp/4001,/dns4/node.example/tcp/4001")).unwrap();
         assert_eq!(addresses.len(), 2);
@@ -140,6 +149,12 @@ fn load_or_create_identity() -> Result<identity::Keypair, Box<dyn Error>> {
     }
     eprintln!("Created node identity at {} (keep this file private)", path.display());
     Ok(key)
+}
+
+fn parse_interval_secs(raw: Option<&str>, default: u64, min: u64, max: u64) -> u64 {
+    raw.and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(default)
+        .clamp(min, max)
 }
 
 fn peer_id_from_multiaddr(address: &Multiaddr) -> Option<PeerId> {
@@ -338,7 +353,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
     } else {
         emit!("peer_authentication=open");
     }
-    let mut reconnect_tick = tokio::time::interval(Duration::from_secs(15));
+    let reconnect_interval_secs = parse_interval_secs(
+        env::var("OSIRIS_BOOTSTRAP_RECONNECT_INTERVAL_SECS").ok().as_deref(),
+        15,
+        5,
+        300,
+    );
+    let mut reconnect_tick = tokio::time::interval(Duration::from_secs(reconnect_interval_secs));
     reconnect_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let health_interval_secs = env::var("OSIRIS_HEALTH_INTERVAL_SECS")
         .ok()
@@ -362,7 +383,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     emit!("peer_id={peer_id}");
     emit!("topic={TOPIC_NAME}");
     emit!("bootstrap_peers={}", bootstrap_peers.len());
-    emit!("bootstrap_reconnect_interval_seconds=15");
+    emit!("bootstrap_reconnect_interval_seconds={reconnect_interval_secs}");
     emit!("health_interval_seconds={health_interval_secs}");
     emit!("Live trading and broker order submission are not part of this node.");
 
