@@ -20,7 +20,7 @@ from .public_market_data import (
 router = APIRouter(tags=["market-data"])
 market_data_gateway = MarketDataGateway()
 
-# Public Coinbase candles need no API key. Operators can disable outbound access.
+# Public feeds are read-only, require no trading credentials, and can be disabled.
 if os.getenv("OSIRIS_PUBLIC_COINBASE_ENABLED", "true").strip().lower() in {"1", "true", "yes"}:
     granularity = int(os.getenv("OSIRIS_PUBLIC_COINBASE_GRANULARITY", "60"))
     market_data_gateway.register_adapter(
@@ -29,8 +29,6 @@ if os.getenv("OSIRIS_PUBLIC_COINBASE_ENABLED", "true").strip().lower() in {"1", 
         entitlement_reference="public-data:coinbase-exchange",
     )
 
-
-# Additional public feeds are read-only and independently switchable.
 if os.getenv("OSIRIS_PUBLIC_BINANCE_ENABLED", "true").strip().lower() in {"1", "true", "yes"}:
     market_data_gateway.register_adapter(
         "binance-public",
@@ -61,23 +59,39 @@ def _register_ibkr_paper_adapter() -> None:
     try:
         adapter = IBKRPaperMarketDataAdapter.from_environment()
         market_data_gateway.register_adapter(
-            "interactive_brokers",
-            adapter,
+            "interactive_brokers", adapter,
             supported_asset_classes=["equity", "fx", "future", "option", "index"],
             entitlement_reference=env["OSIRIS_IBKR_ENTITLEMENT_REFERENCE"],
             credential_reference="env:OSIRIS_IBKR_ACCOUNT",
         )
     except (IBKRConfigurationError, ValueError):
-        # Invalid operator configuration leaves the provider unregistered.
         return
 
 
 _register_ibkr_paper_adapter()
 
 
+def _configured_provider_order() -> list[str]:
+    return [item.strip() for item in os.getenv("OSIRIS_MARKET_PROVIDER_ORDER", "").split(",") if item.strip()]
+
+
+def _default_provider_order(symbol: str) -> list[str]:
+    """Choose only a feed whose native symbol convention matches the request."""
+    normalized = symbol.strip().upper()
+    if normalized.endswith(".US") or normalized.endswith(".UK"):
+        return ["stooq-daily"]
+    if "-" in normalized:
+        return ["coinbase-public"]
+    return ["binance-public"]
+
+
+def _router_for_symbol(symbol: str) -> MultiProviderMarketDataRouter:
+    order = _configured_provider_order() or _default_provider_order(symbol)
+    return MultiProviderMarketDataRouter(market_data_gateway, order)
+
+
 @router.get("/market-data/asset-classes")
 def market_data_asset_classes():
-    """Return supported cross-asset taxonomy; this is not a connectivity claim."""
     return {
         "asset_classes": list(ASSET_CLASSES), "catalog_persisted": False,
         "exchange_connectivity_verified": False, "live_execution": False,
@@ -97,7 +111,6 @@ def market_data_instruments_audit(payload: dict[str, Any]):
 
 @router.get("/market-data/global-coverage")
 def market_data_global_coverage():
-    """Describe implemented public connectors and global asset-class ambitions honestly."""
     providers = market_data_gateway.providers()["providers"]
     return {
         "asset_classes": list(ASSET_CLASSES),
@@ -113,8 +126,6 @@ def market_data_global_coverage():
         "live_execution": False,
         "note": "Connector support is not equivalent to full exchange coverage. Verify symbol mapping, data delay, exchange entitlements, rate limits and redistribution rights before production use.",
     }
-
-
 
 
 @router.get("/market-data/providers")
@@ -147,7 +158,6 @@ def market_data_aggregate_bars(
     asset_class: str | None = Query(default=None, min_length=1, max_length=32),
     divergence_threshold_bps: float = Query(default=50.0, ge=0, le=10000),
 ):
-    """Aggregate source-preserving public/sandbox bars; never submits orders."""
     try:
         aggregator = UniversalMarketDataAggregator(
             market_data_gateway, divergence_threshold_bps=divergence_threshold_bps
@@ -162,23 +172,22 @@ def market_data_aggregate_bars(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-
-
-_provider_order = [
-    item.strip() for item in os.getenv("OSIRIS_MARKET_PROVIDER_ORDER", "").split(",")
-    if item.strip()
-]
-try:
-    multi_provider_router = MultiProviderMarketDataRouter(market_data_gateway, _provider_order) if _provider_order else None
-except ValueError:
-    multi_provider_router = None
-
-
 @router.get("/market-data/routing/providers")
 def market_data_routing_providers():
-    if multi_provider_router is None:
-        return {"providers": [], "routing_policy": "not_configured", "live_market_data_enabled": False}
-    return multi_provider_router.providers()
+    configured = _configured_provider_order()
+    providers = market_data_gateway.providers()["providers"]
+    return {
+        "providers": providers,
+        "routing_policy": "operator_priority_order" if configured else "symbol_convention_default",
+        "default_symbol_routes": {
+            "BASE-QUOTE": ["coinbase-public"],
+            "BASEQUOTE": ["binance-public"],
+            "TICKER.US_or_TICKER.UK": ["stooq-daily"],
+        },
+        "live_market_data_enabled": False,
+        "connectivity_verified": False,
+        "note": "Symbol routing selects an adapter only; it does not prove upstream connectivity, exchange coverage, data licensing, or real-time entitlement.",
+    }
 
 
 @router.get("/market-data/routing/bars")
@@ -187,10 +196,8 @@ def market_data_routed_bars(
     start: str = Query(..., min_length=20, max_length=64),
     end: str = Query(..., min_length=20, max_length=64),
 ):
-    if multi_provider_router is None:
-        raise HTTPException(status_code=503, detail="multi_provider_routing_not_configured")
     try:
-        return multi_provider_router.fetch_bars(symbol, start, end)
+        return _router_for_symbol(symbol).fetch_bars(symbol, start, end)
     except MarketDataUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except (ValueError, TypeError, OverflowError) as exc:

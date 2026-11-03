@@ -22,6 +22,7 @@ class FakeAdapter:
 def client(monkeypatch):
     monkeypatch.setenv("OSIRIS_ENV", "development")
     monkeypatch.delenv("OSIRIS_API_TOKEN", raising=False)
+    monkeypatch.delenv("OSIRIS_MARKET_PROVIDER_ORDER", raising=False)
     market_routes.market_data_gateway = market_routes.MarketDataGateway(
         {"test-feed": FakeAdapter()}, {"test-feed": "test-entitlement"}
     )
@@ -88,3 +89,30 @@ def test_global_coverage_endpoint_reports_real_connector_limits(client):
     assert {item["provider"] for item in payload["implemented_public_connectors"]} >= {
         "binance-public", "stooq-daily", "coinbase-public"
     }
+
+
+@pytest.mark.parametrize(
+    ("symbol", "expected"),
+    [
+        ("BTC-USD", ["coinbase-public"]),
+        ("ETHUSDT", ["binance-public"]),
+        ("AAPL.US", ["stooq-daily"]),
+        ("VOD.UK", ["stooq-daily"]),
+    ],
+)
+def test_default_symbol_router_selects_native_symbol_convention(symbol, expected):
+    assert market_routes._default_provider_order(symbol) == expected
+
+
+def test_routing_status_reports_default_policy_when_no_operator_order(client):
+    response = client.get("/market-data/routing/providers")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["routing_policy"] == "symbol_convention_default"
+    assert payload["live_market_data_enabled"] is False
+    assert payload["connectivity_verified"] is False
+
+
+def test_operator_provider_order_overrides_symbol_default(monkeypatch):
+    monkeypatch.setenv("OSIRIS_MARKET_PROVIDER_ORDER", "coinbase-public,binance-public")
+    assert market_routes._configured_provider_order() == ["coinbase-public", "binance-public"]
