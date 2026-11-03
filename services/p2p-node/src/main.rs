@@ -167,6 +167,22 @@ mod tests {
         }
         let _ = std::fs::remove_file(path);
     }
+    #[test] fn encrypted_message_replay_ids_survive_restart() {
+        let path = std::env::temp_dir().join(format!("osiris-e2ee-replay-{}-{}.cache", std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        {
+            let mut guard = super::ReplayGuard::open(path.clone()).unwrap();
+            assert!(guard.record_message_id_if_new("encrypted-message-1").unwrap());
+            assert!(!guard.record_message_id_if_new("encrypted-message-1").unwrap());
+        }
+        {
+            let mut restarted = super::ReplayGuard::open(path.clone()).unwrap();
+            assert!(!restarted.record_message_id_if_new("encrypted-message-1").unwrap());
+            assert!(restarted.record_message_id_if_new("encrypted-message-2").unwrap());
+        }
+        let _ = std::fs::remove_file(path);
+    }
+
     #[test] fn replay_guard_fails_closed_on_corrupt_cache() {
         let path = std::env::temp_dir().join(format!("osiris-replay-corrupt-{}.cache", std::process::id()));
         std::fs::write(&path, "not-a-valid-entry\\n").unwrap();
