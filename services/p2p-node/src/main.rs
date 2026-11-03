@@ -389,9 +389,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let stdin = BufReader::new(io::stdin());
     let mut lines = stdin.lines();
+    // EOF is normal for daemonized nodes (stdin is often /dev/null).
+    // Disable only the stdin branch; keep polling the swarm for incoming peers.
+    let mut stdin_open = true;
 
     loop {
         tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                emit!("shutdown_signal=ctrl_c");
+                break;
+            }
             _ = health_tick.tick() => {
                 let snapshot = build_health_snapshot(&peer_id, started_at, &swarm, &bootstrap_peers);
                 let connected_peers = snapshot.connected_peers;
@@ -509,7 +516,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
                 _ => {}
             },
-            line = lines.next_line() => match line? {
+            line = lines.next_line(), if stdin_open => match line? {
                 Some(line) if !line.trim().is_empty() => {
                     let envelope: ObservationEnvelope = serde_json::from_str(&line)?;
                     if let Err(reason) = envelope.validate() {
@@ -520,8 +527,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
                 Some(_) => {}
                 None => {
-                    tokio::signal::ctrl_c().await?;
-                    break;
+                    emit!("stdin_eof=ignored_daemon_mode");
+                    stdin_open = false;
                 }
             }
         }
