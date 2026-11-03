@@ -25,6 +25,8 @@ jobs:
           authkey: ${{ secrets.TS_AUTHKEY }}
           tags: tag:ci-p2p
       - name: Build P2P node
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
         run: cargo build --release --manifest-path services/p2p-node/Cargo.toml
       - name: Start listener and publish endpoint for Host B
         env:
@@ -104,6 +106,8 @@ jobs:
           authkey: ${{ secrets.TS_AUTHKEY }}
           tags: tag:ci-p2p
       - name: Build P2P node
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
         run: cargo build --release --manifest-path services/p2p-node/Cargo.toml
       - name: Wait until Host A uploads its endpoint
         env:
