@@ -21,7 +21,7 @@ fn load_or_create_identity(role: &str) -> Result<identity::Keypair, Box<dyn Erro
         return Ok(identity::Keypair::from_protobuf_encoding(&encoded)?);
     }
 
-    let key = load_or_create_identity(&role)?;
+    let key = identity::Keypair::generate_ed25519();
     fs::write(&path, key.to_protobuf_encoding()?)?;
     #[cfg(unix)]
     {
@@ -52,7 +52,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         return Err("OSIRIS_RELAY_CLIENT_ROLE must be receiver or sender".into());
     }
 
-    let key = identity::Keypair::generate_ed25519();
+    let key = load_or_create_identity(&role)?;
     let peer_id = PeerId::from(key.public());
     let (relay_transport, relay_behaviour) = relay::client::new(peer_id);
     let tcp_transport = tcp::tokio::Transport::new(tcp::Config::default());
