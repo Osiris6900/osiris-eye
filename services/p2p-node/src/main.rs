@@ -521,10 +521,19 @@ async fn serve_health_endpoint(
 async fn main() -> Result<(), Box<dyn Error>> {
     let key = load_or_create_identity()?;
     let peer_id = PeerId::from(key.public());
-    let e2ee_enabled = env::var("OSIRIS_E2EE_ENABLED").map(|value| value == "1").unwrap_or(false);
+    let e2ee_enabled = match env::var("OSIRIS_E2EE_ENABLED") {
+        Ok(value) if value == "1" => true,
+        Ok(value) if value == "0" => false,
+        Ok(_) => return Err("OSIRIS_E2EE_ENABLED must be 0 or 1".into()),
+        Err(env::VarError::NotPresent) => false,
+        Err(error) => return Err(error.into()),
+    };
     let transport_key = load_or_create_transport_key()?;
-    let transport_key_epoch = env::var("OSIRIS_TRANSPORT_KEY_EPOCH")
-        .ok().and_then(|value| value.parse::<u64>().ok()).unwrap_or(1);
+    let transport_key_epoch = match env::var("OSIRIS_TRANSPORT_KEY_EPOCH") {
+        Ok(value) => value.parse::<u64>()?,
+        Err(env::VarError::NotPresent) => 1,
+        Err(error) => return Err(error.into()),
+    };
     if transport_key_epoch == 0 { return Err("OSIRIS_TRANSPORT_KEY_EPOCH must be positive".into()); }
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
     let mut local_key_binding = create_key_binding(&key, &transport_key.public_key, transport_key_epoch, now, now + 30 * 24 * 60 * 60)?;
