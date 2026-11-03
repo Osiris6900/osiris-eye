@@ -388,7 +388,7 @@ pub fn encrypt_for_recipient(
         shared.as_bytes(), &salt, &envelope.sender_peer_id, recipient_peer_id,
         sender_key_epoch, recipient_key_epoch, &envelope.message_id,
     )?;
-    let cipher = ChaCha20Poly1305::new((&key).into());
+    let cipher = ChaCha20Poly1305::new_from_slice(&key).map_err(|_| "invalid_aead_key")?;
     let ciphertext = cipher.encrypt(Nonce::from_slice(&nonce), Payload { msg: plaintext, aad: &aad })
         .map_err(|_| "envelope_encryption_failed")?;
     envelope.ciphertext = STANDARD_NO_PAD.encode(ciphertext);
