@@ -111,10 +111,20 @@ jobs:
           # Restart the bootstrap node with the same persistent identity and address.
           kill "$A_PID"
           wait "$A_PID" || true
+          wait_for "Host B detected bootstrap disconnect" "$TMP/b.log" "peer_disconnected=$A_PEER" 30
+          wait_for "Host C detected bootstrap disconnect" "$TMP/c.log" "peer_disconnected=$A_PEER" 30
           start_a
           wait_for "Host A restarted with stable identity" "$TMP/a.log" "peer_id=$A_PEER"
-          wait_for "Host B reconnected to restarted A" "$TMP/b.log" "peer_connected=$A_PEER" 60
-          wait_for "Host C reconnected to restarted A" "$TMP/c.log" "peer_connected=$A_PEER" 60
+          for peer_log in "$TMP/b.log" "$TMP/c.log"; do
+            reconnected=0
+            for _ in $(seq 1 60); do
+              count="$(grep -Fc "peer_connected=$A_PEER" "$peer_log" || true)"
+              if [ "$count" -ge 2 ]; then reconnected=1; break; fi
+              sleep 1
+            done
+            if [ "$reconnected" -ne 1 ]; then echo "Peer did not reconnect to restarted bootstrap."; cat "$peer_log"; exit 1; fi
+          done
+          echo "Both leaf peers reconnected to the restarted bootstrap."
           # Require a fresh subscription event after the restart, not merely the old log line.
           for peer_log in "$TMP/b.log" "$TMP/c.log"; do
             for _ in $(seq 1 60); do
