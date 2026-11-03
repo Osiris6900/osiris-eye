@@ -93,8 +93,12 @@ def main():
                 env["OSIRIS_LISTEN_ADDR"] = bootstrap_addr
                 node = Node(label, env)
                 nodes.append(node)
-                line = node.wait_for(lambda value: value.startswith("listening="), 15, "bootstrap listener")
-                return node, line.split("=", 1)[1]
+                line = node.wait_for(
+                    lambda value: value.startswith("listener_ready ") and " address=" in value,
+                    15,
+                    "bootstrap listener",
+                )
+                return node, line.split(" address=", 1)[1]
 
             bootstrap, multiaddr = start_bootstrap("bootstrap-first")
             client_env = os.environ.copy()
