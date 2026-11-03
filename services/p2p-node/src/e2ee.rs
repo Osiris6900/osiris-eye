@@ -127,25 +127,23 @@ pub fn create_key_binding(
 
 /// Verify signature, PeerId binding, validity window, and minimum accepted epoch.
 /// Local enrollment/revocation policy must still be checked by the caller.
-pub fn verify_key_binding(
+/// Verify the identity signature and PeerId binding without applying wall-clock expiry.
+/// Used when loading persisted records so expired records still retain their anti-rollback epoch.
+pub fn verify_key_binding_signature(
     record: &KeyBindingRecord,
-    now: u64,
-    minimum_epoch: u64,
 ) -> Result<VerifiedKeyBinding, &'static str> {
     if record.schema != KEY_BINDING_SCHEMA {
         return Err("unsupported_key_binding_schema");
+    }
+    if record.key_epoch == 0 {
+        return Err("key_binding_epoch_rollback");
     }
     if record.peer_id.len() > 128 || record.identity_public_key.len() > 256
         || record.transport_public_key.len() != 43 || record.signature.len() != 86 {
         return Err("key_binding_field_size_invalid");
     }
-    if record.key_epoch == 0 || record.key_epoch < minimum_epoch {
-        return Err("key_binding_epoch_rollback");
-    }
     if record.expires_at <= record.issued_at
         || record.expires_at - record.issued_at > MAX_KEY_BINDING_LIFETIME_SECS
-        || record.issued_at > now.saturating_add(MAX_CLOCK_SKEW_SECS)
-        || record.expires_at < now
     {
         return Err("key_binding_expired_or_invalid_time");
     }
@@ -180,6 +178,23 @@ pub fn verify_key_binding(
         key_epoch: record.key_epoch,
         identity_public_key,
     })
+}
+
+/// Verify signature, PeerId binding, validity window, and minimum accepted epoch.
+pub fn verify_key_binding(
+    record: &KeyBindingRecord,
+    now: u64,
+    minimum_epoch: u64,
+) -> Result<VerifiedKeyBinding, &'static str> {
+    if record.key_epoch < minimum_epoch {
+        return Err("key_binding_epoch_rollback");
+    }
+    if record.issued_at > now.saturating_add(MAX_CLOCK_SKEW_SECS)
+        || record.expires_at < now
+    {
+        return Err("key_binding_expired_or_invalid_time");
+    }
+    verify_key_binding_signature(record)
 }
 
 #[cfg(test)]
