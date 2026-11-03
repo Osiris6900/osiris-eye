@@ -116,11 +116,10 @@ async fn two_local_nodes_exchange_signed_observation() {
                 }
                 _ = tokio::time::sleep(Duration::from_millis(100)),
                     if a_saw_b_subscription && b_saw_a_subscription && !published => {
-                    match node_a.behaviour_mut().gossipsub.publish(topic.clone(), payload.clone()) {
-                        Ok(_) => published = true,
-                        Err(gossipsub::PublishError::InsufficientPeers) => {}
-                        Err(error) => panic!("unexpected publish error: {error:?}"),
-                    }
+                    node_a.behaviour_mut().gossipsub
+                        .publish(topic.clone(), payload.clone())
+                        .expect("publish after both nodes subscribed");
+                    published = true;
                 }
             }
         }
