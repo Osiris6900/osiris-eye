@@ -65,6 +65,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         _ => None,
     }).ok_or("relay multiaddr must include /p2p/<relay-peer-id>")?;
 
+    let mut sender_circuit_addr: Option<Multiaddr> = None;
     if role == "receiver" {
         let circuit_addr = relay_addr.clone().with(libp2p::multiaddr::Protocol::P2pCircuit);
         swarm.listen_on(circuit_addr)?;
@@ -74,6 +75,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let circuit_addr = relay_addr.clone()
             .with(libp2p::multiaddr::Protocol::P2pCircuit)
             .with(libp2p::multiaddr::Protocol::P2p(target));
+        sender_circuit_addr = Some(circuit_addr.clone());
         swarm.dial(circuit_addr)?;
         emit!("relay_client_role=sender");
     }
@@ -115,7 +117,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     sender_dial_attempts += 1;
                     emit!("relay_dial_retry={sender_dial_attempts}");
                     tokio::time::sleep(Duration::from_millis(750)).await;
-                    swarm.dial(circuit_addr.clone())?;
+                    swarm.dial(sender_circuit_addr.as_ref().ok_or("missing sender circuit address")?.clone())?;
                 } else {
                     return Err("relay client connection failed after retries".into());
                 }
