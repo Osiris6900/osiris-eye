@@ -1,0 +1,158 @@
+name: P2P real cross-host recipient E2EE acceptance
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: p2p-real-cross-host-e2ee
+  cancel-in-progress: false
+
+jobs:
+  host-a:
+    name: Host A - E2EE sender and SSH controller
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Connect Host A to Tailscale
+        uses: tailscale/github-action@v3
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+          tags: tag:ci-p2p
+      - name: Build P2P release binary
+        run: cargo build --release --manifest-path services/p2p-node/Cargo.toml
+      - name: Create ephemeral SSH client key and publish Host A endpoint
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/osiris-e2ee"
+          chmod 700 "$RUNNER_TEMP/osiris-e2ee"
+          ssh-keygen -q -t ed25519 -N "" -f "$RUNNER_TEMP/osiris-e2ee/host-a"
+          HOST_A_IP="$(tailscale ip -4 | head -n1)"
+          test -n "$HOST_A_IP"
+          printf '{"tailscale_ip":"%s","port":4001}
+' "$HOST_A_IP" > "$RUNNER_TEMP/osiris-e2ee/host-a.json"
+      - name: Share only the ephemeral public SSH key
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2ee-host-a-ssh-pub-${{ github.run_id }}
+          path: ${{ runner.temp }}/osiris-e2ee/host-a.pub
+          if-no-files-found: error
+          retention-days: 1
+      - name: Wait for Host B SSH endpoint
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ARTIFACT="e2ee-host-b-endpoint-${{ github.run_id }}"
+          FOUND=""
+          for _ in $(seq 1 180); do
+            FOUND="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" --jq ".artifacts[] | select(.name == \"$ARTIFACT\" and .expired == false) | .id" | head -n1)"
+            if [ -n "$FOUND" ]; then break; fi
+            sleep 3
+          done
+          test -n "$FOUND" || { echo "Timed out waiting for Host B endpoint"; exit 1; }
+      - name: Download Host B SSH endpoint
+        uses: actions/download-artifact@v4
+        with:
+          name: e2ee-host-b-endpoint-${{ github.run_id }}
+          path: ${{ runner.temp }}/osiris-e2ee
+          github-token: ${{ github.token }}
+          run-id: ${{ github.run_id }}
+      - name: Pin Host B SSH host key and run real cross-host E2EE test
+        env:
+          RUNNER_TEMP: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          DIR="$RUNNER_TEMP/osiris-e2ee"
+          HOST_A_IP="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["tailscale_ip"])' "$DIR/host-a.json")"
+          HOST_B_IP="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["tailscale_ip"])' "$DIR/host-b.json")"
+          ssh-keyscan -T 15 -H "$HOST_B_IP" > "$DIR/known_hosts"
+          test -s "$DIR/known_hosts"
+          python3 scripts/test_p2p_cross_host_e2ee_ssh.py \
+            --ssh-target "runner@$HOST_B_IP" \
+            --public-ip "$HOST_A_IP" \
+            --port 4001 \
+            --remote-binary "$GITHUB_WORKSPACE/target/release/osiris-p2p-node" \
+            --ssh-option=-i --ssh-option="$DIR/host-a" \
+            --ssh-option=-o --ssh-option=BatchMode=yes \
+            --ssh-option=-o --ssh-option=StrictHostKeyChecking=yes \
+            --ssh-option=-o --ssh-option="UserKnownHostsFile=$DIR/known_hosts" \
+            --ssh-option=-o --ssh-option=ConnectTimeout=15
+      - name: Upload E2EE logs on failure
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2ee-host-a-failure-${{ github.run_id }}
+          path: ${{ runner.temp }}/osiris-e2ee/
+          if-no-files-found: ignore
+          retention-days: 3
+
+  host-b:
+    name: Host B - Tailscale SSH receiver
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Connect Host B to Tailscale
+        uses: tailscale/github-action@v3
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+          tags: tag:ci-p2p
+      - name: Build P2P release binary
+        run: cargo build --release --manifest-path services/p2p-node/Cargo.toml
+      - name: Wait for Host A public SSH key
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ARTIFACT="e2ee-host-a-ssh-pub-${{ github.run_id }}"
+          FOUND=""
+          for _ in $(seq 1 180); do
+            FOUND="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" --jq ".artifacts[] | select(.name == \"$ARTIFACT\" and .expired == false) | .id" | head -n1)"
+            if [ -n "$FOUND" ]; then break; fi
+            sleep 3
+          done
+          test -n "$FOUND" || { echo "Timed out waiting for Host A public key"; exit 1; }
+      - name: Download Host A public SSH key
+        uses: actions/download-artifact@v4
+        with:
+          name: e2ee-host-a-ssh-pub-${{ github.run_id }}
+          path: ${{ runner.temp }}/osiris-e2ee
+          github-token: ${{ github.token }}
+          run-id: ${{ github.run_id }}
+      - name: Start restricted ephemeral SSH receiver and publish endpoint
+        run: |
+          set -euo pipefail
+          DIR="$RUNNER_TEMP/osiris-e2ee"
+          mkdir -p "$DIR" "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          sudo apt-get update
+          sudo apt-get install -y openssh-server
+          cat "$DIR/host-a.pub" > "$HOME/.ssh/authorized_keys"
+          chmod 600 "$HOME/.ssh/authorized_keys"
+          sudo ssh-keygen -A
+          sudo /usr/sbin/sshd
+          HOST_B_IP="$(tailscale ip -4 | head -n1)"
+          test -n "$HOST_B_IP"
+          for _ in $(seq 1 30); do
+            if timeout 2 bash -c ":</dev/tcp/$HOST_B_IP/22" 2>/dev/null; then break; fi
+            sleep 1
+          done
+          timeout 5 bash -c ":</dev/tcp/$HOST_B_IP/22"
+          printf '{"tailscale_ip":"%s","ssh_port":22}
+' "$HOST_B_IP" > "$DIR/host-b.json"
+      - name: Publish Host B SSH endpoint
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2ee-host-b-endpoint-${{ github.run_id }}
+          path: ${{ runner.temp }}/osiris-e2ee/host-b.json
+          if-no-files-found: error
+          retention-days: 1
+      - name: Keep receiver available for Host A test
+        run: sleep 600
