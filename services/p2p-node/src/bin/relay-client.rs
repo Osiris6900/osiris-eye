@@ -1,0 +1,119 @@
+use std::{env, error::Error, io::Write, time::Duration};
+
+use futures::StreamExt;
+use libp2p::{
+    core::{transport::OrTransport, upgrade, Transport},
+    gossipsub, identity, noise, relay,
+    swarm::{NetworkBehaviour, Swarm, SwarmEvent, Config},
+    tcp, yamux, Multiaddr, PeerId,
+};
+
+const TOPIC: &str = "osiris/observations/1";
+
+macro_rules! emit {
+    ($($arg:tt)*) => {{
+        println!($($arg)*);
+        let _ = std::io::stdout().flush();
+    }};
+}
+
+#[derive(NetworkBehaviour)]
+struct Behaviour {
+    relay: relay::client::Behaviour,
+    gossipsub: gossipsub::Behaviour,
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
+    let role = env::var("OSIRIS_RELAY_CLIENT_ROLE").unwrap_or_else(|_| "receiver".into());
+    if role != "receiver" && role != "sender" {
+        return Err("OSIRIS_RELAY_CLIENT_ROLE must be receiver or sender".into());
+    }
+
+    let key = identity::Keypair::generate_ed25519();
+    let peer_id = PeerId::from(key.public());
+    let (relay_transport, relay_behaviour) = relay::client::new(peer_id);
+    let tcp_transport = tcp::tokio::Transport::new(tcp::Config::default());
+    let transport = OrTransport::new(relay_transport, tcp_transport)
+        .upgrade(upgrade::Version::V1)
+        .authenticate(noise::Config::new(&key)?)
+        .multiplex(yamux::Config::default())
+        .boxed();
+
+    let config = gossipsub::ConfigBuilder::default()
+        .heartbeat_interval(Duration::from_secs(1))
+        .validation_mode(gossipsub::ValidationMode::Strict)
+        .build()?;
+    let mut gossipsub = gossipsub::Behaviour::new(
+        gossipsub::MessageAuthenticity::Signed(key.clone()),
+        config,
+    )?;
+    let topic = gossipsub::IdentTopic::new(TOPIC);
+    gossipsub.subscribe(&topic)?;
+
+    let behaviour = Behaviour { relay: relay_behaviour, gossipsub };
+    let mut swarm = Swarm::new(
+        transport,
+        behaviour,
+        peer_id,
+        Config::with_tokio_executor(),
+    );
+    let relay_addr: Multiaddr = env::var("OSIRIS_RELAY_MULTIADDR")?.parse()?;
+    let relay_peer = relay_addr.iter().find_map(|p| match p {
+        libp2p::multiaddr::Protocol::P2p(id) => Some(id),
+        _ => None,
+    }).ok_or("relay multiaddr must include /p2p/<relay-peer-id>")?;
+
+    if role == "receiver" {
+        let circuit_addr = relay_addr.clone().with(libp2p::multiaddr::Protocol::P2pCircuit);
+        swarm.listen_on(circuit_addr)?;
+        emit!("relay_client_role=receiver");
+    } else {
+        let target: PeerId = env::var("OSIRIS_RELAY_TARGET_PEER")?.parse()?;
+        let circuit_addr = relay_addr.clone()
+            .with(libp2p::multiaddr::Protocol::P2pCircuit)
+            .with(libp2p::multiaddr::Protocol::P2p(target));
+        swarm.dial(circuit_addr)?;
+        emit!("relay_client_role=sender");
+    }
+    emit!("peer_id={peer_id}");
+    emit!("relay_peer_id={relay_peer}");
+
+    let mut published = false;
+    loop {
+        match swarm.select_next_some().await {
+            SwarmEvent::NewListenAddr { address, .. } => {
+                emit!("relay_reserved_address={address}");
+            }
+            SwarmEvent::ConnectionEstablished { peer_id, endpoint, .. } => {
+                emit!("peer_connected={peer_id} relayed={}", endpoint.is_relayed());
+            }
+            SwarmEvent::Behaviour(BehaviourEvent::Relay(event)) => {
+                emit!("relay_client_event={event:?}");
+            }
+            SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Subscribed { peer_id, .. })) => {
+                emit!("gossipsub_subscribed peer={peer_id}");
+                if role == "sender" && !published {
+                    let payload = format!(
+                        "{{\\"schema\\":\\"osiris.observation.v1\\",\\"instrument\\":\\"BTC-USD\\",\\"provider\\":\\"relay-test\\",\\"payload\\":\\"three-process-relay-ok\\"}}"
+                    );
+                    swarm.behaviour_mut().gossipsub.publish(topic.clone(), payload.into_bytes())?;
+                    published = true;
+                    emit!("relay_observation_published=true");
+                }
+            }
+            SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message { propagation_source, message, .. })) => {
+                let payload = String::from_utf8_lossy(&message.data);
+                if payload.contains("three-process-relay-ok") {
+                    emit!("relay_observation_received peer={propagation_source} payload={payload}");
+                    return Ok(());
+                }
+            }
+            SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
+                emit!("connection_error peer={peer_id:?} error={error}");
+                return Err("relay client connection failed".into());
+            }
+            _ => {}
+        }
+    }
+}
