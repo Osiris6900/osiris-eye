@@ -55,6 +55,16 @@ export OSIRIS_BOOTSTRAP_PEERS=/ip4/203.0.113.10/tcp/4001/p2p/REPLACE_WITH_BOOTST
 
 For resilience, configure more than one independently hosted bootstrap node, comma-separated. The bootstrap nodes must themselves advertise reachable addresses. mDNS discovery is useful on a local network; it is not a substitute for bootstrap configuration across the public Internet.
 
+### Bootstrap reconnect policy
+
+Nodes retry disconnected configured bootstrap peers periodically. The default retry interval is 15 seconds; operators can tune it between 5 and 300 seconds:
+
+```bash
+export OSIRIS_BOOTSTRAP_RECONNECT_INTERVAL_SECS=15
+```
+
+Invalid values fall back to the 15-second default, and values outside the supported range are clamped. Keep the interval conservative on large deployments so an outage does not create unnecessary dial pressure. This setting controls retry cadence; it does not guarantee that a peer is reachable or that a connection will succeed.
+
 ### Optional core-node peer allowlist
 
 Each core P2P node can independently restrict authenticated connections and observation traffic to an operator-maintained Peer ID set:
@@ -127,4 +137,4 @@ This endpoint is a liveness snapshot, not a readiness guarantee: it does not pro
 
 ## Current limitations
 
-This is deployment guidance, not a deployment or security certification. The node currently uses an in-memory Kademlia store, has no operator HTTP health endpoint, and does not provide a centrally managed bootstrap registry. The relay/client allowlist does not enforce network-wide trust. Public launch should follow cross-host testing, monitoring, security review, and operational ownership.
+This is deployment guidance, not a deployment or security certification. The node currently uses an in-memory Kademlia store and does not provide a centrally managed bootstrap registry. The HTTP health endpoint is a local liveness/readiness snapshot, not proof of end-to-end message delivery. The relay/client allowlist does not enforce network-wide trust. Public launch should follow cross-host testing, monitoring, security review, and operational ownership.
