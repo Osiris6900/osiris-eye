@@ -65,11 +65,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
         _ => None,
     }).ok_or("relay multiaddr must include /p2p/<relay-peer-id>")?;
 
-    // Register the relay's reachable address with the client behaviour.
-    // Without this, the behaviour may know the peer from an existing TCP
-    // connection but cannot reliably establish/maintain its reservation path.
-    swarm.behaviour_mut().relay.add_address(&relay_peer, relay_addr.clone());
-
     let mut sender_circuit_addr: Option<Multiaddr> = None;
     if role == "receiver" {
         let circuit_addr = relay_addr.clone().with(libp2p::multiaddr::Protocol::P2pCircuit);
