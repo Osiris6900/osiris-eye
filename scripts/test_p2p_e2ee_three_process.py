@@ -21,6 +21,7 @@ if not BINARY.exists():
 
 events = queue.Queue()
 processes = []
+history = []
 
 def pump(name, stream):
     for line in iter(stream.readline, ""):
@@ -30,12 +31,16 @@ def pump(name, stream):
 def wait_for(predicate, timeout, description):
     deadline = time.monotonic() + timeout
     seen = []
+    for name, line in history:
+        if predicate(name, line):
+            return line
     while time.monotonic() < deadline:
         try:
             name, line = events.get(timeout=max(0.05, deadline - time.monotonic()))
         except queue.Empty:
             break
         seen.append(f"{name}: {line}")
+        history.append((name, line))
         print(f"[{name}] {line}", flush=True)
         if predicate(name, line):
             return line
@@ -87,14 +92,18 @@ try:
         node_c = start_node("node-c", tmp, "/ip4/127.0.0.1/tcp/0", multiaddr)
         node_c_peer = peer_id("node-c")
 
-        wait_for(lambda n, l: n == "node-a" and f"key_binding_accepted peer={node_b_peer} " in l,
-                 25, "node A to accept node B's signed key binding")
-        wait_for(lambda n, l: n == "node-b" and f"key_binding_accepted peer={node_a_peer} " in l,
-                 25, "node B to accept node A's signed key binding")
-        wait_for(lambda n, l: n == "node-c" and f"key_binding_accepted peer={node_a_peer} " in l,
-                 25, "node C to accept node A's signed key binding")
-        wait_for(lambda n, l: n == "node-a" and f"key_binding_accepted peer={node_c_peer} " in l,
-                 25, "node A to accept node C's signed key binding")
+        bindings_seen = {"a_b": False, "b_a": False, "c_a": False, "a_c": False}
+        def observe_bindings(name, line):
+            if name == "node-a" and f"key_binding_accepted peer={node_b_peer} " in line:
+                bindings_seen["a_b"] = True
+            if name == "node-b" and f"key_binding_accepted peer={node_a_peer} " in line:
+                bindings_seen["b_a"] = True
+            if name == "node-c" and f"key_binding_accepted peer={node_a_peer} " in line:
+                bindings_seen["c_a"] = True
+            if name == "node-a" and f"key_binding_accepted peer={node_c_peer} " in line:
+                bindings_seen["a_c"] = True
+            return all(bindings_seen.values())
+        wait_for(observe_bindings, 25, "all required signed key bindings")
 
         recipients_file.write_text(node_b_peer + "\n", encoding="utf-8")
         payload = "recipient-only encrypted observation"
@@ -109,11 +118,14 @@ try:
         node_a.stdin.write(json.dumps(observation) + "\n")
         node_a.stdin.flush()
 
-        wait_for(lambda n, l: n == "node-b" and "encrypted_observation_received" in l
-                 and "P2P-E2EE-TEST" in l, 25, "recipient node B to decrypt observation")
-        wait_for(lambda n, l: n == "node-c" and
-                 "encrypted_message_discarded reason=not_for_this_recipient_or_sender_mismatch" in l,
-                 25, "non-recipient node C to discard ciphertext")
+        delivery_seen = {"recipient": False, "non_recipient": False}
+        def observe_delivery(name, line):
+            if name == "node-b" and "encrypted_observation_received" in line and "P2P-E2EE-TEST" in line:
+                delivery_seen["recipient"] = True
+            if name == "node-c" and "encrypted_message_discarded reason=not_for_this_recipient_or_sender_mismatch" in line:
+                delivery_seen["non_recipient"] = True
+            return all(delivery_seen.values())
+        wait_for(observe_delivery, 25, "recipient decryption and non-recipient rejection")
 
         print("PASS: recipient decrypted the E2EE observation; non-recipient did not.", flush=True)
 finally:
