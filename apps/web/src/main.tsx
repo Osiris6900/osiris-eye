@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './style.css';
 
@@ -18,6 +18,48 @@ function Chart() {
  return <svg className="candle-chart" viewBox="0 0 440 230" preserveAspectRatio="none"><defs><pattern id="grid" width="55" height="38" patternUnits="userSpaceOnUse"><path d="M55 0H0V38" fill="none" stroke="#1c3048" strokeWidth=".7"/></pattern></defs><rect width="440" height="230" fill="url(#grid)"/>{[0,1,2,3,4].map(i=><text key={i} x="6" y={20+i*42} fill="#647b98" fontSize="8">24,{300-i*50}</text>)}<path d="M0 160 Q75 120 140 152 T280 128 T440 100" fill="none" stroke="#a46aff" opacity=".55"/><path d="M0 175 Q90 165 160 144 T300 135 T440 118" fill="none" stroke="#f0a34b" opacity=".8"/>{candles.map((c,i)=><g key={i} stroke={c.up?'#16d7a0':'#ff647c'} fill={c.up?'#16d7a0':'#ff647c'}><path d={`M${c.x+3} ${c.y-10}V${c.y+c.h+8}`} strokeWidth="1"/><rect x={c.x} y={c.y} width="6" height={c.h} rx="1"/></g>)}<path d="M0 88H440" stroke="#35d6ec" strokeDasharray="4 3"/><rect x="374" y="78" width="62" height="18" rx="4" fill="#087d78"/><text x="380" y="90" fill="white" fontSize="9">24,198.60</text><g fill="#7186a1" fontSize="8"><text x="10" y="221">09:15</text><text x="110" y="221">10:30</text><text x="215" y="221">12:00</text><text x="320" y="221">13:30</text><text x="395" y="221">15:00</text></g></svg>;
 }
 function VolSurface(){return <div className="vol-wrap"><div className="vol-grid">{Array.from({length:49},(_,i)=><i key={i} style={{'--v':Math.max(8,70-Math.abs(i%7-3)*15-Math.abs(Math.floor(i/7)-3)*13)} as React.CSSProperties}/>)}</div><div className="vol-label">IV SURFACE · DEMO</div><b>18.4%</b></div>}
+
+type LiveQuote = { symbol: string; price: string; change: string; eventTime: number };
+function LiveCryptoTape() {
+ const [quotes,setQuotes]=useState<Record<string,LiveQuote>>({});
+ const [status,setStatus]=useState<'connecting'|'live'|'reconnecting'>('connecting');
+ useEffect(()=>{
+  let socket: WebSocket | null=null;
+  let retry: ReturnType<typeof setTimeout> | undefined;
+  let disposed=false;
+  let attempts=0;
+  const connect=()=>{
+   if(disposed) return;
+   setStatus(attempts===0?'connecting':'reconnecting');
+   socket=new WebSocket('wss://stream.binance.com:9443/stream?streams=btcusdt@ticker/ethusdt@ticker/solusdt@ticker/bnbusdt@ticker/xrpusdt@ticker');
+   socket.onopen=()=>{attempts=0;setStatus('live');};
+   socket.onmessage=(event)=>{
+    try {
+     const packet=JSON.parse(event.data);
+     const d=packet.data;
+     if(!d || typeof d.s!=='string') return;
+     const symbol=String(d.s).toUpperCase();
+     setQuotes(previous=>({...previous,[symbol]:{
+      symbol,price:Number(d.c).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:4}),
+      change:Number(d.P).toFixed(2),eventTime:Number(d.E)
+     }}));
+    } catch { /* Ignore malformed upstream frames. */ }
+   };
+   socket.onerror=()=>{setStatus('reconnecting');socket?.close();};
+   socket.onclose=()=>{
+    if(!disposed){setStatus('reconnecting');attempts+=1;retry=setTimeout(connect,Math.min(15000,1000*2**Math.min(attempts,4)));}
+   };
+  };
+  connect();
+  return ()=>{disposed=true;if(retry)clearTimeout(retry);socket?.close();};
+ },[]);
+ const symbols=['BTCUSDT','ETHUSDT','SOLUSDT','BNBUSDT','XRPUSDT'];
+ return <section className="live-feed-panel">
+  <div className="live-feed-head"><b>LIVE CRYPTO · BINANCE SPOT</b><span className={status==='live'?'feed-live':'feed-wait'}>● {status==='live'?'STREAM CONNECTED':status==='connecting'?'CONNECTING':'RECONNECTING'}</span></div>
+  <div className="live-feed-quotes">{symbols.map(symbol=>{const q=quotes[symbol];return <div key={symbol}><small>{symbol.replace('USDT',' / USDT')}</small><strong>{q?q.price:'—'}</strong><em className={q?(Number(q.change)>=0?'up':'down'):''}>{q?(Number(q.change)>=0?'+':'')+q.change+'%':'Waiting for tick'}</em></div>})}</div>
+  <small className="feed-disclaimer">Exchange WebSocket ticker updates · Binance Spot only · Not NSE/NYSE data · No orders submitted</small>
+ </section>;
+}
 function App(){
  const [active,setActive]=useState('Dashboard');const [time,setTime]=useState('5m');const [symbol,setSymbol]=useState('NIFTY 50');const [query,setQuery]=useState('');const [period,setPeriod]=useState('05 Dec');
  const filtered=useMemo(()=>tickers.filter(t=>t[0].toLowerCase().includes(query.toLowerCase())),[query]);

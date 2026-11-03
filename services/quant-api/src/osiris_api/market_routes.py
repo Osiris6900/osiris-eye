@@ -11,6 +11,7 @@ from .market_gateway import MarketDataGateway, MarketDataUnavailable
 from .market_universe import ASSET_CLASSES, audit_instruments
 from .provider_bootstrap import provider_readiness
 from .provider_router import MultiProviderMarketDataRouter
+from .universal_aggregator import UniversalMarketDataAggregator
 from .public_market_data import (
     BinancePublicMarketDataAdapter, CoinbasePublicMarketDataAdapter,
     StooqDailyMarketDataAdapter,
@@ -94,6 +95,28 @@ def market_data_instruments_audit(payload: dict[str, Any]):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+@router.get("/market-data/global-coverage")
+def market_data_global_coverage():
+    """Describe implemented public connectors and global asset-class ambitions honestly."""
+    providers = market_data_gateway.providers()["providers"]
+    return {
+        "asset_classes": list(ASSET_CLASSES),
+        "implemented_public_connectors": [
+            {"provider": "coinbase-public", "asset_classes": ["crypto"], "granularity": "configurable candles", "coverage": "Coinbase Exchange listed products"},
+            {"provider": "binance-public", "asset_classes": ["crypto"], "granularity": os.getenv("OSIRIS_PUBLIC_BINANCE_INTERVAL", "1m"), "coverage": "Binance Spot listed pairs"},
+            {"provider": "stooq-daily", "asset_classes": ["equity"], "granularity": "daily", "coverage": "Stooq-supported symbols with market suffix; verify symbol coverage per listing"},
+            {"provider": "interactive_brokers", "asset_classes": ["equity", "fx", "future", "option", "index"], "granularity": "broker entitlement dependent", "coverage": "only when paper adapter is explicitly configured"},
+        ],
+        "registered_provider_status": providers,
+        "global_coverage_complete": False,
+        "real_time_all_markets_verified": False,
+        "live_execution": False,
+        "note": "Connector support is not equivalent to full exchange coverage. Verify symbol mapping, data delay, exchange entitlements, rate limits and redistribution rights before production use.",
+    }
+
+
+
+
 @router.get("/market-data/providers")
 def market_data_providers():
     return market_data_gateway.providers()
@@ -113,6 +136,32 @@ def market_data_bars(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except (ValueError, TypeError, OverflowError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/market-data/aggregate/bars")
+def market_data_aggregate_bars(
+    providers: str = Query(..., min_length=1, max_length=500),
+    symbol: str = Query(..., min_length=1, max_length=64),
+    start: str = Query(..., min_length=20, max_length=64),
+    end: str = Query(..., min_length=20, max_length=64),
+    asset_class: str | None = Query(default=None, min_length=1, max_length=32),
+    divergence_threshold_bps: float = Query(default=50.0, ge=0, le=10000),
+):
+    """Aggregate source-preserving public/sandbox bars; never submits orders."""
+    try:
+        aggregator = UniversalMarketDataAggregator(
+            market_data_gateway, divergence_threshold_bps=divergence_threshold_bps
+        )
+        return aggregator.aggregate_bars(
+            providers=[item.strip() for item in providers.split(",")],
+            symbol=symbol, start=start, end=end, asset_class=asset_class,
+        )
+    except MarketDataUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except (ValueError, TypeError, OverflowError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 
 
 _provider_order = [

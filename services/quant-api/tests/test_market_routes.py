@@ -76,3 +76,15 @@ def test_market_routes_require_bearer_token_when_configured(client, monkeypatch)
         headers={"Authorization": "Bearer secret-test-token"},
     )
     assert response.status_code == 200
+
+
+def test_global_coverage_endpoint_reports_real_connector_limits(client):
+    response = client.get("/market-data/global-coverage")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["global_coverage_complete"] is False
+    assert payload["real_time_all_markets_verified"] is False
+    assert payload["live_execution"] is False
+    assert {item["provider"] for item in payload["implemented_public_connectors"]} >= {
+        "binance-public", "stooq-daily", "coinbase-public"
+    }

@@ -1,0 +1,33 @@
+name: Quant API CI
+
+on:
+  pull_request:
+    paths:
+      - "services/quant-api/**"
+      - ".github/workflows/quant-api-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "services/quant-api/**"
+      - ".github/workflows/quant-api-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/quant-api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: services/quant-api/pyproject.toml
+      - name: Install package and test dependencies
+        run: python -m pip install -e ".[dev]"
+      - name: Run API tests
+        run: python -m pytest -q
