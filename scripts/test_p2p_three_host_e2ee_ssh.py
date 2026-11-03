@@ -6,10 +6,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 TOPIC = "encrypted_message_discarded reason=not_for_this_recipient_or_sender_mismatch"
 
-def pump(name, stream, events):
+def pump(name, stream, events, captured):
     for raw in iter(stream.readline, ""):
         line = raw.rstrip()
         print(f"[{name}] {line}", flush=True)
+        captured.append((name, line))
         events.put((name, line))
     events.put((name, "<stdout-closed>"))
 
@@ -57,7 +58,7 @@ def main():
     binary=Path(a.binary).expanduser() if a.binary else ROOT/"target/release/osiris-p2p-node"
     if not binary.is_file(): raise SystemExit("Build release binary before running this acceptance test")
     if not 1 <= a.port <= 65535: raise SystemExit("invalid port")
-    events=queue.Queue(); processes=[]; local=None; remotes=[]
+    events=queue.Queue(); processes=[]; local=None; remotes=[]; captured=[]
     instrument="OSIRIS-3HOST-"+uuid.uuid4().hex[:12].upper()
     payload="three-host recipient-only E2EE probe "+uuid.uuid4().hex
     digest=hashlib.sha256(payload.encode()).hexdigest()
@@ -73,7 +74,7 @@ def main():
           OSIRIS_HEALTH_HTTP_ADDR="127.0.0.1:0")
         local=subprocess.Popen([str(binary)],cwd=ROOT,env=env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,
           stderr=subprocess.STDOUT,text=True,bufsize=1)
-        processes.append(("A",local)); threading.Thread(target=pump,args=("A",local.stdout,events),daemon=True).start()
+        processes.append(("A",local)); threading.Thread(target=pump,args=("A",local.stdout,events,captured),daemon=True).start()
         peerline=wait_for(events,processes,lambda n,l:n=="A" and l.startswith("peer_id="),20,"Host A PeerId")
         peer_a=peerline.split("=",1)[1].strip()
         wait_for(events,processes,lambda n,l:n=="A" and l.startswith("listener_ready ") and f"/tcp/{a.port}" in l,20,"Host A listener")
@@ -82,7 +83,7 @@ def main():
           proc=subprocess.Popen(["ssh","-T",*a.ssh_option,target,remote_command(a.remote_binary,bootstrap)],
             stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1)
           remotes.append(proc); processes.append((name,proc))
-          threading.Thread(target=pump,args=(name,proc.stdout,events),daemon=True).start()
+          threading.Thread(target=pump,args=(name,proc.stdout,events,captured),daemon=True).start()
         peers={}
         for name in ("B","C"):
           line=wait_for(events,processes,lambda n,l:n==name and l.startswith("peer_id="),35,f"Host {name} PeerId")
@@ -99,6 +100,8 @@ def main():
         wait_for(events,processes,lambda n,l:n=="A" and f"encrypted_observation_published recipient={peers['B']} " in l,20,"A publishes only to B")
         wait_for(events,processes,lambda n,l:n=="B" and "encrypted_observation_received" in l and f"instrument={instrument}" in l and f"payload_sha256={digest}" in l,35,"B decrypts exact payload")
         wait_for(events,processes,lambda n,l:n=="C" and TOPIC in l,35,"C explicitly discards non-recipient ciphertext")
+        leaked=[line for name,line in captured if name=="C" and (instrument in line or digest in line)]
+        if leaked: raise RuntimeError(f"non-recipient Host C log exposed plaintext identifiers/digest: {leaked[-5:]}")
         print("THREE_HOST_E2EE_RECIPIENT_ONLY=PASS",flush=True)
         print(f"host_a_peer_id={peer_a}",flush=True); print(f"host_b_peer_id={peers['B']}",flush=True)
         print(f"host_c_peer_id={peers['C']}",flush=True); print(f"recipient={peers['B']}",flush=True)
