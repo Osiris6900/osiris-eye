@@ -10,7 +10,9 @@ import base64
 import hashlib
 import json
 import secrets
+import sqlite3
 import time
+from pathlib import Path
 from collections import OrderedDict
 from typing import Any
 
@@ -153,6 +155,77 @@ class ReplayGuard:
         return True
 
 
+class SQLiteReplayGuard:
+    """Durable, atomic replay protection for a single node's local SQLite database.
+
+    Entries are intentionally not evicted: deleting an old ID can make a replay
+    acceptable after a clock rollback. When capacity is exhausted, new messages
+    fail closed until an operator provisions a larger store or performs a reviewed
+    migration.
+    """
+
+    def __init__(self, database_path: str | Path, capacity: int = 100_000):
+        if capacity < 1:
+            raise ValueError("capacity_must_be_positive")
+        self.database_path = str(database_path)
+        if self.database_path == ":memory:":
+            raise ValueError("durable_replay_store_requires_file_path")
+        self.capacity = capacity
+        Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
+        connection = self._connect()
+        try:
+            connection.execute("PRAGMA journal_mode=WAL")
+            connection.execute(
+                """CREATE TABLE IF NOT EXISTS replay_messages (
+                    message_id TEXT PRIMARY KEY,
+                    first_seen INTEGER NOT NULL
+                )"""
+            )
+        finally:
+            connection.close()
+        try:
+            Path(self.database_path).chmod(0o600)
+        except OSError:
+            # Permission hardening is best-effort on platforms without POSIX modes.
+            pass
+
+    def _connect(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(
+            self.database_path, timeout=30, isolation_level=None
+        )
+        connection.execute("PRAGMA synchronous=FULL")
+        return connection
+
+    def check_and_record(self, message_id: str) -> bool:
+        if not isinstance(message_id, str) or not message_id or len(message_id) > 128:
+            raise ValueError("invalid_message_id")
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            inserted = connection.execute(
+                "INSERT OR IGNORE INTO replay_messages(message_id, first_seen) "
+                "VALUES (?, ?)",
+                (message_id, int(time.time())),
+            )
+            if inserted.rowcount == 0:
+                connection.execute("COMMIT")
+                return False
+            count = connection.execute(
+                "SELECT COUNT(*) FROM replay_messages"
+            ).fetchone()[0]
+            if count > self.capacity:
+                connection.execute("ROLLBACK")
+                raise RuntimeError("replay_store_capacity_exceeded")
+            connection.execute("COMMIT")
+            return True
+        except Exception:
+            if connection.in_transaction:
+                connection.execute("ROLLBACK")
+            raise
+        finally:
+            connection.close()
+
+
 def decrypt_from_peer(
     envelope: dict[str, Any],
     *,
@@ -160,7 +233,7 @@ def decrypt_from_peer(
     recipient_transport_private_key: str,
     expected_sender_node_id: str,
     trusted_sender_signing_public_key: str,
-    replay_guard: ReplayGuard,
+    replay_guard: ReplayGuard | SQLiteReplayGuard,
     now: int | None = None,
 ) -> bytes:
     """Verify a pinned sender identity, reject stale/replayed envelopes, then decrypt."""
