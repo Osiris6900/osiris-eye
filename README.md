@@ -121,3 +121,8 @@ event sequence/hash links, unique event IDs, head hash, and checkpoint mapping.
 The bundle is not signed and does not provide trusted timestamps, independent
 custody, WORM retention, or proof of source-event truth. See
 [Phase 18 documentation](docs/PHASE18_PORTABLE_AUDIT_BUNDLES.md).
+
+
+## OSIRIS P2P public node deployment
+
+Public-node setup, persistent identity, external address advertising, firewall requirements, bootstrap configuration, relay operation, and current limitations are documented in [docs/P2P_PUBLIC_NODE_DEPLOYMENT.md](docs/P2P_PUBLIC_NODE_DEPLOYMENT.md). The guide is operational preparation only; public reachability still requires independently hosted machines and cross-network acceptance testing.
