@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Launch two independent OSIRIS P2P node processes and verify GossipSub delivery."""
 import json
+import hashlib
 import os
 import queue
 import subprocess
@@ -73,7 +74,8 @@ try:
             "instrument": "P2P-PROCESS-TEST",
             "observed_at": "2026-11-03T01:00:00Z",
             "provider": "github-actions-two-process-test",
-            "payload_sha256": "b" * 64,
+            "payload": "OSIRIS P2P process integrity test",
+            "payload_sha256": hashlib.sha256(b"OSIRIS P2P process integrity test").hexdigest(),
         }
         node_a.stdin.write(json.dumps(envelope) + "\n")
         node_a.stdin.flush()
