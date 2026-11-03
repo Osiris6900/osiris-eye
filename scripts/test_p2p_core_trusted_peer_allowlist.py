@@ -3,7 +3,6 @@
 import os
 import queue
 import subprocess
-import sys
 import tempfile
 import threading
 import time
@@ -96,10 +95,13 @@ try:
             trusted=allowed_peer,
         )
         listen_line = wait_for(
-            lambda name, line: name == "node-a" and line.startswith("listening="),
+            lambda name, line: name == "node-a" and line.startswith("listener_ready ")
+            and " address=" in line,
             15, "allowlisted node listener",
         )
-        bootstrap = listen_line.split("=", 1)[1]
+        # The structured listener log includes the complete /p2p/<PeerId>
+        # suffix required by the bootstrap dialer.
+        bootstrap = listen_line.split(" address=", 1)[1]
 
         node_b = start_node(
             "node-b", temp / "node-b.key", "/ip4/127.0.0.1/tcp/0",
