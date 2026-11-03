@@ -30,7 +30,7 @@ This document defines the security boundary for the OSIRIS EYE observation netwo
 |---|---|---|
 | Payload tampering | Recompute digest over received bytes | Implemented for UTF-8 payload |
 | Publisher impersonation | Signed GossipSub + pinned/enrolled PeerId | Signed messages implemented; enrollment policy pending |
-| Replay | Durable message IDs/nonces and shared replay store | Pending |
+| Replay | Durable message IDs/nonces and shared replay store | Local durable replay journal implemented; cross-node/global deduplication pending |
 | Stale market data | Validate source timestamp and local receive time | Pending |
 | False but correctly signed data | Provider provenance, independent corroboration, reputation/quarantine | Pending |
 | Malicious relay | End-to-end Noise encryption, peer identity checks, bounded relay quotas | Noise transport exists; relay implementation pending |
@@ -50,7 +50,7 @@ This document defines the security boundary for the OSIRIS EYE observation netwo
 8. Store the accepted observation with publisher PeerId, provider, source timestamp, receive timestamp, digest, and validation result.
 9. Make the observation available to downstream analytics only; never convert a peer message into an order.
 
-Steps 5–8 are required before observations can be treated as trusted operational inputs. The existing node currently implements only the envelope/payload validation and libp2p message authentication portions.
+Local replay rejection is now persisted before an observation is accepted, so a process restart does not erase the node's seen-message history. The journal is node-local, append-only, and deliberately fails closed at 64 MiB; it is not a network-wide consensus/replay database. Steps 5–8 remain required before observations can be treated as trusted operational inputs.
 
 ## Relay policy
 

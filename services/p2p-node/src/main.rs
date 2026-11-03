@@ -1,7 +1,7 @@
 mod peer_auth;
 
 use peer_auth::{is_trusted_peer, parse_trusted_peers};
-use std::{env, error::Error, fs, io::Write, net::SocketAddr, path::PathBuf, time::{Duration, Instant}};
+use std::{collections::HashSet, env, error::Error, fs::{self, OpenOptions}, io::{BufRead, BufReader as StdBufReader, Write}, net::SocketAddr, path::PathBuf, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
 
 macro_rules! emit {
     ($($arg:tt)*) => {{
@@ -24,6 +24,65 @@ use tokio::{io::{self, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
 
 const PROTOCOL_VERSION: &str = "/osiris-eye/p2p/1.0.0";
 const TOPIC_NAME: &str = "osiris/observations/1";
+
+const MAX_REPLAY_CACHE_BYTES: u64 = 64 * 1024 * 1024;
+
+#[derive(Debug)]
+struct ReplayGuard {
+    path: PathBuf,
+    seen: HashSet<String>,
+}
+
+impl ReplayGuard {
+    fn open(path: PathBuf) -> Result<Self, Box<dyn Error>> {
+        let mut seen = HashSet::new();
+        if path.exists() {
+            let file = fs::File::open(&path)?;
+            for line in StdBufReader::new(file).lines() {
+                let line = line?;
+                let (timestamp, id) = line.split_once(' ')
+                    .ok_or("corrupt replay cache entry; refusing to start")?;
+                timestamp.parse::<u64>()
+                    .map_err(|_| "corrupt replay cache timestamp; refusing to start")?;
+                if id.len() != 64 || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
+                    return Err("corrupt replay cache message ID; refusing to start".into());
+                }
+                seen.insert(id.to_ascii_lowercase());
+            }
+            if fs::metadata(&path)?.len() > MAX_REPLAY_CACHE_BYTES {
+                return Err("replay cache exceeds 64 MiB; archive it safely before restart".into());
+            }
+        }
+        Ok(Self { path, seen })
+    }
+
+    fn message_id(envelope: &ObservationEnvelope) -> Result<String, Box<dyn Error>> {
+        let canonical = serde_json::to_vec(&(
+            &envelope.schema, &envelope.instrument, &envelope.observed_at,
+            &envelope.provider, &envelope.payload_sha256,
+        ))?;
+        Ok(format!("{:x}", Sha256::digest(canonical)))
+    }
+
+    /// Persist before accepting. A crash after sync may reject a retry, never accept a duplicate.
+    fn record_if_new(&mut self, envelope: &ObservationEnvelope) -> Result<bool, Box<dyn Error>> {
+        let id = Self::message_id(envelope)?;
+        if self.seen.contains(&id) {
+            return Ok(false);
+        }
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        let entry = format!("{timestamp} {id}\n");
+        let current_size = fs::metadata(&self.path).map(|m| m.len()).unwrap_or(0);
+        if current_size.saturating_add(entry.len() as u64) > MAX_REPLAY_CACHE_BYTES {
+            return Err("replay cache reached 64 MiB capacity; refusing new observations".into());
+        }
+        let mut file = OpenOptions::new().create(true).append(true).open(&self.path)?;
+        file.write_all(entry.as_bytes())?;
+        file.sync_data()?;
+        self.seen.insert(id);
+        Ok(true)
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ObservationEnvelope {
@@ -59,6 +118,27 @@ mod tests {
         ObservationEnvelope { schema: "osiris.observation.v1".into(), instrument: "BTC-USD".into(),
             observed_at: "2026-11-03T00:00:00Z".into(), provider: "coinbase-public".into(),
             payload_sha256: format!("{:x}", Sha256::digest(b"test-payload")), payload: "test-payload".into() }
+    }
+    #[test] fn replay_guard_persists_seen_messages_across_restart() {
+        let path = std::env::temp_dir().join(format!("osiris-replay-{}-{}.cache", std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let envelope = valid();
+        {
+            let mut guard = super::ReplayGuard::open(path.clone()).unwrap();
+            assert!(guard.record_if_new(&envelope).unwrap());
+            assert!(!guard.record_if_new(&envelope).unwrap());
+        }
+        {
+            let mut restarted = super::ReplayGuard::open(path.clone()).unwrap();
+            assert!(!restarted.record_if_new(&envelope).unwrap());
+        }
+        let _ = std::fs::remove_file(path);
+    }
+    #[test] fn replay_guard_fails_closed_on_corrupt_cache() {
+        let path = std::env::temp_dir().join(format!("osiris-replay-corrupt-{}.cache", std::process::id()));
+        std::fs::write(&path, "not-a-valid-entry\\n").unwrap();
+        assert!(super::ReplayGuard::open(path.clone()).is_err());
+        let _ = std::fs::remove_file(path);
     }
     #[test] fn accepts_valid_envelope() { assert!(valid().validate().is_ok()); }
     #[test] fn rejects_wrong_schema() { let mut v=valid(); v.schema="v0".into(); assert_eq!(v.validate(),Err("unsupported_schema")); }
@@ -341,6 +421,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let bootstrap_peers = parse_bootstrap_peers(&mut swarm)?;
     let trusted_peers = parse_trusted_peers(env::var("OSIRIS_TRUSTED_PEERS").ok().as_deref())?;
+    let replay_path = env::var_os("OSIRIS_REPLAY_CACHE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(".osiris-replay-cache"));
+    let mut replay_guard = ReplayGuard::open(replay_path.clone())?;
+    emit!("replay_protection=durable cache_entries={} cache_path={}", replay_guard.seen.len(), replay_path.display());
     if let Some(allowed) = &trusted_peers {
         for (bootstrap_peer, _) in &bootstrap_peers {
             if !allowed.contains(bootstrap_peer) {
@@ -499,11 +584,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     }
                     match serde_json::from_slice::<ObservationEnvelope>(&message.data) {
                         Ok(envelope) if envelope.validate().is_ok() => {
-                            emit!(
-                                "observation_received peer={} instrument={} provider={} observed_at={} payload_sha256={} payload_bytes={}",
-                                propagation_source, envelope.instrument, envelope.provider,
-                                envelope.observed_at, envelope.payload_sha256, envelope.payload.len()
-                            );
+                            match replay_guard.record_if_new(&envelope) {
+                                Ok(true) => emit!(
+                                    "observation_received peer={} instrument={} provider={} observed_at={} payload_sha256={} payload_bytes={}",
+                                    propagation_source, envelope.instrument, envelope.provider,
+                                    envelope.observed_at, envelope.payload_sha256, envelope.payload.len()
+                                ),
+                                Ok(false) => emit!("message_rejected peer={propagation_source} reason=replay_detected"),
+                                Err(error) => {
+                                    eprintln!("message_rejected peer={propagation_source} reason=replay_store_error error={error}");
+                                    continue;
+                                }
+                            }
                         }
                         _ => eprintln!("rejected_message peer={propagation_source} reason=invalid_envelope"),
                     }
