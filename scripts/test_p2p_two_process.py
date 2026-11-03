@@ -52,6 +52,8 @@ def start_node(name, key_path, listen=None, bootstrap=None):
         env["OSIRIS_LISTEN_ADDR"] = listen
     if bootstrap:
         env["OSIRIS_BOOTSTRAP_PEERS"] = bootstrap
+    # Each process must bind its own ephemeral health port in shared CI hosts.
+    env["OSIRIS_HEALTH_HTTP_ADDR"] = "127.0.0.1:0"
     proc = subprocess.Popen(
         [str(BINARY)], cwd=ROOT, env=env, stdin=subprocess.PIPE,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1
@@ -75,6 +77,9 @@ try:
         node_b = start_node("node-b", tmp / "node-b.key", "/ip4/127.0.0.1/tcp/0", multiaddr)
 
         wait_for(lambda n, l: n == "node-a" and l.startswith("gossipsub_subscribed peer="), 20, "GossipSub subscription from node B")
+        wait_for(lambda n, l: n == "node-b" and l.startswith("gossipsub_subscribed peer="), 20, "GossipSub subscription from node A")
+        # GossipSub needs a heartbeat to form its mesh after subscription exchange.
+        time.sleep(1.5)
         envelope = {
             "schema": "osiris.observation.v1",
             "instrument": "P2P-PROCESS-TEST",
