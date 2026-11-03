@@ -90,10 +90,10 @@ def main():
         receiver_peer_line = receiver.wait_for("peer_id=", timeout=10)
         receiver_peer_id = receiver_peer_line.split("=", 1)[1]
 
-        # Do not launch the sender until the receiver's relay-client swarm
-        # reports its circuit listen address. A server-side accepted request
-        # alone is not proof that the client has completed its reservation.
-        receiver.wait_for("relay_reserved_address=", timeout=25)
+        # The relay-client behaviour reports reservation acceptance directly.
+        # NewListenAddr is not guaranteed for a relayed listener on every
+        # libp2p version, so gate on the protocol event, not that swarm event.
+        receiver.wait_for("relay_client_event=ReservationReqAccepted", timeout=25)
 
         sender_env = base_env | {
             "OSIRIS_RELAY_CLIENT_ROLE": "sender",
