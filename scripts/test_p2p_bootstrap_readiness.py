@@ -103,8 +103,8 @@ def main():
                 env["OSIRIS_HEALTH_HTTP_ADDR"] = "127.0.0.1:0"
                 node = Node(label, env)
                 nodes.append(node)
-                line = node.wait_for(lambda value: value.startswith("listening="), 15, "bootstrap listener")
-                return node, line.split("=", 1)[1]
+                line = node.wait_for(lambda value: value.startswith("listener_ready ") and " address=" in value, 15, "bootstrap listener")
+                return node, line.split(" address=", 1)[1]
 
             # Learn the persistent bootstrap identity/address, then leave it offline.
             candidate, multiaddr = start_bootstrap("bootstrap-identity")

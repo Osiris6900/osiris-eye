@@ -91,15 +91,21 @@ def main():
                 env = os.environ.copy()
                 env["OSIRIS_NODE_KEY"] = str(bootstrap_key)
                 env["OSIRIS_LISTEN_ADDR"] = bootstrap_addr
+                env["OSIRIS_HEALTH_HTTP_ADDR"] = "127.0.0.1:0"
                 node = Node(label, env)
                 nodes.append(node)
-                line = node.wait_for(lambda value: value.startswith("listening="), 15, "bootstrap listener")
-                return node, line.split("=", 1)[1]
+                line = node.wait_for(
+                    lambda value: value.startswith("listener_ready ") and " address=" in value,
+                    15,
+                    "bootstrap listener",
+                )
+                return node, line.split(" address=", 1)[1]
 
             bootstrap, multiaddr = start_bootstrap("bootstrap-first")
             client_env = os.environ.copy()
             client_env["OSIRIS_NODE_KEY"] = str(tmp / "client.key")
             client_env["OSIRIS_LISTEN_ADDR"] = "/ip4/127.0.0.1/tcp/0"
+            client_env["OSIRIS_HEALTH_HTTP_ADDR"] = "127.0.0.1:0"
             client_env["OSIRIS_BOOTSTRAP_PEERS"] = multiaddr
             client = Node("client", client_env)
             nodes.append(client)
@@ -116,7 +122,7 @@ def main():
 
             bootstrap.stop()
             client.wait_for(
-                lambda value: value == f"peer_disconnected={bootstrap_peer_id}",
+                lambda value: value.startswith(f"peer_disconnected={bootstrap_peer_id} "),
                 15, "bootstrap disconnect detection",
             )
             print("BOOTSTRAP_DISCONNECT_DETECTED=PASS", flush=True)
@@ -126,9 +132,14 @@ def main():
             if restarted_addr.rsplit("/p2p/", 1)[-1] != bootstrap_peer_id:
                 raise AssertionError("bootstrap Peer ID changed after restart with persisted identity")
 
+            connected_events_before_restart = sum(
+                value == f"peer_connected={bootstrap_peer_id}" for value in client.history
+            )
             client.wait_for_count(
                 lambda value: value == f"peer_connected={bootstrap_peer_id}",
-                2, 45, "automatic reconnection to restarted bootstrap",
+                connected_events_before_restart + 1,
+                45,
+                "automatic reconnection to restarted bootstrap",
             )
             print("BOOTSTRAP_AUTOMATIC_RECONNECTION=PASS", flush=True)
             print("P2P_BOOTSTRAP_RESTART_RECOVERY_TEST=PASS", flush=True)

@@ -2,6 +2,10 @@ name: P2P Tailscale cross-host acceptance
 
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
 
 permissions:
   contents: read
@@ -13,6 +17,7 @@ concurrency:
 
 jobs:
   host-a:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     name: Host A - Tailscale P2P listener
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -99,6 +104,7 @@ jobs:
           fi
 
   host-b:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     name: Host B - Tailscale P2P client
     runs-on: ubuntu-latest
     timeout-minutes: 15

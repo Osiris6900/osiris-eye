@@ -64,8 +64,14 @@ try:
     with tempfile.TemporaryDirectory(prefix="osiris-p2p-process-") as tmp:
         tmp = Path(tmp)
         node_a = start_node("node-a", tmp / "node-a.key", "/ip4/127.0.0.1/tcp/0")
-        listen_line = wait_for(lambda n, l: n == "node-a" and l.startswith("listening="), 15, "node A listener")
-        multiaddr = listen_line.split("=", 1)[1]
+        # The node emits structured listener diagnostics. Keep the complete
+        # /p2p/<peer-id> suffix so node B can dial the exact authenticated peer.
+        listen_line = wait_for(
+            lambda n, l: n == "node-a" and l.startswith("listener_ready ") and " address=" in l,
+            15,
+            "node A listener",
+        )
+        multiaddr = listen_line.split(" address=", 1)[1].split()[0]
         node_b = start_node("node-b", tmp / "node-b.key", "/ip4/127.0.0.1/tcp/0", multiaddr)
 
         wait_for(lambda n, l: n == "node-a" and l.startswith("gossipsub_subscribed peer="), 20, "GossipSub subscription from node B")

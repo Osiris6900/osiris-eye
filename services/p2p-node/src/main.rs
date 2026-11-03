@@ -403,10 +403,26 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
             event = swarm.select_next_some() => match event {
-                SwarmEvent::NewListenAddr { address, .. } => {
-                    emit!("listening={address}/p2p/{peer_id}");
+                SwarmEvent::NewListenAddr { listener_id, address } => {
+                    emit!("listener_ready listener={listener_id:?} address={address}/p2p/{peer_id}");
                 }
-                SwarmEvent::ConnectionEstablished { peer_id, .. } => {
+                SwarmEvent::ListenerError { listener_id, error } => {
+                    emit!("listener_error listener={listener_id:?} error={error}");
+                }
+                SwarmEvent::ListenerClosed { listener_id, addresses, reason } => {
+                    emit!("listener_closed listener={listener_id:?} addresses={addresses:?} reason={reason:?}");
+                }
+                SwarmEvent::Dialing { peer_id: target, connection_id } => {
+                    emit!("outgoing_dial_started peer={target:?} connection={connection_id:?}");
+                }
+                SwarmEvent::OutgoingConnectionError { peer_id: target, connection_id, error } => {
+                    emit!("outgoing_connection_error peer={target:?} connection={connection_id:?} error={error}");
+                }
+                SwarmEvent::IncomingConnectionError { connection_id, local_addr, send_back_addr, error, .. } => {
+                    emit!("incoming_connection_error connection={connection_id:?} local={local_addr} remote={send_back_addr} error={error}");
+                }
+                SwarmEvent::ConnectionEstablished { peer_id, endpoint, connection_id, num_established, .. } => {
+                    emit!("connection_established_detail peer={peer_id} endpoint={endpoint:?} connection={connection_id:?} total={num_established}");
                     if !is_trusted_peer(&peer_id, &trusted_peers) {
                         emit!("peer_rejected={peer_id} reason=not_in_trusted_peer_allowlist");
                         let _ = swarm.disconnect_peer_id(peer_id);
@@ -414,8 +430,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     }
                     emit!("peer_connected={peer_id}");
                 }
-                SwarmEvent::ConnectionClosed { peer_id, .. } => {
-                    emit!("peer_disconnected={peer_id}");
+                SwarmEvent::ConnectionClosed { peer_id, cause, num_established, .. } => {
+                    emit!("peer_disconnected={peer_id} cause={cause:?} remaining={num_established}");
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Discovered(peers))) => {
                     for (peer, address) in peers {
