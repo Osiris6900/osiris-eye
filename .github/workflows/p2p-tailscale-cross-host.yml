@@ -5,6 +5,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: p2p-tailscale-cross-host-${{ github.ref }}
@@ -43,6 +44,8 @@ jobs:
             "$BIN" >"$NODE_LOG" 2>&1 </dev/null &
           echo "$!" > "$RUNNER_TEMP/osiris-host-a.pid"
 
+          PEER_ID=""
+          LISTENING=""
           for _ in $(seq 1 60); do
             PEER_ID="$(sed -n 's/^peer_id=//p' "$NODE_LOG" | head -n1)"
             LISTENING="$(grep -m1 '^listening=/ip4/0.0.0.0/tcp/4001/p2p/' "$NODE_LOG" || true)"
@@ -53,15 +56,17 @@ jobs:
             fi
             sleep 1
           done
-          test -n "${PEER_ID:-}"
-          test -n "${LISTENING:-}"
+          test -n "$PEER_ID"
+          test -n "$LISTENING"
           printf '{"tailscale_ip":"%s","port":4001,"peer_id":"%s"}\n' "$TAILSCALE_IP" "$PEER_ID" > "$RUNNER_TEMP/p2p-endpoint.json"
           echo "Host A Tailscale endpoint ready: $TAILSCALE_IP:4001 peer=$PEER_ID"
       - name: Share endpoint with Host B
-        uses: actions/cache/save@v4
+        uses: actions/upload-artifact@v4
         with:
+          name: p2p-endpoint-${{ github.run_id }}
           path: ${{ runner.temp }}/p2p-endpoint.json
-          key: osiris-p2p-tailscale-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 1
       - name: Wait for Host B observation to arrive
         run: |
           set -euo pipefail
@@ -100,35 +105,36 @@ jobs:
           tags: tag:ci-p2p
       - name: Build P2P node
         run: cargo build --release --manifest-path services/p2p-node/Cargo.toml
-      - name: Wait for Host A endpoint
+      - name: Wait until Host A uploads its endpoint
         env:
-          RUNNER_TEMP: ${{ runner.temp }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          for attempt in $(seq 1 30); do
-            if gh_cache_status=ready; then
-              echo "Polling shared workflow cache for Host A endpoint (attempt $attempt)"
+          ARTIFACT_NAME="p2p-endpoint-${{ github.run_id }}"
+          FOUND=""
+          for _ in $(seq 1 120); do
+            FOUND="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" --jq ".artifacts[] | select(.name == \"$ARTIFACT_NAME\" and .expired == false) | .id" | head -n1)"
+            if [ -n "$FOUND" ]; then
+              echo "Host A endpoint artifact is ready."
+              exit 0
             fi
-            if [ -f "$RUNNER_TEMP/p2p-endpoint.json" ]; then break; fi
-            sleep 2
+            sleep 3
           done
-        shell: bash
-      - name: Restore Host A endpoint
-        id: endpoint
-        uses: actions/cache/restore@v4
+          echo "Timed out waiting for Host A endpoint artifact."
+          exit 1
+      - name: Download Host A endpoint
+        uses: actions/download-artifact@v4
         with:
-          path: ${{ runner.temp }}/p2p-endpoint.json
-          key: osiris-p2p-tailscale-${{ github.run_id }}-${{ github.run_attempt }}
+          name: p2p-endpoint-${{ github.run_id }}
+          path: ${{ runner.temp }}
+          github-token: ${{ github.token }}
+          run-id: ${{ github.run_id }}
       - name: Connect and publish integrity probe
         env:
           RUNNER_TEMP: ${{ runner.temp }}
         run: |
           set -euo pipefail
           ENDPOINT="$RUNNER_TEMP/p2p-endpoint.json"
-          if [ ! -f "$ENDPOINT" ]; then
-            echo "Host A endpoint cache was not available to Host B."
-            exit 1
-          fi
           TAILSCALE_IP="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["tailscale_ip"])' "$ENDPOINT")"
           PEER_ID="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["peer_id"])' "$ENDPOINT")"
           BOOTSTRAP="/ip4/$TAILSCALE_IP/tcp/4001/p2p/$PEER_ID"
@@ -137,7 +143,11 @@ jobs:
           NODE_KEY="$RUNNER_TEMP/osiris-host-b.key"
           FIFO="$RUNNER_TEMP/osiris-host-b.stdin"
           mkfifo "$FIFO"
-          "$BIN" < "$FIFO" >"$NODE_LOG" 2>&1 &
+          OSIRIS_NODE_KEY="$NODE_KEY" \
+          OSIRIS_BOOTSTRAP_PEERS="$BOOTSTRAP" \
+          OSIRIS_LISTEN_ADDR="/ip4/0.0.0.0/tcp/0" \
+          OSIRIS_HEALTH_HTTP_ADDR="127.0.0.1:0" \
+            "$BIN" < "$FIFO" >"$NODE_LOG" 2>&1 &
           NODE_PID=$!
           echo "$NODE_PID" > "$RUNNER_TEMP/osiris-host-b.pid"
           exec 3>"$FIFO"
@@ -169,10 +179,6 @@ jobs:
           DIGEST="$(printf '%s' "$PAYLOAD" | sha256sum | cut -d' ' -f1)"
           printf '{"schema":"osiris.observation.v1","instrument":"OSIRIS-TAILSCALE-CROSSHOST","observed_at":"2026-11-03T11:00:00Z","provider":"osiris-tailscale-ci","payload_sha256":"%s","payload":"%s"}\n' "$DIGEST" "$PAYLOAD" >&3
           sleep 8
-          if ! grep -F "peer_connected=$PEER_ID" "$NODE_LOG" >/dev/null; then
-            cat "$NODE_LOG"
-            exit 1
-          fi
           echo "Host B published integrity probe to Host A."
           exec 3>&-
           kill "$NODE_PID" 2>/dev/null || true
