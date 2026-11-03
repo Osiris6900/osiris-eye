@@ -64,7 +64,19 @@ mod tests {
     #[test] fn rejects_payload_hash_mismatch() { let mut v=valid(); v.payload.push_str("-tampered"); assert_eq!(v.validate(),Err("payload_hash_mismatch")); }
     #[test] fn rejects_oversized_payload() { let mut v=valid(); v.payload="x".repeat(1_048_577); assert_eq!(v.validate(),Err("payload_too_large")); }
     #[test] fn rejects_empty_provider() { let mut v=valid(); v.provider.clear(); assert_eq!(v.validate(),Err("invalid_provider")); }
-    #[test] fn parses_public_tcp_external_addresses() {\n        let addresses = parse_external_addresses(Some("/ip4/203.0.113.10/tcp/4001,/dns4/node.example/tcp/4001")).unwrap();\n        assert_eq!(addresses.len(), 2);\n    }\n    #[test] fn rejects_external_address_without_tcp() {\n        assert!(parse_external_addresses(Some("/ip4/203.0.113.10/udp/4001")).is_err());\n    }\n    #[test] fn rejects_external_address_with_peer_id() {\n        let peer = PeerId::random();\n        let raw = format!("/ip4/203.0.113.10/tcp/4001/p2p/{peer}");\n        assert!(parse_external_addresses(Some(&raw)).is_err());\n    }\n    #[test] fn extracts_peer_id_from_bootstrap_multiaddr() {
+    #[test] fn parses_public_tcp_external_addresses() {
+        let addresses = parse_external_addresses(Some("/ip4/203.0.113.10/tcp/4001,/dns4/node.example/tcp/4001")).unwrap();
+        assert_eq!(addresses.len(), 2);
+    }
+    #[test] fn rejects_external_address_without_tcp() {
+        assert!(parse_external_addresses(Some("/ip4/203.0.113.10/udp/4001")).is_err());
+    }
+    #[test] fn rejects_external_address_with_peer_id() {
+        let peer = PeerId::random();
+        let raw = format!("/ip4/203.0.113.10/tcp/4001/p2p/{peer}");
+        assert!(parse_external_addresses(Some(&raw)).is_err());
+    }
+    #[test] fn extracts_peer_id_from_bootstrap_multiaddr() {
         let peer = PeerId::from(identity::Keypair::generate_ed25519().public());
         let address: Multiaddr = format!("/ip4/127.0.0.1/tcp/4001/p2p/{peer}").parse().unwrap();
         assert_eq!(peer_id_from_multiaddr(&address), Some(peer));
