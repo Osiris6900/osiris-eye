@@ -1,4 +1,4 @@
-use std::{env, error::Error, fs, net::SocketAddr, os::unix::fs::PermissionsExt, path::PathBuf, time::Duration};
+use std::{env, error::Error, fs, os::unix::fs::PermissionsExt, path::PathBuf, time::Duration};
 
 use futures::StreamExt;
 use libp2p::{
