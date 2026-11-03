@@ -87,10 +87,13 @@ def main():
             "OSIRIS_RELAY_MULTIADDR": relay_multiaddr,
         }
         receiver = Process("receiver", [str(CLIENT)], receiver_env)
-        reserved = receiver.wait_for("relay_reserved_address=", timeout=20)
-        receiver_peer_id = next(
-            line.split("=", 1)[1] for line in receiver.history if line.startswith("peer_id=")
-        )
+        receiver_peer_line = receiver.wait_for("peer_id=", timeout=10)
+        receiver_peer_id = receiver_peer_line.split("=", 1)[1]
+
+        # The relay server's ReservationReqAccepted event is the authoritative
+        # signal that the receiver has a usable reservation. The client swarm
+        # does not guarantee a NewListenAddr event for this relay listener.
+        relay_proc.wait_for("ReservationReqAccepted", timeout=20)
 
         sender_env = base_env | {
             "OSIRIS_RELAY_CLIENT_ROLE": "sender",
