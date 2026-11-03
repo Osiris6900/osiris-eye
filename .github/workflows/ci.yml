@@ -38,6 +38,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Test Rust risk kernel
         run: cargo test --manifest-path crates/risk-kernel/Cargo.toml
+      - name: Check decentralized P2P node
+        run: cargo check --manifest-path services/p2p-node/Cargo.toml
 
   web:
     runs-on: ubuntu-latest
