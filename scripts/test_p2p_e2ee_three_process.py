@@ -53,6 +53,7 @@ def start_node(name, tmp, listen=None, bootstrap=None, recipients_file=None):
     env["OSIRIS_NODE_KEY"] = str(tmp / f"{name}.identity")
     env["OSIRIS_TRANSPORT_KEY"] = str(tmp / f"{name}.transport")
     env["OSIRIS_REPLAY_CACHE"] = str(tmp / f"{name}.replay")
+    env["OSIRIS_PEER_KEY_STORE"] = str(tmp / f"{name}.peer-keys.sqlite3")
     env["OSIRIS_HEALTH_HTTP_ADDR"] = "127.0.0.1:0"
     env["OSIRIS_E2EE_ENABLED"] = "1"
     if recipients_file:
