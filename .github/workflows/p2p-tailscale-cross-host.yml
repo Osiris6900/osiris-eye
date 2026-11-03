@@ -1,0 +1,184 @@
+name: P2P Tailscale cross-host acceptance
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: p2p-tailscale-cross-host-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  host-a:
+    name: Host A - Tailscale P2P listener
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Connect runner to Tailscale
+        uses: tailscale/github-action@v3
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+          tags: tag:ci-p2p
+      - name: Build P2P node
+        run: cargo build --release --manifest-path services/p2p-node/Cargo.toml
+      - name: Start listener and publish endpoint for Host B
+        env:
+          RUNNER_TEMP: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          BIN="$GITHUB_WORKSPACE/target/release/osiris-p2p-node"
+          NODE_LOG="$RUNNER_TEMP/osiris-host-a.log"
+          NODE_KEY="$RUNNER_TEMP/osiris-host-a.key"
+          TAILSCALE_IP="$(tailscale ip -4 | head -n1)"
+          test -n "$TAILSCALE_IP"
+          nohup env \
+            OSIRIS_NODE_KEY="$NODE_KEY" \
+            OSIRIS_LISTEN_ADDR="/ip4/0.0.0.0/tcp/4001" \
+            OSIRIS_EXTERNAL_ADDRS="/ip4/$TAILSCALE_IP/tcp/4001" \
+            OSIRIS_HEALTH_HTTP_ADDR="127.0.0.1:0" \
+            "$BIN" >"$NODE_LOG" 2>&1 </dev/null &
+          echo "$!" > "$RUNNER_TEMP/osiris-host-a.pid"
+
+          for _ in $(seq 1 60); do
+            PEER_ID="$(sed -n 's/^peer_id=//p' "$NODE_LOG" | head -n1)"
+            LISTENING="$(grep -m1 '^listening=/ip4/0.0.0.0/tcp/4001/p2p/' "$NODE_LOG" || true)"
+            if [ -n "$PEER_ID" ] && [ -n "$LISTENING" ]; then break; fi
+            if ! kill -0 "$(cat "$RUNNER_TEMP/osiris-host-a.pid")" 2>/dev/null; then
+              cat "$NODE_LOG"
+              exit 1
+            fi
+            sleep 1
+          done
+          test -n "${PEER_ID:-}"
+          test -n "${LISTENING:-}"
+          printf '{"tailscale_ip":"%s","port":4001,"peer_id":"%s"}\n' "$TAILSCALE_IP" "$PEER_ID" > "$RUNNER_TEMP/p2p-endpoint.json"
+          echo "Host A Tailscale endpoint ready: $TAILSCALE_IP:4001 peer=$PEER_ID"
+      - name: Share endpoint with Host B
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/p2p-endpoint.json
+          key: osiris-p2p-tailscale-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Wait for Host B observation to arrive
+        run: |
+          set -euo pipefail
+          NODE_LOG="$RUNNER_TEMP/osiris-host-a.log"
+          INSTRUMENT="OSIRIS-TAILSCALE-CROSSHOST"
+          PAYLOAD="tailscale cross-host p2p integrity probe"
+          DIGEST="$(printf '%s' "$PAYLOAD" | sha256sum | cut -d' ' -f1)"
+          for _ in $(seq 1 180); do
+            if grep -F "observation_received" "$NODE_LOG" | grep -F "$INSTRUMENT" | grep -F "$DIGEST"; then
+              echo "CROSS_HOST_P2P_EXCHANGE=PASS"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Host A did not receive the expected observation."
+          cat "$NODE_LOG"
+          exit 1
+      - name: Stop Host A node
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/osiris-host-a.pid" ]; then
+            kill "$(cat "$RUNNER_TEMP/osiris-host-a.pid")" 2>/dev/null || true
+          fi
+
+  host-b:
+    name: Host B - Tailscale P2P client
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Connect runner to Tailscale
+        uses: tailscale/github-action@v3
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+          tags: tag:ci-p2p
+      - name: Build P2P node
+        run: cargo build --release --manifest-path services/p2p-node/Cargo.toml
+      - name: Wait for Host A endpoint
+        env:
+          RUNNER_TEMP: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 30); do
+            if gh_cache_status=ready; then
+              echo "Polling shared workflow cache for Host A endpoint (attempt $attempt)"
+            fi
+            if [ -f "$RUNNER_TEMP/p2p-endpoint.json" ]; then break; fi
+            sleep 2
+          done
+        shell: bash
+      - name: Restore Host A endpoint
+        id: endpoint
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/p2p-endpoint.json
+          key: osiris-p2p-tailscale-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Connect and publish integrity probe
+        env:
+          RUNNER_TEMP: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          ENDPOINT="$RUNNER_TEMP/p2p-endpoint.json"
+          if [ ! -f "$ENDPOINT" ]; then
+            echo "Host A endpoint cache was not available to Host B."
+            exit 1
+          fi
+          TAILSCALE_IP="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["tailscale_ip"])' "$ENDPOINT")"
+          PEER_ID="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["peer_id"])' "$ENDPOINT")"
+          BOOTSTRAP="/ip4/$TAILSCALE_IP/tcp/4001/p2p/$PEER_ID"
+          BIN="$GITHUB_WORKSPACE/target/release/osiris-p2p-node"
+          NODE_LOG="$RUNNER_TEMP/osiris-host-b.log"
+          NODE_KEY="$RUNNER_TEMP/osiris-host-b.key"
+          FIFO="$RUNNER_TEMP/osiris-host-b.stdin"
+          mkfifo "$FIFO"
+          "$BIN" < "$FIFO" >"$NODE_LOG" 2>&1 &
+          NODE_PID=$!
+          echo "$NODE_PID" > "$RUNNER_TEMP/osiris-host-b.pid"
+          exec 3>"$FIFO"
+
+          CONNECTED=0
+          for _ in $(seq 1 90); do
+            if grep -F "peer_connected=$PEER_ID" "$NODE_LOG" >/dev/null; then CONNECTED=1; break; fi
+            if ! kill -0 "$NODE_PID" 2>/dev/null; then cat "$NODE_LOG"; exit 1; fi
+            sleep 1
+          done
+          if [ "$CONNECTED" -ne 1 ]; then
+            echo "Host B failed to connect to Host A over Tailscale."
+            cat "$NODE_LOG"
+            exit 1
+          fi
+
+          SUBSCRIBED=0
+          for _ in $(seq 1 60); do
+            if grep -F "gossipsub_subscribed peer=$PEER_ID" "$NODE_LOG" >/dev/null; then SUBSCRIBED=1; break; fi
+            sleep 1
+          done
+          if [ "$SUBSCRIBED" -ne 1 ]; then
+            echo "GossipSub subscription was not observed."
+            cat "$NODE_LOG"
+            exit 1
+          fi
+
+          PAYLOAD="tailscale cross-host p2p integrity probe"
+          DIGEST="$(printf '%s' "$PAYLOAD" | sha256sum | cut -d' ' -f1)"
+          printf '{"schema":"osiris.observation.v1","instrument":"OSIRIS-TAILSCALE-CROSSHOST","observed_at":"2026-11-03T11:00:00Z","provider":"osiris-tailscale-ci","payload_sha256":"%s","payload":"%s"}\n' "$DIGEST" "$PAYLOAD" >&3
+          sleep 8
+          if ! grep -F "peer_connected=$PEER_ID" "$NODE_LOG" >/dev/null; then
+            cat "$NODE_LOG"
+            exit 1
+          fi
+          echo "Host B published integrity probe to Host A."
+          exec 3>&-
+          kill "$NODE_PID" 2>/dev/null || true
+      - name: Stop Host B node
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/osiris-host-b.pid" ]; then
+            kill "$(cat "$RUNNER_TEMP/osiris-host-b.pid")" 2>/dev/null || true
+          fi
