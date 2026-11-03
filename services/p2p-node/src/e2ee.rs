@@ -197,11 +197,11 @@ mod tests {
         let transport = TransportKeyPair::generate();
         let record = create_key_binding(&identity, &transport.public_key, 2, 100, 200).unwrap();
         assert_eq!(
-            verify_key_binding(&record, 150, 3).unwrap_err(),
+            verify_key_binding(&record, 150, 3).err().unwrap(),
             "key_binding_epoch_rollback"
         );
         assert_eq!(
-            verify_key_binding(&record, 201, 1).unwrap_err(),
+            verify_key_binding(&record, 201, 1).err().unwrap(),
             "key_binding_expired_or_invalid_time"
         );
     }
@@ -214,7 +214,7 @@ mod tests {
         let mut record = create_key_binding(&identity, &transport.public_key, 1, 100, 200).unwrap();
         record.peer_id = PeerId::from(other.public()).to_string();
         assert_eq!(
-            verify_key_binding(&record, 150, 1).unwrap_err(),
+            verify_key_binding(&record, 150, 1).err().unwrap(),
             "key_binding_peer_id_mismatch"
         );
     }
