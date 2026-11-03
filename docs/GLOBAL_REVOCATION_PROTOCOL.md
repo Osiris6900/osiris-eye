@@ -2,7 +2,7 @@
 
 ## Scope of this change
 
-This change adds the cryptographic record format, authority-key verification, durable local registry, per-peer monotonic sequence checks, startup enforcement, and a first GossipSub synchronization path. Nodes with the same pinned authority key subscribe to a dedicated revocation topic, request a registry snapshot when a peer subscribes, validate incoming records, persist accepted records, disconnect newly revoked peers, and re-publish accepted records for mesh propagation. This is an initial synchronization implementation; do not treat it as production-global until multi-process, offline-node, partition-healing, and load tests pass.
+This change adds the cryptographic record format, authority-key verification, durable local registry, per-peer monotonic sequence checks, startup enforcement, and a first GossipSub synchronization path. Nodes with the same pinned authority key subscribe to a dedicated revocation topic, request registry pages when a peer subscribes, validate incoming records, persist accepted records, disconnect newly revoked peers, and re-publish accepted records for mesh propagation. Nodes also issue periodic anti-entropy requests (default 60 seconds; configurable with OSIRIS_REVOCATION_SYNC_INTERVAL_SECS, clamped to 30–3600 seconds). Registry pages are ordered by PeerId and bounded to 128 records per page. This is an initial synchronization implementation; do not treat it as production-global until offline-node, partition-healing, multi-region, and load tests pass.
 
 ## Trust model
 
@@ -34,10 +34,10 @@ Do not enable a registry with a placeholder or unverified authority key. Provisi
 
 ## Not yet implemented
 
-- GossipSub distribution and anti-entropy synchronization of signed records.
+- Authenticated request correlation and per-request response routing (current requests and pages are broadcast on GossipSub).
 - Durable per-peer sequence checkpoints shared across registry snapshots.
 - Authority-key rotation with threshold/quorum authorization and rollback protection.
 - Expiry, un-revoke/appeal policy, and audit export.
-- Tests spanning multiple independent node processes with online and offline peers.
+- Automated offline-node and partition-healing recovery tests, plus multi-region/load tests.
 
-The current branch includes best-effort GossipSub snapshot/request and record propagation. Nodes must still be provisioned with the same authority key, and revocation changes will not propagate while a node is offline unless it reconnects to a peer holding the updated registry. Periodic anti-entropy, snapshot pagination, and multi-node acceptance tests remain release blockers. This is **not yet production-certified global synchronization**.
+The implementation now has periodic anti-entropy requests and bounded paginated registry exchange. A returning node can request current pages from connected peers, while accepted records continue to propagate through the mesh. Nodes must still be provisioned with the same authority key. Because GossipSub requests are broadcast rather than individually correlated, duplicate page responses are possible and are handled through monotonic sequence checks; this is not a substitute for authenticated request IDs or durable anti-entropy checkpoints. This is **not yet production-certified global synchronization**.
