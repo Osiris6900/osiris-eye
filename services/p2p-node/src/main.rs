@@ -982,6 +982,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         emit!("message_rejected peer={propagation_source} reason=not_in_trusted_peer_allowlist");
                         continue;
                     }
+                    if e2ee_enabled {
+                        emit!("plaintext_message_rejected peer={propagation_source} reason=e2ee_required");
+                        continue;
+                    }
                     match serde_json::from_slice::<ObservationEnvelope>(&message.data) {
                         Ok(envelope) if envelope.validate().is_ok() => {
                             match replay_guard.record_if_new(&envelope) {
@@ -1031,6 +1035,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                     continue;
                                 }
                             };
+                            if !is_peer_allowed(&recipient_peer, &trusted_peers, &revoked_peers) {
+                                emit!("publish_rejected recipient={recipient_peer} reason=recipient_not_allowed");
+                                continue;
+                            }
                             let Some(binding_record) = peer_key_bindings.get(&recipient_peer) else {
                                 emit!("publish_deferred recipient={recipient_peer} reason=recipient_key_binding_missing");
                                 continue;
