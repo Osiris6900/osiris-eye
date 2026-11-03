@@ -29,14 +29,21 @@ def wait_for(events, processes, predicate, timeout, description):
 
 def remote_command(binary, bootstrap):
     b = binary if binary.startswith(("/", "./")) else "./" + binary
-    return ("set -eu; cd \"$HOME\"; umask 077; tmp=$(mktemp -d /tmp/osiris-xhost-3-e2ee.XXXXXX); "
-      "trap 'rm -rf \"$tmp\"' EXIT; "
-      "export OSIRIS_NODE_KEY=\"$tmp/identity\" OSIRIS_TRANSPORT_KEY=\"$tmp/transport\" "
-      "OSIRIS_PEER_KEY_STORE=\"$tmp/peer-keys.sqlite3\" OSIRIS_REPLAY_CACHE=\"$tmp/replay\" "
-      "OSIRIS_E2EE_ENABLED=1 OSIRIS_LISTEN_ADDR=/ip4/0.0.0.0/tcp/0 "
-      "OSIRIS_HEALTH_HTTP_ADDR=127.0.0.1:0 OSIRIS_BOOTSTRAP_PEERS=" + shlex.quote(bootstrap) +
-      "; " + shlex.quote(b) + " <&0")
-
+    return (
+        "set -eu; cd \"$HOME\"; umask 077; tmp=$(mktemp -d /tmp/osiris-xhost-3-e2ee.XXXXXX); "
+        "export OSIRIS_NODE_KEY=\"$tmp/identity\" "
+        "OSIRIS_TRANSPORT_KEY=\"$tmp/transport\" "
+        "OSIRIS_PEER_KEY_STORE=\"$tmp/peer-keys.sqlite3\" "
+        "OSIRIS_REPLAY_CACHE=\"$tmp/replay\" "
+        "OSIRIS_E2EE_ENABLED=1 OSIRIS_LISTEN_ADDR=/ip4/0.0.0.0/tcp/0 "
+        "OSIRIS_HEALTH_HTTP_ADDR=127.0.0.1:0 "
+        "OSIRIS_BOOTSTRAP_PEERS=" + shlex.quote(bootstrap) + "; "
+        + shlex.quote(b)
+        + " <&0 & child=$!; "
+        + 'cleanup() { kill "$child" 2>/dev/null || true; '
+        + 'wait "$child" 2>/dev/null || true; rm -rf "$tmp"; }; '
+        + 'trap cleanup EXIT HUP INT TERM; wait "$child"'
+    )
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument("--ssh-target-b", required=True)
