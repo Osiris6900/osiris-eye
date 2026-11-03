@@ -23,6 +23,33 @@ struct ObservationEnvelope {
     payload_sha256: String,
 }
 
+impl ObservationEnvelope {
+    fn validate(&self) -> Result<(), &'static str> {
+        if self.schema != "osiris.observation.v1" { return Err("unsupported_schema"); }
+        if self.instrument.trim().is_empty() || self.instrument.len() > 64 { return Err("invalid_instrument"); }
+        if self.provider.trim().is_empty() || self.provider.len() > 64 { return Err("invalid_provider"); }
+        if self.observed_at.trim().is_empty() || self.observed_at.len() > 40 { return Err("invalid_observed_at"); }
+        let digest = self.payload_sha256.as_bytes();
+        if digest.len() != 64 || !digest.iter().all(u8::is_ascii_hexdigit) { return Err("invalid_payload_sha256"); }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ObservationEnvelope;
+    fn valid() -> ObservationEnvelope {
+        ObservationEnvelope { schema: "osiris.observation.v1".into(), instrument: "BTC-USD".into(),
+            observed_at: "2026-11-03T00:00:00Z".into(), provider: "coinbase-public".into(),
+            payload_sha256: "a".repeat(64) }
+    }
+    #[test] fn accepts_valid_envelope() { assert!(valid().validate().is_ok()); }
+    #[test] fn rejects_wrong_schema() { let mut v=valid(); v.schema="v0".into(); assert_eq!(v.validate(),Err("unsupported_schema")); }
+    #[test] fn rejects_bad_digest() { let mut v=valid(); v.payload_sha256="xyz".into(); assert_eq!(v.validate(),Err("invalid_payload_sha256")); }
+    #[test] fn rejects_empty_instrument() { let mut v=valid(); v.instrument.clear(); assert_eq!(v.validate(),Err("invalid_instrument")); }
+    #[test] fn rejects_empty_provider() { let mut v=valid(); v.provider.clear(); assert_eq!(v.validate(),Err("invalid_provider")); }
+}
+
 #[derive(NetworkBehaviour)]
 #[behaviour(to_swarm = "BehaviourEvent")]
 struct Behaviour {
@@ -169,7 +196,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     propagation_source, message, ..
                 })) => {
                     match serde_json::from_slice::<ObservationEnvelope>(&message.data) {
-                        Ok(envelope) if envelope.schema == "osiris.observation.v1" => {
+                        Ok(envelope) if envelope.validate().is_ok() => {
                             println!(
                                 "observation_received peer={} instrument={} provider={} observed_at={} payload_sha256={}",
                                 propagation_source, envelope.instrument, envelope.provider,
@@ -190,8 +217,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
             line = lines.next_line() => match line? {
                 Some(line) if !line.trim().is_empty() => {
                     let envelope: ObservationEnvelope = serde_json::from_str(&line)?;
-                    if envelope.schema != "osiris.observation.v1" {
-                        eprintln!("publish_rejected reason=unsupported_schema");
+                    if let Err(reason) = envelope.validate() {
+                        eprintln!("publish_rejected reason={reason}");
                         continue;
                     }
                     swarm.behaviour_mut().gossipsub.publish(topic.clone(), line.into_bytes())?;
