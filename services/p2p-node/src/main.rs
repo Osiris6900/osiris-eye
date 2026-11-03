@@ -342,6 +342,14 @@ fn load_or_create_transport_key() -> Result<TransportKeyPair, Box<dyn Error>> {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(".osiris-transport-key"));
     if path.exists() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&path)?.permissions().mode();
+            if mode & 0o077 != 0 {
+                return Err("transport key file permissions must be 0600 or stricter".into());
+            }
+        }
         let bytes = fs::read(&path)?;
         let key: [u8; 32] = bytes.try_into()
             .map_err(|_| "transport key file must contain exactly 32 bytes")?;
