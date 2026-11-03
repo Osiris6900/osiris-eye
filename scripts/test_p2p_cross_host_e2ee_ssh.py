@@ -128,7 +128,7 @@ def main():
             if not remote_binary.startswith(("/", "./")):
                 remote_binary = "./" + remote_binary
             remote_command = (
-                "set -eu; umask 077; tmp=$(mktemp -d /tmp/osiris-xhost-e2ee.XXXXXX); "
+                "set -eu; cd \"$HOME\"; umask 077; tmp=$(mktemp -d /tmp/osiris-xhost-e2ee.XXXXXX); "
                 "trap 'rm -rf \"$tmp\"' EXIT; "
                 "export OSIRIS_NODE_KEY=\"$tmp/identity\" "
                 "OSIRIS_TRANSPORT_KEY=\"$tmp/transport\" "
