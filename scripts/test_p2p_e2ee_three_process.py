@@ -78,11 +78,11 @@ try:
             15, "node A listener"
         )
         multiaddr = listen_line.split(" address=", 1)[1].split()[0]
+        node_a_peer = multiaddr.rsplit("/p2p/", 1)[1]
 
         node_b = start_node("node-b", tmp, "/ip4/127.0.0.1/tcp/0", multiaddr)
         node_b_peer = peer_id("node-b")
         node_c = start_node("node-c", tmp, "/ip4/127.0.0.1/tcp/0", multiaddr)
-        node_a_peer = peer_id("node-a")
         node_c_peer = peer_id("node-c")
 
         wait_for(lambda n, l: n == "node-a" and f"key_binding_accepted peer={node_b_peer} " in l,
