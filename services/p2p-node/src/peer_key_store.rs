@@ -56,7 +56,7 @@ impl PeerKeyStore {
             "SELECT record_json FROM peer_key_bindings WHERE peer_id = ?1",
             params![peer_id], |row| row.get(0)
         ).optional()?;
-        encoded.map(|value| serde_json::from_str(&value).map_err(Into::into)).transpose()
+        encoded.map(|value| serde_json::from_str(&value).map_err(|error| -> Box<dyn Error> { Box::new(error) })).transpose()
     }
 
     /// Atomically persist a verified binding, rejecting epoch rollback and
