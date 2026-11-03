@@ -68,28 +68,39 @@ export OSIRIS_RELAY_LISTEN_ADDR=/ip4/0.0.0.0/tcp/4001
 
 Keep relay keys private. Review the built-in reservation/circuit limits before exposing a relay publicly. The current client allowlist is client-side configuration; it is not a network-wide authorization system or server-side ACL.
 
-## 7. Node health heartbeat
+## 7. Node health endpoint and heartbeat
 
-The node emits a machine-readable `node_health` log line periodically. This is a lightweight liveness/peer-count signal for a process supervisor or log collector; it is not an HTTP health endpoint and does not prove that remote peers can reach the node.
+The node exposes a small HTTP liveness endpoint and continues to emit a machine-readable `node_health` log line.
 
-The default interval is 30 seconds. Configure it between 5 and 300 seconds:
+By default, the endpoint binds only to loopback at `127.0.0.1:9090`. Configure the address explicitly when a local monitoring agent needs a different interface or port:
 
 ```bash
+export OSIRIS_HEALTH_HTTP_ADDR=127.0.0.1:9090
 export OSIRIS_HEALTH_INTERVAL_SECS=30
 ```
 
-Example log:
+The interval is clamped to 5–300 seconds. Query:
 
-```text
-node_health status=alive peer_id=... uptime_seconds=120 connected_peers=4 bootstrap_peers_connected=2/2
+```bash
+curl http://127.0.0.1:9090/health
 ```
 
-- `status=alive` means the event loop is running and emitted a heartbeat.
-- `connected_peers` is the current number of connected libp2p peers.
-- `bootstrap_peers_connected` reports connected configured bootstrap peers versus the configured total.
-- A zero peer count is not automatically a process failure; a new or isolated node may be running without peers. Alert separately when expected bootstrap peers remain disconnected.
+Example JSON:
 
-Use a service manager (for example systemd) to restart a crashed process and collect stdout/stderr logs. Do not treat this heartbeat alone as a readiness or end-to-end network check.
+```json
+{
+  "status": "alive",
+  "peer_id": "12D3KooW...",
+  "uptime_seconds": 120,
+  "connected_peers": 4,
+  "bootstrap_peers_connected": 2,
+  "bootstrap_peers_total": 2
+}
+```
+
+The same counters are emitted periodically in the `node_health` log line. A zero peer count is not automatically a process failure; a new or isolated node may be running without peers. Alert separately when expected bootstrap peers remain disconnected.
+
+This endpoint is a liveness snapshot, not a readiness guarantee: it does not prove that a remote peer can reach this node, that DHT queries succeed, or that observations are being delivered. Keep it on loopback unless network exposure is intentional and protected by your deployment's access controls. Use a service manager (for example systemd) to restart crashed processes and collect logs.
 
 ## 8. Operator checklist before public launch
 

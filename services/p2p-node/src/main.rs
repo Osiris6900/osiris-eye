@@ -1,4 +1,4 @@
-use std::{env, error::Error, fs, io::Write, path::PathBuf, time::{Duration, Instant}};
+use std::{env, error::Error, fs, io::Write, net::SocketAddr, path::PathBuf, time::{Duration, Instant}};
 
 macro_rules! emit {
     ($($arg:tt)*) => {{
@@ -17,7 +17,7 @@ use libp2p::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tokio::io::{self, AsyncBufReadExt, BufReader};
+use tokio::{io::{self, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader}, net::{TcpListener, TcpStream}, sync::watch};
 
 const PROTOCOL_VERSION: &str = "/osiris-eye/p2p/1.0.0";
 const TOPIC_NAME: &str = "osiris/observations/1";
@@ -194,6 +194,58 @@ fn parse_bootstrap_peers(
     Ok(peers)
 }
 
+#[derive(Clone, Debug, Serialize)]
+struct HealthSnapshot {
+    status: &'static str,
+    peer_id: String,
+    uptime_seconds: u64,
+    connected_peers: usize,
+    bootstrap_peers_connected: usize,
+    bootstrap_peers_total: usize,
+}
+
+async fn serve_health_connection(mut stream: TcpStream, state: watch::Receiver<HealthSnapshot>) {
+    let mut request = [0_u8; 1024];
+    let read = match tokio::time::timeout(Duration::from_secs(2), stream.read(&mut request)).await {
+        Ok(Ok(count)) => count,
+        _ => return,
+    };
+    let request_line = std::str::from_utf8(&request[..read])
+        .ok()
+        .and_then(|value| value.lines().next())
+        .unwrap_or("");
+    let mut parts = request_line.split_whitespace();
+    let method = parts.next().unwrap_or("");
+    let path = parts.next().unwrap_or("");
+
+    let (status, body) = if method != "GET" {
+        ("405 Method Not Allowed", r#"{"error":"method_not_allowed"}"#.to_owned())
+    } else if path != "/health" {
+        ("404 Not Found", r#"{"error":"not_found"}"#.to_owned())
+    } else {
+        let snapshot = state.borrow().clone();
+        ("200 OK", serde_json::to_string(&snapshot).unwrap_or_else(|_| r#"{"status":"error"}"#.to_owned()))
+    };
+    let response = format!(
+        "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    let _ = stream.write_all(response.as_bytes()).await;
+}
+
+async fn serve_health_endpoint(
+    address: SocketAddr,
+    state: watch::Receiver<HealthSnapshot>,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let listener = TcpListener::bind(address).await?;
+    emit!("health_http_listening={}", listener.local_addr()?);
+    loop {
+        let (stream, _) = listener.accept().await?;
+        let state = state.clone();
+        tokio::spawn(async move { serve_health_connection(stream, state).await; });
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let key = load_or_create_identity()?;
@@ -253,6 +305,23 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut health_tick = tokio::time::interval(Duration::from_secs(health_interval_secs));
     health_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let started_at = Instant::now();
+    let health_address: SocketAddr = env::var("OSIRIS_HEALTH_HTTP_ADDR")
+        .unwrap_or_else(|_| "127.0.0.1:9090".to_owned())
+        .parse()?;
+    let initial_health = HealthSnapshot {
+        status: "alive",
+        peer_id: peer_id.to_string(),
+        uptime_seconds: 0,
+        connected_peers: 0,
+        bootstrap_peers_connected: 0,
+        bootstrap_peers_total: bootstrap_peers.len(),
+    };
+    let (health_tx, health_rx) = watch::channel(initial_health);
+    tokio::spawn(async move {
+        if let Err(error) = serve_health_endpoint(health_address, health_rx).await {
+            eprintln!("health_http_server_error={error}");
+        }
+    });
     emit!("OSIRIS EYE P2P node starting");
     emit!("peer_id={peer_id}");
     emit!("topic={TOPIC_NAME}");
@@ -272,6 +341,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     .iter()
                     .filter(|(bootstrap_peer, _)| swarm.is_connected(bootstrap_peer))
                     .count();
+                health_tx.send_replace(HealthSnapshot {
+                    status: "alive",
+                    peer_id: peer_id.to_string(),
+                    uptime_seconds: started_at.elapsed().as_secs(),
+                    connected_peers,
+                    bootstrap_peers_connected: connected_bootstrap_peers,
+                    bootstrap_peers_total: bootstrap_peers.len(),
+                });
                 emit!(
                     "node_health status=alive peer_id={} uptime_seconds={} connected_peers={} bootstrap_peers_connected={}/{}",
                     peer_id,
