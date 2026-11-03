@@ -10,7 +10,7 @@ Design only. This document does not claim that Internet connectivity, NAT traver
 - CI has passed a two-process test in which two independent node processes connect over loopback and exchange a valid observation envelope.
 - mDNS is LAN discovery only. Kademlia currently uses an in-memory store.
 - The two-machine runbook covers a reachable LAN listener, not Internet traversal.
-- The observation envelope currently carries metadata and a digest string; the node does not transmit the underlying market-data bytes or verify that the digest matches those bytes.
+- The observation envelope carries a UTF-8 payload and SHA-256 digest; the receiver recomputes SHA-256 over the received payload bytes and rejects mismatches. This proves byte integrity relative to the claimed digest, not source truth or publisher entitlement.
 
 ## Target topology
 
@@ -29,6 +29,7 @@ A single machine may initially run bootstrap and relay roles, but they should be
 - `OSIRIS_RELAY_CLIENT_ENABLED`: explicit opt-in for relay client behavior; default false until a relay endpoint is configured and tested.
 - `OSIRIS_RELAY_PEERS`: comma-separated, operator-approved relay multiaddresses ending in `/p2p/<peer-id>`.
 - `OSIRIS_RELAY_SERVER_ENABLED`: explicit opt-in for operating a relay server; default false.
+- `OSIRIS_RELAY_MAX_RESERVATIONS`, `OSIRIS_RELAY_MAX_CIRCUITS`, `OSIRIS_RELAY_MAX_CIRCUIT_BYTES`, and `OSIRIS_RELAY_MAX_CIRCUIT_SECONDS`: bounded operator-defined limits; no unlimited public relay defaults.
 - `OSIRIS_PUBLIC_LISTEN_ADDR`: optional explicit public listener address only when the host actually has a reachable public endpoint.
 - Never infer public reachability from a local listen address or provider-readiness setting. Never silently trust arbitrary relay addresses received from the network.
 
@@ -40,8 +41,8 @@ Configuration must fail closed on malformed multiaddresses, missing PeerIds, con
 - Pin/trust node identity keys through an explicit enrollment policy; a PeerId alone is not a trust decision.
 - Add relay allowlisting, per-peer quotas, rate limits, connection caps, and bounded circuit duration/bytes before enabling relay-server mode.
 - Do not expose a relay server to the public Internet without firewall rules, abuse monitoring, resource limits, and an operator responsible for patching and incident response.
-- Add durable replay protection and authenticated message/payload integrity before relying on observations operationally.
-- Hash verification must be over the exact payload bytes received, not merely a 64-character digest field.
+- The current envelope validates payload bytes against SHA-256, and GossipSub signs messages with the node identity. This does not yet replace the separate authenticated-encryption envelope primitive or establish a complete end-to-end trust policy.
+- Add durable, shared replay protection before relying on observations operationally.
 - Keep observation provenance, source timestamp, receive timestamp, and stale-data rejection separate.
 - P2P transport availability does not establish market-data correctness, feed entitlements, or trading readiness.
 
@@ -55,7 +56,7 @@ Configuration must fail closed on malformed multiaddresses, missing PeerIds, con
 - Verify A and B exchange a signed test observation through the relay when direct dialing is unavailable.
 
 ### Phase B — controlled relay server
-- Add an explicit relay-server role, disabled by default.
+- Add an explicit relay-server role using `libp2p::relay::Behaviour::new(local_peer_id, relay::Config { ... })`, disabled by default. The relay behaviour supports bounded reservation/circuit counts, per-peer caps, duration and byte limits, and per-peer/IP rate limiters; configure these explicitly and test denial paths.
 - Apply strict reservation, circuit, duration, byte, and per-peer limits.
 - Add operational metrics and graceful shutdown.
 - Test denial and quota behavior, not only successful forwarding.
@@ -84,3 +85,8 @@ Internet P2P must not be called complete until:
 ## Infrastructure decision
 
 No paid VPS, hosted relay, domain, or external service should be provisioned without explicit operator approval. Until an approved public endpoint exists, development can validate relay behavior using a local three-process test, but cannot honestly claim public Internet reachability.
+
+
+## Payload and trust clarification
+
+The current P2P node accepts an observation only after validating the envelope schema, metadata bounds, UTF-8 payload size (maximum 1 MiB), and SHA-256 digest against the exact payload bytes received. GossipSub uses signed messages tied to the node's Ed25519 identity. These controls provide transport-level publisher identity and payload consistency, but they do not prove that a market observation is accurate, licensed, fresh, or produced by an approved provider. Production trust requires an enrollment/allowlist policy, provider provenance, timestamp freshness limits, durable replay protection, and audit records. Never treat a valid hash as proof that a price is true.
