@@ -34,6 +34,7 @@ const KEY_BINDING_TOPIC_NAME: &str = "osiris/e2ee/key-bindings/1";
 const ENCRYPTED_TOPIC_NAME: &str = "osiris/e2ee/messages/1";
 const REVOCATION_SYNC_PAGE_SIZE: usize = 128;
 const MAX_PENDING_REVOCATION_REQUESTS: usize = 256;
+const MAX_PEER_KEY_BINDINGS: usize = 4096;
 const REVOCATION_REQUEST_TTL: Duration = Duration::from_secs(120);
 
 const MAX_REPLAY_CACHE_BYTES: u64 = 64 * 1024 * 1024;
@@ -837,6 +838,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                                 emit!("key_binding_rejected peer={authenticated_source} reason=key_changed_without_epoch_increment");
                                                 continue;
                                             }
+                                        }
+                                        if !peer_key_bindings.contains_key(&authenticated_source)
+                                            && peer_key_bindings.len() >= MAX_PEER_KEY_BINDINGS {
+                                            emit!("key_binding_rejected peer={authenticated_source} reason=key_binding_store_capacity_exceeded");
+                                            continue;
                                         }
                                         peer_key_bindings.insert(authenticated_source, record);
                                         emit!("key_binding_accepted peer={authenticated_source} epoch={}", verified.key_epoch);
