@@ -165,7 +165,9 @@ impl RevocationRegistry {
         let mut records: Vec<_> = snapshot.values().cloned().collect();
         records.sort_by(|a, b| a.peer_id.cmp(&b.peer_id));
         let bytes = serde_json::to_vec_pretty(&records)?;
-        let parent = self.path.parent().unwrap_or_else(|| Path::new("."));
+        let parent = self.path.parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
         fs::create_dir_all(parent)?;
 
         // A unique create_new file avoids stale-temp collisions and prevents
@@ -189,9 +191,8 @@ impl RevocationRegistry {
                 use std::os::unix::fs::PermissionsExt;
                 fs::set_permissions(&self.path, fs::Permissions::from_mode(0o600))?;
             }
-            if let Ok(directory) = fs::File::open(parent) {
-                directory.sync_all()?;
-            }
+            let directory = fs::File::open(parent)?;
+            directory.sync_all()?;
             Ok(())
         })();
         if write_result.is_err() {
