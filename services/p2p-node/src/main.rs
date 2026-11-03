@@ -637,10 +637,66 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         continue;
                     }
                     emit!("gossipsub_subscribed peer={peer_id}");
+                    if revocation_registry.is_some() {
+                        let request = serde_json::to_vec(&RevocationSyncMessage::SyncRequest)?;
+                        let _ = swarm.behaviour_mut().gossipsub.publish(revocation_topic.clone(), request);
+                    }
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message {
                     propagation_source, message, ..
                 })) => {
+                    if message.topic.as_str() == REVOCATION_TOPIC_NAME {
+                        if !is_peer_allowed(&propagation_source, &trusted_peers, &revoked_peers) {
+                            emit!("revocation_sync_message_rejected peer={propagation_source} reason=peer_not_allowed");
+                            continue;
+                        }
+                        let Some(registry) = revocation_registry.as_mut() else {
+                            emit!("revocation_sync_disabled reason=authority_key_not_configured");
+                            continue;
+                        };
+                        match serde_json::from_slice::<RevocationSyncMessage>(&message.data) {
+                            Ok(RevocationSyncMessage::SyncRequest) => {
+                                let snapshot = RevocationSyncMessage::Snapshot(registry.records());
+                                let bytes = serde_json::to_vec(&snapshot)?;
+                                let _ = swarm.behaviour_mut().gossipsub.publish(revocation_topic.clone(), bytes);
+                                emit!("revocation_sync_snapshot_sent requester={propagation_source} records={}", registry.records().len());
+                            }
+                            Ok(RevocationSyncMessage::Record(record)) => {
+                                match registry.apply(record.clone(), true) {
+                                    Ok(true) => {
+                                        let peer = record.peer_id.parse::<PeerId>()?;
+                                        revoked_peers.get_or_insert_with(HashSet::new).insert(peer);
+                                        let bytes = serde_json::to_vec(&RevocationSyncMessage::Record(record))?;
+                                        let _ = swarm.behaviour_mut().gossipsub.publish(revocation_topic.clone(), bytes);
+                                        emit!("signed_peer_revocation_applied peer={peer} source={propagation_source}");
+                                        let _ = swarm.disconnect_peer_id(peer);
+                                    }
+                                    Ok(false) => emit!("revocation_record_ignored reason=replay_or_stale"),
+                                    Err(error) => emit!("revocation_record_rejected source={propagation_source} error={error}"),
+                                }
+                            }
+                            Ok(RevocationSyncMessage::Snapshot(records)) => {
+                                let mut applied = 0usize;
+                                for record in records {
+                                    match registry.apply(record.clone(), true) {
+                                        Ok(true) => {
+                                            let peer = record.peer_id.parse::<PeerId>()?;
+                                            revoked_peers.get_or_insert_with(HashSet::new).insert(peer);
+                                            let bytes = serde_json::to_vec(&RevocationSyncMessage::Record(record))?;
+                                            let _ = swarm.behaviour_mut().gossipsub.publish(revocation_topic.clone(), bytes);
+                                            let _ = swarm.disconnect_peer_id(peer);
+                                            applied += 1;
+                                        }
+                                        Ok(false) => {}
+                                        Err(error) => emit!("revocation_snapshot_record_rejected source={propagation_source} error={error}"),
+                                    }
+                                }
+                                emit!("revocation_sync_snapshot_applied source={propagation_source} applied={applied}");
+                            }
+                            Err(error) => emit!("revocation_sync_message_rejected peer={propagation_source} error={error}"),
+                        }
+                        continue;
+                    }
                     if !is_peer_allowed(&propagation_source, &trusted_peers, &revoked_peers) {
                         emit!("message_rejected peer={propagation_source} reason=not_in_trusted_peer_allowlist");
                         continue;
