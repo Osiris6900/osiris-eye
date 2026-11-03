@@ -1,6 +1,6 @@
 //! Authenticated recipient-key binding primitives for OSIRIS P2P.
 //!
-//! This module is deliberately not wired into the live GossipSub path yet.
+//! Recipient-addressed application encryption for the live GossipSub path.
 //! A key announcement is not a trust grant: callers must apply local
 //! enrollment and revocation policy after cryptographic verification.
 
