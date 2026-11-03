@@ -8,8 +8,8 @@ certification.
 
 - Host A and Host B are separate machines with a mutually reachable TCP path.
 - Host A accepts inbound TCP on the selected port (default 4001) from Host B.
-- Host B can SSH to Host A's test controller? No: run the controller on Host A
-  and use SSH from Host A to Host B.
+- Run the controller on Host A. Host A must be able to SSH to Host B using
+  non-interactive key authentication.
 - Both machines run the same OSIRIS EYE release binary built from the same
   commit. Host B's binary must be present at the path passed to
   `--remote-binary`.
@@ -48,7 +48,8 @@ Optional arguments:
 
 - `--remote-binary /absolute/path/to/osiris-p2p-node`
 - `--binary /absolute/path/to/local/osiris-p2p-node`
-- Repeat `--ssh-option '-i /path/to/test_key'` or other OpenSSH options.
+- Repeat `--ssh-option=-i --ssh-option=/path/to/test_key` or provide other
+  OpenSSH options as separate arguments.
 
 ## What a pass proves
 
