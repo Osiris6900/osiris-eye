@@ -18,6 +18,8 @@ This document defines the security boundary for the OSIRIS EYE observation netwo
 ## Current controls
 
 - Ed25519 node identity and signed GossipSub publication.
+- Operator-triggered Ed25519 identity rotation with a timestamped private-key backup and old/new PeerId audit log.
+- Per-node revoked-PeerId denylist enforced at connection establishment, mDNS dialing, and GossipSub subscription/message handling; revocation overrides the trusted-peer allowlist.
 - TCP transport secured with Noise and multiplexed with Yamux.
 - Schema and metadata bounds on observation envelopes.
 - UTF-8 payload size limit and SHA-256 payload verification.
@@ -35,7 +37,7 @@ This document defines the security boundary for the OSIRIS EYE observation netwo
 | False but correctly signed data | Provider provenance, independent corroboration, reputation/quarantine | Pending |
 | Malicious relay | End-to-end Noise encryption, peer identity checks, bounded relay quotas | Noise transport exists; relay implementation pending |
 | Resource exhaustion | Payload caps, rate limits, connection and circuit caps | Payload cap exists; relay limits pending |
-| Compromised node key | Key rotation, revocation and re-enrollment procedure | Pending |
+| Compromised node key | Key rotation, revocation and re-enrollment procedure | Local rotation and per-node revocation controls implemented; signed global authority registry pending |
 | Unauthorized execution | Keep execution plane separate; local policy and explicit authorization | Live execution disabled; separation must remain invariant |
 
 ## Observation acceptance pipeline
@@ -80,3 +82,18 @@ A public Internet beta must not be announced until all of the following are veri
 - Relay quotas and denial paths are tested.
 - Trusted-peer enrollment, durable replay protection, stale-data rejection, key rotation, and audit records are implemented.
 - Security review confirms that the P2P network cannot carry or trigger live orders.
+
+## Operator identity lifecycle (local controls)
+
+### Rotate a node identity
+
+1. Stop the node cleanly and preserve its current `OSIRIS_NODE_KEY` file.
+2. Start it once with `OSIRIS_ROTATE_NODE_KEY=1` (and the same `OSIRIS_NODE_KEY` path). The process moves the old key to a timestamped `.backup-<unix-time>` sibling file, creates a fresh Ed25519 key with owner-only permissions on Unix, and logs `identity_rotated old_peer=... new_peer=... backup=...`.
+3. Remove `OSIRIS_ROTATE_NODE_KEY` or set it to `0` before normal restart. Rotation fails closed if the key file is missing, the setting is invalid, or the timestamped backup already exists.
+4. Replace the old PeerId with the new PeerId in each operator-managed trusted-peer and bootstrap configuration before reconnecting the rotated node. Keep the backup private and access-controlled; it contains the old private key.
+
+### Revoke a peer
+
+Set `OSIRIS_REVOKED_PEERS` to a comma-separated list of PeerIds on every node that must reject those identities. Revocation takes effect on process start and overrides `OSIRIS_TRUSTED_PEERS`; revoked peers are not dialed from mDNS and are disconnected/rejected if they connect or publish. Remove a PeerId from the revocation list only after an explicit operator review.
+
+These are local configuration controls, not a globally synchronized or authority-signed revocation registry. Every node operator must distribute updates securely. Dynamic live reload, signed revocation records, key epochs/certificates, and quorum-backed trust-root rotation remain future work.
