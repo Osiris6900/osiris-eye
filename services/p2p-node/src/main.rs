@@ -719,7 +719,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 })) => {
                     let authenticated_source = message.source.unwrap_or(propagation_source);
                     if message.topic.as_str() == REVOCATION_TOPIC_NAME {
-                        if !is_peer_allowed(&propagation_source, &trusted_peers, &revoked_peers) {
+                        let authenticated_source = message.source.unwrap_or(propagation_source);
+                        if !is_peer_allowed(&authenticated_source, &trusted_peers, &revoked_peers) {
                             emit!("revocation_sync_message_rejected peer={propagation_source} reason=peer_not_allowed");
                             continue;
                         }
@@ -735,7 +736,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 emit!("revocation_sync_snapshot_sent requester={propagation_source} records={}", registry.records().len());
                             }
                             Ok(RevocationSyncMessage::SyncRequestPageV2 { request_id, requester_peer_id, after_peer_id }) => {
-                                if requester_peer_id != propagation_source.to_string() || request_id.len() != 64 || !request_id.bytes().all(|b| b.is_ascii_hexdigit()) {
+                                if requester_peer_id != authenticated_source.to_string() || request_id.len() != 64 || !request_id.bytes().all(|b| b.is_ascii_hexdigit()) {
                                     emit!("revocation_sync_v2_request_rejected source={propagation_source} reason=invalid_request_binding");
                                     continue;
                                 }
