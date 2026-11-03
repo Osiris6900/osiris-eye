@@ -90,10 +90,11 @@ def main():
         receiver_peer_line = receiver.wait_for("peer_id=", timeout=10)
         receiver_peer_id = receiver_peer_line.split("=", 1)[1]
 
-        # Wait for the receiver's own relay-client behaviour to confirm the
-        # reservation. The relay server's accepted-request event can be logged
-        # before the response reaches the client, which caused a race.
-        receiver.wait_for("ReservationReqAccepted", timeout=20)
+        # The relay server emits ReservationReqAccepted only after it has
+        # installed the receiver reservation. The client-side behaviour does
+        # not emit that server event, so observe the authoritative server log.
+        relay_proc.wait_for("ReservationReqAccepted", timeout=20)
+        time.sleep(0.5)  # allow the reservation response to reach the receiver
 
         sender_env = base_env | {
             "OSIRIS_RELAY_CLIENT_ROLE": "sender",
