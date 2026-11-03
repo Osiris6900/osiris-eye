@@ -548,6 +548,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let gossipsub_config = gossipsub::ConfigBuilder::default()
         .heartbeat_interval(Duration::from_secs(10))
+        .max_transmit_size(2 * 1024 * 1024)
         .validation_mode(gossipsub::ValidationMode::Strict)
         .build()?;
     gossipsub_config.validate_messages();
