@@ -44,6 +44,8 @@ jobs:
         run: cargo build --release --manifest-path services/p2p-node/Cargo.toml
       - name: Verify two OS processes exchange a P2P observation
         run: python scripts/test_p2p_two_process.py
+      - name: Verify bootstrap peer reconnects after process restart
+        run: python scripts/test_p2p_bootstrap_restart.py
       - name: Verify relay server and two relay clients exchange an observation
         run: python scripts/test_p2p_three_process_relay.py
 
