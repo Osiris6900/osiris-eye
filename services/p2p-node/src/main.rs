@@ -1153,7 +1153,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
                             }
                         }
                     } else {
-                        swarm.behaviour_mut().gossipsub.publish(topic.clone(), line.into_bytes())?;
+                        match swarm.behaviour_mut().gossipsub.publish(topic.clone(), line.into_bytes()) {
+                            Ok(_) => emit!("observation_published"),
+                            Err(error) => emit!("observation_publish_deferred error={error}"),
+                        }
                     }
                 }
                 Some(_) => {}
