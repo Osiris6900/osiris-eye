@@ -28,7 +28,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          BIN="$GITHUB_WORKSPACE/target/release/osiris-p2p-node"
+          BIN="$GITHUB_WORKSPACE/services/p2p-node/target/release/osiris-p2p-node"
+          if [[ ! -x "$BIN" ]]; then
+            echo "Expected P2P binary was not built at: $BIN"
+            find "$GITHUB_WORKSPACE" -path "*/target/release/osiris-p2p-node" -type f -print
+            exit 1
+          fi
           TMP="$RUNNER_TEMP/osiris-three-peer"
           mkdir -p "$TMP"
           A_FIFO="$TMP/a.stdin"; B_FIFO="$TMP/b.stdin"; C_FIFO="$TMP/c.stdin"
