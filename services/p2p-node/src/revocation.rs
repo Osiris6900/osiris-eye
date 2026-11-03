@@ -122,9 +122,15 @@ impl RevocationRegistry {
         if self.records.get(&peer_id).is_some_and(|old| record.sequence <= old.sequence) {
             return Ok(false);
         }
-        self.records.insert(peer_id, record);
         if persist {
-            self.persist()?;
+            // Persist the candidate snapshot before publishing it in memory. A disk
+            // failure must not leave runtime policy stricter than restart policy.
+            let mut candidate = self.records.clone();
+            candidate.insert(peer_id.clone(), record);
+            self.persist_records(&candidate)?;
+            self.records = candidate;
+        } else {
+            self.records.insert(peer_id, record);
         }
         Ok(true)
     }
@@ -151,21 +157,46 @@ impl RevocationRegistry {
         self.records.keys().map(|peer| Ok(peer.parse()?)).collect()
     }
 
-    fn persist(&self) -> Result<(), Box<dyn Error>> {
-        let mut records: Vec<_> = self.records.values().cloned().collect();
+    fn persist_records(
+        &self,
+        snapshot: &HashMap<String, SignedRevocationRecord>,
+    ) -> Result<(), Box<dyn Error>> {
+        let mut records: Vec<_> = snapshot.values().cloned().collect();
         records.sort_by(|a, b| a.peer_id.cmp(&b.peer_id));
         let bytes = serde_json::to_vec_pretty(&records)?;
         let parent = self.path.parent().unwrap_or_else(|| Path::new("."));
         fs::create_dir_all(parent)?;
-        let temp = self.path.with_extension(format!("tmp-{}", std::process::id()));
-        let mut file = OpenOptions::new().write(true).create_new(true).open(&temp)?;
-        file.write_all(&bytes)?;
-        file.sync_all()?;
-        fs::rename(&temp, &self.path)?;
-        if let Ok(directory) = fs::File::open(parent) {
-            let _ = directory.sync_all();
+
+        // A unique create_new file avoids stale-temp collisions and prevents
+        // following a pre-existing symlink at the temporary path.
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+        let temp = self.path.with_extension(format!("tmp-{}-{nonce}", std::process::id()));
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
         }
-        Ok(())
+        let write_result = (|| -> Result<(), Box<dyn Error>> {
+            let mut file = options.open(&temp)?;
+            file.write_all(&bytes)?;
+            file.sync_all()?;
+            fs::rename(&temp, &self.path)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(&self.path, fs::Permissions::from_mode(0o600))?;
+            }
+            if let Ok(directory) = fs::File::open(parent) {
+                directory.sync_all()?;
+            }
+            Ok(())
+        })();
+        if write_result.is_err() {
+            let _ = fs::remove_file(&temp);
+        }
+        write_result
     }
 }
 
@@ -188,6 +219,42 @@ mod tests {
         };
         record.signature = encode_hex(&key.sign(&record.payload().unwrap()).to_bytes());
         record
+    }
+
+
+    #[test]
+    fn persisted_revocation_survives_restart_and_keeps_sequence_floor() {
+        let key = SigningKey::from_bytes(&[31u8; 32]);
+        let peer = PeerId::random();
+        let path = std::env::temp_dir().join(format!("osiris-revocations-restart-{}", std::process::id()));
+        let authority = encode_hex(key.verifying_key().as_bytes());
+        {
+            let mut registry = RevocationRegistry::open(path.clone(), authority.clone()).unwrap();
+            assert!(registry.apply(signed_record(&key, peer, 4), true).unwrap());
+        }
+        {
+            let mut registry = RevocationRegistry::open(path.clone(), authority).unwrap();
+            assert_eq!(registry.revoked_peer_ids().unwrap(), vec![peer]);
+            assert!(!registry.apply(signed_record(&key, peer, 3), true).unwrap());
+            assert!(registry.apply(signed_record(&key, peer, 5), true).unwrap());
+        }
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn persistence_failure_does_not_publish_revocation_in_memory() {
+        let key = SigningKey::from_bytes(&[32u8; 32]);
+        let peer = PeerId::random();
+        let blocker = std::env::temp_dir().join(format!("osiris-revocation-blocker-{}", std::process::id()));
+        fs::write(&blocker, b"not a directory").unwrap();
+        let path = blocker.join("registry.json");
+        let mut registry = RevocationRegistry::open(
+            path,
+            encode_hex(key.verifying_key().as_bytes()),
+        ).unwrap();
+        assert!(registry.apply(signed_record(&key, peer, 1), true).is_err());
+        assert!(registry.revoked_peer_ids().unwrap().is_empty());
+        let _ = fs::remove_file(blocker);
     }
 
     #[test]
