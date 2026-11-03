@@ -153,6 +153,21 @@ mod tests {
     #[test] fn rejects_payload_hash_mismatch() { let mut v=valid(); v.payload.push_str("-tampered"); assert_eq!(v.validate(),Err("payload_hash_mismatch")); }
     #[test] fn rejects_oversized_payload() { let mut v=valid(); v.payload="x".repeat(1_048_577); assert_eq!(v.validate(),Err("payload_too_large")); }
     #[test] fn rejects_empty_provider() { let mut v=valid(); v.provider.clear(); assert_eq!(v.validate(),Err("invalid_provider")); }
+    #[test] fn request_bound_revocation_ids_are_fixed_length_and_cursor_sensitive() {
+        let peer = PeerId::random();
+        let first = super::revocation_request_id(&peer, None);
+        let second = super::revocation_request_id(&peer, Some("cursor"));
+        assert_eq!(first.len(), 64);
+        assert!(first.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        assert_ne!(first, second);
+    }
+    #[test] fn pending_revocation_requests_are_bounded() {
+        let mut pending = std::collections::HashMap::new();
+        for index in 0..(super::MAX_PENDING_REVOCATION_REQUESTS + 10) {
+            super::remember_revocation_request(&mut pending, format!("{index:064x}"));
+        }
+        assert_eq!(pending.len(), super::MAX_PENDING_REVOCATION_REQUESTS);
+    }
     #[test] fn reconnect_interval_uses_default_when_unset_or_invalid() {
         assert_eq!(super::parse_interval_secs(None, 15, 5, 300), 15);
         assert_eq!(super::parse_interval_secs(Some("bad"), 15, 5, 300), 15);
