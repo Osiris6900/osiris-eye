@@ -1,4 +1,11 @@
-use std::{env, error::Error, fs, path::PathBuf, time::Duration};
+use std::{env, error::Error, fs, io::Write, path::PathBuf, time::Duration};
+
+macro_rules! emit {
+    ($($arg:tt)*) => {{
+        println!($($arg)*);
+        let _ = std::io::stdout().flush();
+    }};
+}
 
 use futures::StreamExt;
 use libp2p::{
@@ -166,11 +173,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     swarm.listen_on(listen)?;
 
     let bootstrap_count = parse_bootstrap_peers(&mut swarm)?;
-    println!("OSIRIS EYE P2P node starting");
-    println!("peer_id={peer_id}");
-    println!("topic={TOPIC_NAME}");
-    println!("bootstrap_peers={bootstrap_count}");
-    println!("Live trading and broker order submission are not part of this node.");
+    emit!("OSIRIS EYE P2P node starting");
+    emit!("peer_id={peer_id}");
+    emit!("topic={TOPIC_NAME}");
+    emit!("bootstrap_peers={bootstrap_count}");
+    emit!("Live trading and broker order submission are not part of this node.");
 
     let stdin = BufReader::new(io::stdin());
     let mut lines = stdin.lines();
@@ -179,25 +186,28 @@ async fn main() -> Result<(), Box<dyn Error>> {
         tokio::select! {
             event = swarm.select_next_some() => match event {
                 SwarmEvent::NewListenAddr { address, .. } => {
-                    println!("listening={address}/p2p/{peer_id}");
+                    emit!("listening={address}/p2p/{peer_id}");
                 }
                 SwarmEvent::ConnectionEstablished { peer_id, .. } => {
-                    println!("peer_connected={peer_id}");
+                    emit!("peer_connected={peer_id}");
                 }
                 SwarmEvent::ConnectionClosed { peer_id, .. } => {
-                    println!("peer_disconnected={peer_id}");
+                    emit!("peer_disconnected={peer_id}");
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Discovered(peers))) => {
                     for (peer, address) in peers {
                         swarm.behaviour_mut().kademlia.add_address(&peer, address);
                     }
                 }
+                SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Subscribed { peer_id, .. })) => {
+                    emit!("gossipsub_subscribed peer={peer_id}");
+                }
                 SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message {
                     propagation_source, message, ..
                 })) => {
                     match serde_json::from_slice::<ObservationEnvelope>(&message.data) {
                         Ok(envelope) if envelope.validate().is_ok() => {
-                            println!(
+                            emit!(
                                 "observation_received peer={} instrument={} provider={} observed_at={} payload_sha256={}",
                                 propagation_source, envelope.instrument, envelope.provider,
                                 envelope.observed_at, envelope.payload_sha256
