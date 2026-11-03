@@ -1,9 +1,6 @@
 import copy
-import hashlib
 
 import pytest
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from osiris_api.p2p_e2ee import (
     ReplayGuard,
@@ -12,12 +9,6 @@ from osiris_api.p2p_e2ee import (
     generate_transport_identity,
 )
 from osiris_api.p2p_identity import generate_node_identity
-
-
-def raw_public(key):
-    return key.public_key().public_bytes(
-        serialization.Encoding.Raw, serialization.PublicFormat.Raw
-    )
 
 
 def make_pair():
