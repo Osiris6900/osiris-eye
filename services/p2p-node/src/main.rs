@@ -49,7 +49,8 @@ impl ObservationEnvelope {
 
 #[cfg(test)]
 mod tests {
-    use super::ObservationEnvelope;
+    use super::{peer_id_from_multiaddr, ObservationEnvelope};
+    use libp2p::{identity, Multiaddr, PeerId};
     use sha2::{Digest, Sha256};
     fn valid() -> ObservationEnvelope {
         ObservationEnvelope { schema: "osiris.observation.v1".into(), instrument: "BTC-USD".into(),
@@ -63,6 +64,15 @@ mod tests {
     #[test] fn rejects_payload_hash_mismatch() { let mut v=valid(); v.payload.push_str("-tampered"); assert_eq!(v.validate(),Err("payload_hash_mismatch")); }
     #[test] fn rejects_oversized_payload() { let mut v=valid(); v.payload="x".repeat(1_048_577); assert_eq!(v.validate(),Err("payload_too_large")); }
     #[test] fn rejects_empty_provider() { let mut v=valid(); v.provider.clear(); assert_eq!(v.validate(),Err("invalid_provider")); }
+    #[test] fn extracts_peer_id_from_bootstrap_multiaddr() {
+        let peer = PeerId::from(identity::Keypair::generate_ed25519().public());
+        let address: Multiaddr = format!("/ip4/127.0.0.1/tcp/4001/p2p/{peer}").parse().unwrap();
+        assert_eq!(peer_id_from_multiaddr(&address), Some(peer));
+    }
+    #[test] fn rejects_bootstrap_multiaddr_without_peer_id() {
+        let address: Multiaddr = "/ip4/127.0.0.1/tcp/4001".parse().unwrap();
+        assert_eq!(peer_id_from_multiaddr(&address), None);
+    }
 }
 
 #[derive(NetworkBehaviour)]
