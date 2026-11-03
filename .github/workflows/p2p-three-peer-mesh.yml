@@ -1,0 +1,149 @@
+name: P2P three-peer mesh and reconnect acceptance
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: p2p-three-peer-mesh-reconnect-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  three-peer-mesh:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build P2P node
+        run: cargo build --release --manifest-path services/p2p-node/Cargo.toml
+      - name: Verify three-peer gossip propagation and bootstrap recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN="$GITHUB_WORKSPACE/target/release/osiris-p2p-node"
+          TMP="$RUNNER_TEMP/osiris-three-peer"
+          mkdir -p "$TMP"
+          A_FIFO="$TMP/a.stdin"; B_FIFO="$TMP/b.stdin"; C_FIFO="$TMP/c.stdin"
+          mkfifo "$A_FIFO" "$B_FIFO" "$C_FIFO"
+          # Keep each FIFO open read/write so daemon stdin never reaches EOF.
+          exec 3<>"$A_FIFO" 4<>"$B_FIFO" 5<>"$C_FIFO"
+
+          start_a() {
+            OSIRIS_NODE_KEY="$TMP/a.key" \
+            OSIRIS_LISTEN_ADDR="/ip4/127.0.0.1/tcp/4101" \
+            OSIRIS_HEALTH_HTTP_ADDR="127.0.0.1:19101" \
+            OSIRIS_BOOTSTRAP_RECONNECT_INTERVAL_SECS=5 \
+              "$BIN" < "$A_FIFO" >"$TMP/a.log" 2>&1 &
+            A_PID=$!
+            echo "$A_PID" > "$TMP/a.pid"
+          }
+          start_b() {
+            OSIRIS_NODE_KEY="$TMP/b.key" \
+            OSIRIS_BOOTSTRAP_PEERS="$BOOTSTRAP" \
+            OSIRIS_LISTEN_ADDR="/ip4/127.0.0.1/tcp/0" \
+            OSIRIS_HEALTH_HTTP_ADDR="127.0.0.1:19102" \
+            OSIRIS_BOOTSTRAP_RECONNECT_INTERVAL_SECS=5 \
+              "$BIN" < "$B_FIFO" >"$TMP/b.log" 2>&1 &
+            B_PID=$!
+            echo "$B_PID" > "$TMP/b.pid"
+          }
+          start_c() {
+            OSIRIS_NODE_KEY="$TMP/c.key" \
+            OSIRIS_BOOTSTRAP_PEERS="$BOOTSTRAP" \
+            OSIRIS_LISTEN_ADDR="/ip4/127.0.0.1/tcp/0" \
+            OSIRIS_HEALTH_HTTP_ADDR="127.0.0.1:19103" \
+            OSIRIS_BOOTSTRAP_RECONNECT_INTERVAL_SECS=5 \
+              "$BIN" < "$C_FIFO" >"$TMP/c.log" 2>&1 &
+            C_PID=$!
+            echo "$C_PID" > "$TMP/c.pid"
+          }
+          cleanup() {
+            for pid in "${C_PID:-}" "${B_PID:-}" "${A_PID:-}"; do
+              [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
+            done
+          }
+          trap cleanup EXIT
+
+          wait_for() {
+            local description="$1" file="$2" pattern="$3" attempts="${4:-90}"
+            for _ in $(seq 1 "$attempts"); do
+              if grep -F "$pattern" "$file" >/dev/null 2>&1; then
+                echo "READY: $description"
+                return 0
+              fi
+              sleep 1
+            done
+            echo "TIMEOUT: $description"
+            cat "$file" || true
+            return 1
+          }
+
+          start_a
+          wait_for "Host A health endpoint" "$TMP/a.log" "peer_id="
+          A_PEER="$(sed -n 's/^peer_id=//p' "$TMP/a.log" | head -n1)"
+          test -n "$A_PEER"
+          BOOTSTRAP="/ip4/127.0.0.1/tcp/4101/p2p/$A_PEER"
+          start_b
+          start_c
+          wait_for "Host B connected to A" "$TMP/b.log" "peer_connected=$A_PEER"
+          wait_for "Host C connected to A" "$TMP/c.log" "peer_connected=$A_PEER"
+          wait_for "Host B subscribed to A topic" "$TMP/b.log" "gossipsub_subscribed peer=$A_PEER"
+          wait_for "Host C subscribed to A topic" "$TMP/c.log" "gossipsub_subscribed peer=$A_PEER"
+
+          publish_probe() {
+            local instrument="$1" payload="$2" digest
+            digest="$(printf '%s' "$payload" | sha256sum | cut -d' ' -f1)"
+            printf '{"schema":"osiris.observation.v1","instrument":"%s","observed_at":"2026-11-03T00:00:00Z","provider":"osiris-three-peer-ci","payload_sha256":"%s","payload":"%s"}\n' "$instrument" "$digest" "$payload" >&4
+            wait_for "Host C received $instrument from Host B" "$TMP/c.log" "instrument=$instrument" 45
+          }
+
+          publish_probe "OSIRIS-THREE-PEER-INITIAL" "three peer mesh propagation probe"
+          echo "THREE_PEER_GOSSIP_PROPAGATION=PASS"
+
+          # Restart the bootstrap node with the same persistent identity and address.
+          kill "$A_PID"
+          wait "$A_PID" || true
+          wait_for "Host B detected bootstrap disconnect" "$TMP/b.log" "peer_disconnected=$A_PEER" 30
+          wait_for "Host C detected bootstrap disconnect" "$TMP/c.log" "peer_disconnected=$A_PEER" 30
+          start_a
+          wait_for "Host A restarted with stable identity" "$TMP/a.log" "peer_id=$A_PEER"
+          for peer_log in "$TMP/b.log" "$TMP/c.log"; do
+            reconnected=0
+            for _ in $(seq 1 60); do
+              count="$(grep -Fc "peer_connected=$A_PEER" "$peer_log" || true)"
+              if [ "$count" -ge 2 ]; then reconnected=1; break; fi
+              sleep 1
+            done
+            if [ "$reconnected" -ne 1 ]; then echo "Peer did not reconnect to restarted bootstrap."; cat "$peer_log"; exit 1; fi
+          done
+          echo "Both leaf peers reconnected to the restarted bootstrap."
+          # Require a fresh subscription event after the restart, not merely the old log line.
+          for peer_log in "$TMP/b.log" "$TMP/c.log"; do
+            for _ in $(seq 1 60); do
+              count="$(grep -Fc "gossipsub_subscribed peer=$A_PEER" "$peer_log" || true)"
+              [ "$count" -ge 2 ] && break
+              sleep 1
+            done
+            count="$(grep -Fc "gossipsub_subscribed peer=$A_PEER" "$peer_log" || true)"
+            if [ "$count" -lt 2 ]; then echo "GossipSub did not resubscribe after bootstrap restart."; cat "$peer_log"; exit 1; fi
+          done
+
+          publish_probe "OSIRIS-THREE-PEER-RECONNECTED" "three peer reconnect propagation probe"
+          echo "BOOTSTRAP_RECONNECT=PASS"
+          echo "THREE_PEER_MESH_AND_RECOVERY=PASS"
+      - name: Upload peer logs on failure
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: osiris-three-peer-logs-${{ github.run_id }}
+          path: ${{ runner.temp }}/osiris-three-peer/
+          if-no-files-found: ignore
+          retention-days: 3
