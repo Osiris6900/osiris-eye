@@ -30,3 +30,29 @@ This is an aggregation framework, not a claim of all-world or institutional real
 coverage. Only adapters actually registered and entitled/configured can return data.
 Provider licensing, exchange permissions, delays, symbol mapping and rate limits remain
 provider-specific.
+
+
+## Public connector rollout
+
+The current read-only public connector set is:
+- `coinbase-public`: Coinbase Exchange crypto candles; configurable granularity.
+- `binance-public`: Binance Spot klines; default interval `1m`, configurable with `OSIRIS_PUBLIC_BINANCE_INTERVAL`. Uses public market-data endpoint only.
+- `stooq-daily`: daily equity history for Stooq-supported symbols that include an explicit market suffix, for example `AAPL.US`. This is historical daily data, not an intraday feed.
+
+Enable/disable public connectors with `OSIRIS_PUBLIC_COINBASE_ENABLED`,
+`OSIRIS_PUBLIC_BINANCE_ENABLED`, and `OSIRIS_PUBLIC_STOOQ_ENABLED` (default true).
+The endpoint `GET /market-data/global-coverage` lists implemented connectors and
+explicitly reports that complete global coverage and all-market real-time status are
+not verified.
+
+Examples:
+- Crypto: `providers=binance-public,coinbase-public&symbol=BTCUSDT` is not a valid
+  cross-provider symbol because Coinbase and Binance use different product identifiers.
+  Query each provider using its native symbol (`BTCUSDT` vs `BTC-USD`) in separate
+  requests until a reviewed symbol-mapping layer is implemented.
+- US equity daily: `providers=stooq-daily&symbol=AAPL.US`.
+
+Do not assume a symbol exists on every venue. No connector is allowed to imply that
+all listings, delayed/live status, redistribution rights, or exchange entitlements are
+available. API keys are not needed for these public endpoints. Do not send order
+requests through these data adapters.
