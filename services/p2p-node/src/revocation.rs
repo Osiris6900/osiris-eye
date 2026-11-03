@@ -90,6 +90,8 @@ pub enum RevocationSyncMessage {
     Record(SignedRevocationRecord),
     Snapshot(Vec<SignedRevocationRecord>),
     SnapshotPage { records: Vec<SignedRevocationRecord>, next_cursor: Option<String> },
+    SyncRequestPageV2 { request_id: String, requester_peer_id: String, after_peer_id: Option<String> },
+    SnapshotPageV2 { request_id: String, requester_peer_id: String, responder_peer_id: String, records: Vec<SignedRevocationRecord>, next_cursor: Option<String> },
     SnapshotPageV2 { request_id: String, requester_peer_id: String, responder_peer_id: String, records: Vec<SignedRevocationRecord>, next_cursor: Option<String> },
 }
 
