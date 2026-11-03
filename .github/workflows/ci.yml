@@ -30,7 +30,7 @@ jobs:
       - name: Run Python tests
         run: pytest -q services/quant-api/tests
       - name: Syntax-check P2P acceptance helpers
-        run: python -m py_compile scripts/test_p2p_cross_host_ssh.py scripts/test_p2p_core_trusted_peer_allowlist.py scripts/test_p2p_bootstrap_readiness.py scripts/test_p2p_bootstrap_restart.py
+        run: python -m py_compile scripts/test_p2p_cross_host_ssh.py scripts/test_p2p_core_trusted_peer_allowlist.py scripts/test_p2p_bootstrap_readiness.py scripts/test_p2p_bootstrap_restart.py scripts/test_p2p_global_revocation_sync.py
 
   rust:
     runs-on: ubuntu-latest
@@ -56,6 +56,8 @@ jobs:
         run: python scripts/test_p2p_bootstrap_restart.py
       - name: Verify relay server and two relay clients exchange an observation
         run: python scripts/test_p2p_three_process_relay.py
+      - name: Verify three-node authority-signed revocation synchronization
+        run: python scripts/test_p2p_global_revocation_sync.py
 
   web:
     runs-on: ubuntu-latest
