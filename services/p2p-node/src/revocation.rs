@@ -80,6 +80,15 @@ fn encode_hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "payload", rename_all = "snake_case")]
+pub enum RevocationSyncMessage {
+    SyncRequest,
+    Record(SignedRevocationRecord),
+    Snapshot(Vec<SignedRevocationRecord>),
+}
+
 #[derive(Debug)]
 pub struct RevocationRegistry {
     path: PathBuf,
@@ -114,6 +123,10 @@ impl RevocationRegistry {
             self.persist()?;
         }
         Ok(true)
+    }
+
+    pub fn records(&self) -> Vec<SignedRevocationRecord> {
+        self.records.values().cloned().collect()
     }
 
     pub fn revoked_peer_ids(&self) -> Result<Vec<PeerId>, Box<dyn Error>> {
