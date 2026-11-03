@@ -1,5 +1,6 @@
 mod peer_auth;
 mod revocation;
+mod e2ee;
 
 use revocation::{RevocationRegistry, RevocationSyncMessage};
 use peer_auth::{is_peer_allowed, parse_revoked_peers, parse_trusted_peers};
