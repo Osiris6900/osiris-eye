@@ -468,14 +468,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .unwrap_or_else(|| PathBuf::from(".osiris-replay-cache"));
     let mut replay_guard = ReplayGuard::open(replay_path.clone())?;
     emit!("replay_protection=durable cache_entries={} cache_path={}", replay_guard.seen.len(), replay_path.display());
-    if let Some(allowed) = &trusted_peers {
-        for (bootstrap_peer, _) in &bootstrap_peers {
-            if !allowed.contains(bootstrap_peer) || !is_peer_allowed(bootstrap_peer, &trusted_peers, &revoked_peers) {
-                return Err(format!(
-                    "OSIRIS_TRUSTED_PEERS must include configured bootstrap peer {bootstrap_peer}"
-                ).into());
-            }
+    for (bootstrap_peer, _) in &bootstrap_peers {
+        if !is_peer_allowed(bootstrap_peer, &trusted_peers, &revoked_peers) {
+            return Err(format!(
+                "configured bootstrap peer {bootstrap_peer} is not allowed by local trust/revocation policy"
+            ).into());
         }
+    }
+    if let Some(allowed) = &trusted_peers {
         emit!("peer_authentication=allowlist trusted_peers={}", allowed.len());
     } else {
         emit!("peer_authentication=open");
