@@ -74,13 +74,21 @@ def main():
                 raise TimeoutError("health endpoint did not become available")
 
             assert payload["status"] == "alive", payload
+            assert payload["ready"] is True, payload
             assert payload["peer_id"] == peer_id, payload
             assert isinstance(payload["uptime_seconds"], int), payload
             assert isinstance(payload["connected_peers"], int), payload
             assert isinstance(payload["bootstrap_peers_connected"], int), payload
             assert isinstance(payload["bootstrap_peers_total"], int), payload
             assert payload["connected_peers"] >= 0, payload
-            print("P2P_HTTP_HEALTH_ENDPOINT=PASS", flush=True)
+
+            ready_url = f"http://{address}/ready"
+            with urllib.request.urlopen(ready_url, timeout=2) as response:
+                assert response.status == 200
+                readiness = json.loads(response.read().decode("utf-8"))
+            assert readiness["ready"] is True, readiness
+            assert readiness["peer_id"] == peer_id, readiness
+            print("P2P_HTTP_HEALTH_AND_READINESS_ENDPOINTS=PASS", flush=True)
         finally:
             if proc.poll() is None:
                 proc.terminate()
