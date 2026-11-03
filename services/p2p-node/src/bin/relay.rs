@@ -98,6 +98,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     loop {
         match swarm.select_next_some().await {
             SwarmEvent::NewListenAddr { address, .. } => {
+                // Relay reservations include the relay's externally reachable
+                // addresses. A localhost test relay has no identify-observed
+                // address yet, so explicitly advertise its bound listen address.
+                swarm.add_external_address(address.clone());
                 println!("relay_listening={address}/p2p/{peer_id}");
             }
             SwarmEvent::ConnectionEstablished { peer_id, .. } => {
