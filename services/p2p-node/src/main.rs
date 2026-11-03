@@ -1,4 +1,4 @@
-use std::{env, error::Error, fs, io::Write, path::PathBuf, time::Duration};
+use std::{env, error::Error, fs, io::Write, path::PathBuf, time::{Duration, Instant}};
 
 macro_rules! emit {
     ($($arg:tt)*) => {{
@@ -245,11 +245,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let bootstrap_peers = parse_bootstrap_peers(&mut swarm)?;
     let mut reconnect_tick = tokio::time::interval(Duration::from_secs(15));
     reconnect_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let health_interval_secs = env::var("OSIRIS_HEALTH_INTERVAL_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(30)
+        .clamp(5, 300);
+    let mut health_tick = tokio::time::interval(Duration::from_secs(health_interval_secs));
+    health_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let started_at = Instant::now();
     emit!("OSIRIS EYE P2P node starting");
     emit!("peer_id={peer_id}");
     emit!("topic={TOPIC_NAME}");
     emit!("bootstrap_peers={}", bootstrap_peers.len());
     emit!("bootstrap_reconnect_interval_seconds=15");
+    emit!("health_interval_seconds={health_interval_secs}");
     emit!("Live trading and broker order submission are not part of this node.");
 
     let stdin = BufReader::new(io::stdin());
@@ -257,6 +266,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     loop {
         tokio::select! {
+            _ = health_tick.tick() => {
+                let connected_peers = swarm.connected_peers().count();
+                let connected_bootstrap_peers = bootstrap_peers
+                    .iter()
+                    .filter(|(bootstrap_peer, _)| swarm.is_connected(bootstrap_peer))
+                    .count();
+                emit!(
+                    "node_health status=alive peer_id={} uptime_seconds={} connected_peers={} bootstrap_peers_connected={}/{}",
+                    peer_id,
+                    started_at.elapsed().as_secs(),
+                    connected_peers,
+                    connected_bootstrap_peers,
+                    bootstrap_peers.len()
+                );
+            }
             _ = reconnect_tick.tick() => {
                 for (bootstrap_peer, address) in &bootstrap_peers {
                     if !swarm.is_connected(bootstrap_peer) {
