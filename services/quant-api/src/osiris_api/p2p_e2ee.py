@@ -97,7 +97,14 @@ def encrypt_for_peer(
     if not isinstance(plaintext, bytes) or len(plaintext) > MAX_PLAINTEXT_BYTES:
         raise ValueError("plaintext_must_be_bytes_under_1MiB")
     signing_public = _b64d(sender_signing_public_key, max_length=128)
-    if len(signing_public) != 32 or hashlib.sha256(signing_public).hexdigest() != sender_node_id:
+    signing_private = Ed25519PrivateKey.from_private_bytes(
+        _b64d(sender_signing_private_key, max_length=128)
+    )
+    if (
+        len(signing_public) != 32
+        or hashlib.sha256(signing_public).hexdigest() != sender_node_id
+        or _raw_public(signing_private.public_key()) != signing_public
+    ):
         raise ValueError("sender_node_identity_mismatch")
 
     recipient_raw = _b64d(recipient_transport_public_key, max_length=128)
@@ -124,9 +131,7 @@ def encrypt_for_peer(
     }
     ciphertext = ChaCha20Poly1305(key).encrypt(nonce, plaintext, _canonical(header))
     signed = {**header, "ciphertext": _b64e(ciphertext)}
-    signature = Ed25519PrivateKey.from_private_bytes(
-        _b64d(sender_signing_private_key, max_length=128)
-    ).sign(_canonical(signed))
+    signature = signing_private.sign(_canonical(signed))
     return {**signed, "signature": _b64e(signature)}
 
 
