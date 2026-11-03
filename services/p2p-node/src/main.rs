@@ -511,7 +511,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .ok().and_then(|value| value.parse::<u64>().ok()).unwrap_or(1);
     if transport_key_epoch == 0 { return Err("OSIRIS_TRANSPORT_KEY_EPOCH must be positive".into()); }
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-    let local_key_binding = create_key_binding(&key, &transport_key.public_key, transport_key_epoch, now, now + 30 * 24 * 60 * 60)?;
+    let mut local_key_binding = create_key_binding(&key, &transport_key.public_key, transport_key_epoch, now, now + 30 * 24 * 60 * 60)?;
 
     let gossipsub_config = gossipsub::ConfigBuilder::default()
         .heartbeat_interval(Duration::from_secs(10))
@@ -622,6 +622,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .unwrap_or(30)
         .clamp(5, 300);
     let mut health_tick = tokio::time::interval(Duration::from_secs(health_interval_secs));
+    let mut key_binding_tick = tokio::time::interval(Duration::from_secs(24 * 60 * 60));
+    key_binding_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     health_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let started_at = Instant::now();
     let health_address: SocketAddr = env::var("OSIRIS_HEALTH_HTTP_ADDR")
@@ -658,6 +660,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
             _ = tokio::signal::ctrl_c() => {
                 emit!("shutdown_signal=ctrl_c");
                 break;
+            }
+            _ = key_binding_tick.tick() => {
+                let issued_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+                local_key_binding = create_key_binding(
+                    &key, &transport_key.public_key, transport_key_epoch,
+                    issued_at, issued_at + 30 * 24 * 60 * 60,
+                )?;
+                let binding_bytes = serde_json::to_vec(&local_key_binding)?;
+                match swarm.behaviour_mut().gossipsub.publish(key_binding_topic.clone(), binding_bytes) {
+                    Ok(_) => emit!("key_binding_refreshed epoch={transport_key_epoch}"),
+                    Err(error) => emit!("key_binding_refresh_deferred error={error}"),
+                }
             }
             _ = health_tick.tick() => {
                 let snapshot = build_health_snapshot(&peer_id, started_at, &swarm, &bootstrap_peers);
