@@ -1,4 +1,4 @@
-use std::{env, error::Error, io::Write, time::Duration};
+use std::{env, error::Error, fs, io::Write, path::PathBuf, time::Duration};
 
 use futures::StreamExt;
 use libp2p::{
@@ -9,6 +9,28 @@ use libp2p::{
 };
 
 const TOPIC: &str = "osiris/observations/1";
+
+fn load_or_create_identity(role: &str) -> Result<identity::Keypair, Box<dyn Error>> {
+    let default_name = format!(".osiris-relay-{role}-key");
+    let path = env::var_os("OSIRIS_RELAY_CLIENT_KEY")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(default_name));
+
+    if path.exists() {
+        let encoded = fs::read(&path)?;
+        return Ok(identity::Keypair::from_protobuf_encoding(&encoded)?);
+    }
+
+    let key = identity::Keypair::generate_ed25519();
+    fs::write(&path, key.to_protobuf_encoding()?)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+    }
+    eprintln!("Created relay-client identity at {} (keep this file private)", path.display());
+    Ok(key)
+}
 
 macro_rules! emit {
     ($($arg:tt)*) => {{
@@ -30,7 +52,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         return Err("OSIRIS_RELAY_CLIENT_ROLE must be receiver or sender".into());
     }
 
-    let key = identity::Keypair::generate_ed25519();
+    let key = load_or_create_identity(&role)?;
     let peer_id = PeerId::from(key.public());
     let (relay_transport, relay_behaviour) = relay::client::new(peer_id);
     let tcp_transport = tcp::tokio::Transport::new(tcp::Config::default());

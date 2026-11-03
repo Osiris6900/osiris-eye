@@ -9,6 +9,7 @@ import queue
 import subprocess
 import threading
 import time
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -70,49 +71,64 @@ def main():
         raise SystemExit(f"Missing binaries: {missing}; run cargo build --release first")
 
     base_env = os.environ.copy()
-    relay_env = base_env | {
-        "OSIRIS_RELAY_SERVER_ENABLED": "true",
-        "OSIRIS_RELAY_LISTEN_ADDR": "/ip4/127.0.0.1/tcp/4017",
-        "OSIRIS_RELAY_NODE_KEY": str(ROOT / "target-relay-test-key"),
-    }
-    relay_proc = Process("relay", [str(RELAY)], relay_env)
-    try:
-        listen_line = relay_proc.wait_for("relay_listening=", timeout=20)
-        relay_addr = listen_line.split("=", 1)[1]
-        relay_peer_id = relay_addr.rsplit("/p2p/", 1)[1]
-        relay_multiaddr = f"/ip4/127.0.0.1/tcp/4017/p2p/{relay_peer_id}"
-
-        receiver_env = base_env | {
-            "OSIRIS_RELAY_CLIENT_ROLE": "receiver",
-            "OSIRIS_RELAY_MULTIADDR": relay_multiaddr,
+    with tempfile.TemporaryDirectory(prefix="osiris-relay-identity-") as tmp:
+        tmp = Path(tmp)
+        relay_env = base_env | {
+            "OSIRIS_RELAY_SERVER_ENABLED": "true",
+            "OSIRIS_RELAY_LISTEN_ADDR": "/ip4/127.0.0.1/tcp/4017",
+            "OSIRIS_RELAY_NODE_KEY": str(tmp / "relay.key"),
         }
-        receiver = Process("receiver", [str(CLIENT)], receiver_env)
-        receiver_peer_line = receiver.wait_for("peer_id=", timeout=10)
-        receiver_peer_id = receiver_peer_line.split("=", 1)[1]
+        relay_proc = Process("relay", [str(RELAY)], relay_env)
+        try:
+            listen_line = relay_proc.wait_for("relay_listening=", timeout=20)
+            relay_addr = listen_line.split("=", 1)[1]
+            relay_peer_id = relay_addr.rsplit("/p2p/", 1)[1]
+            relay_multiaddr = f"/ip4/127.0.0.1/tcp/4017/p2p/{relay_peer_id}"
 
-        # Do not infer a reservation from the server-side acceptance log.
-        # Start the sender only after the receiver's relay-client behaviour
-        # confirms that its reservation response was processed.
-        receiver.wait_for("relay_reservation_accepted=true", timeout=25)
-        receiver.wait_for("relay_reserved_address=", timeout=10)
+            receiver_key = tmp / "receiver.key"
+            receiver_env = base_env | {
+                "OSIRIS_RELAY_CLIENT_ROLE": "receiver",
+                "OSIRIS_RELAY_CLIENT_KEY": str(receiver_key),
+                "OSIRIS_RELAY_MULTIADDR": relay_multiaddr,
+            }
+            receiver = Process("receiver-first-boot", [str(CLIENT)], receiver_env)
+            receiver_peer_line = receiver.wait_for("peer_id=", timeout=10)
+            receiver_peer_id = receiver_peer_line.split("=", 1)[1]
+            receiver.wait_for("relay_reservation_accepted=true", timeout=25)
+            receiver.wait_for("relay_reserved_address=", timeout=10)
 
-        sender_env = base_env | {
-            "OSIRIS_RELAY_CLIENT_ROLE": "sender",
-            "OSIRIS_RELAY_MULTIADDR": relay_multiaddr,
-            "OSIRIS_RELAY_TARGET_PEER": receiver_peer_id,
-        }
-        sender = Process("sender", [str(CLIENT)], sender_env)
-        sender.wait_for("peer_connected=", timeout=15)
-        sender.wait_for("relay_observation_published=true", timeout=25)
-        receiver.wait_for("relay_observation_received", timeout=25)
-        if not any("relayed=true" in line for line in sender.history):
-            sender.wait_for("relayed=true", timeout=10)
-        print("THREE_PROCESS_CIRCUIT_RELAY_TEST=PASS", flush=True)
-    finally:
-        stop_all()
-        key = ROOT / "target-relay-test-key"
-        if key.exists():
-            key.unlink()
+            # Restart the same logical node with the same key file. Its peer ID
+            # must remain stable, and it must obtain a fresh relay reservation.
+            receiver.proc.terminate()
+            receiver.proc.wait(timeout=5)
+            relay_proc.wait_for(f"relay_peer_disconnected={receiver_peer_id}", timeout=10)
+
+            receiver = Process("receiver-restart", [str(CLIENT)], receiver_env)
+            restarted_peer_line = receiver.wait_for("peer_id=", timeout=10)
+            restarted_peer_id = restarted_peer_line.split("=", 1)[1]
+            if restarted_peer_id != receiver_peer_id:
+                raise AssertionError(
+                    f"peer identity changed across restart: {receiver_peer_id} -> {restarted_peer_id}"
+                )
+            receiver.wait_for("relay_reservation_accepted=true", timeout=25)
+            receiver.wait_for("relay_reserved_address=", timeout=10)
+            print("RELAY_CLIENT_IDENTITY_PERSISTENCE=PASS", flush=True)
+
+            sender_env = base_env | {
+                "OSIRIS_RELAY_CLIENT_ROLE": "sender",
+                "OSIRIS_RELAY_CLIENT_KEY": str(tmp / "sender.key"),
+                "OSIRIS_RELAY_MULTIADDR": relay_multiaddr,
+                "OSIRIS_RELAY_TARGET_PEER": receiver_peer_id,
+            }
+            sender = Process("sender", [str(CLIENT)], sender_env)
+            sender.wait_for("peer_connected=", timeout=15)
+            sender.wait_for("relay_observation_published=true", timeout=25)
+            receiver.wait_for("relay_observation_received", timeout=25)
+            if not any("relayed=true" in line for line in sender.history):
+                sender.wait_for("relayed=true", timeout=10)
+            print("THREE_PROCESS_CIRCUIT_RELAY_TEST=PASS", flush=True)
+        finally:
+            stop_all()
 
 
 if __name__ == "__main__":
