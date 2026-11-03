@@ -85,8 +85,10 @@ fn encode_hex(bytes: &[u8]) -> String {
 #[serde(tag = "kind", content = "payload", rename_all = "snake_case")]
 pub enum RevocationSyncMessage {
     SyncRequest,
+    SyncRequestPage { after_peer_id: Option<String> },
     Record(SignedRevocationRecord),
     Snapshot(Vec<SignedRevocationRecord>),
+    SnapshotPage { records: Vec<SignedRevocationRecord>, next_cursor: Option<String> },
 }
 
 #[derive(Debug)]
@@ -127,6 +129,20 @@ impl RevocationRegistry {
 
     pub fn records(&self) -> Vec<SignedRevocationRecord> {
         self.records.values().cloned().collect()
+    }
+
+    /// Return a stable, bounded page ordered by PeerId for anti-entropy synchronization.
+    pub fn page_after(&self, after_peer_id: Option<&str>, limit: usize) -> (Vec<SignedRevocationRecord>, Option<String>) {
+        let mut records: Vec<_> = self.records.values()
+            .filter(|record| after_peer_id.is_none_or(|cursor| record.peer_id.as_str() > cursor))
+            .cloned()
+            .collect();
+        records.sort_by(|a, b| a.peer_id.cmp(&b.peer_id));
+        let page_limit = limit.clamp(1, 512);
+        let has_more = records.len() > page_limit;
+        records.truncate(page_limit);
+        let next_cursor = if has_more { records.last().map(|record| record.peer_id.clone()) } else { None };
+        (records, next_cursor)
     }
 
     pub fn revoked_peer_ids(&self) -> Result<Vec<PeerId>, Box<dyn Error>> {
