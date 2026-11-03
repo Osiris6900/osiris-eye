@@ -6,7 +6,7 @@
 
 use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
 use libp2p::{identity, PeerId};
-use rand_core::{OsRng, RngCore};
+use rand_core::OsRng;
 use serde::{Deserialize, Serialize};
 use x25519_dalek::StaticSecret;
 
@@ -186,7 +186,7 @@ mod tests {
         let mut record = create_key_binding(&identity, &transport.public_key, 1, 100, 200).unwrap();
         record.transport_public_key = STANDARD_NO_PAD.encode([7_u8; 32]);
         assert_eq!(
-            verify_key_binding(&record, 150, 1).unwrap_err(),
+            verify_key_binding(&record, 150, 1).err().unwrap(),
             "key_binding_signature_invalid"
         );
     }
