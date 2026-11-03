@@ -81,6 +81,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     emit!("relay_peer_id={relay_peer}");
 
     let mut published = false;
+    let mut sender_dial_attempts = 0_u8;
     loop {
         match swarm.select_next_some().await {
             SwarmEvent::NewListenAddr { address, .. } => {
@@ -110,7 +111,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
             SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
                 emit!("connection_error peer={peer_id:?} error={error}");
-                return Err("relay client connection failed".into());
+                if role == "sender" && sender_dial_attempts < 8 {
+                    sender_dial_attempts += 1;
+                    emit!("relay_dial_retry={sender_dial_attempts}");
+                    tokio::time::sleep(Duration::from_millis(750)).await;
+                    swarm.dial(circuit_addr.clone())?;
+                } else {
+                    return Err("relay client connection failed after retries".into());
+                }
             }
             _ => {}
         }
