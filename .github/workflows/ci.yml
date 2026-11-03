@@ -32,14 +32,14 @@ jobs:
 
   rust:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - name: Test Rust risk kernel
         run: cargo test --manifest-path crates/risk-kernel/Cargo.toml
-      - name: Check decentralized P2P node
-        run: cargo check --manifest-path services/p2p-node/Cargo.toml
+      - name: Test decentralized P2P node
+        run: cargo test --manifest-path services/p2p-node/Cargo.toml --all-targets
 
   web:
     runs-on: ubuntu-latest
