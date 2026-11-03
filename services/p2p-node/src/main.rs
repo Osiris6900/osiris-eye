@@ -50,6 +50,7 @@ impl ObservationEnvelope {
 #[cfg(test)]
 mod tests {
     use super::ObservationEnvelope;
+    use sha2::{Digest, Sha256};
     fn valid() -> ObservationEnvelope {
         ObservationEnvelope { schema: "osiris.observation.v1".into(), instrument: "BTC-USD".into(),
             observed_at: "2026-11-03T00:00:00Z".into(), provider: "coinbase-public".into(),
@@ -145,7 +146,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let key = load_or_create_identity()?;
     let peer_id = PeerId::from(key.public());
 
-    let mut gossipsub_config = gossipsub::ConfigBuilder::default()
+    let gossipsub_config = gossipsub::ConfigBuilder::default()
         .heartbeat_interval(Duration::from_secs(10))
         .validation_mode(gossipsub::ValidationMode::Strict)
         .build()?;
