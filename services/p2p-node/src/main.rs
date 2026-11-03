@@ -1,6 +1,6 @@
 mod peer_auth;
 
-use peer_auth::{is_trusted_peer, parse_trusted_peers};
+use peer_auth::{is_peer_allowed, parse_revoked_peers, parse_trusted_peers};
 use std::{collections::HashSet, env, error::Error, fs::{self, OpenOptions}, io::{BufRead, BufReader as StdBufReader, Write}, net::SocketAddr, path::PathBuf, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
 
 macro_rules! emit {
@@ -209,24 +209,65 @@ impl From<identify::Event> for BehaviourEvent {
     fn from(event: identify::Event) -> Self { Self::Identify(event) }
 }
 
+fn write_node_identity(path: &PathBuf) -> Result<identity::Keypair, Box<dyn Error>> {
+    let key = identity::Keypair::generate_ed25519();
+    let encoded = key.to_protobuf_encoding()?;
+    let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
+    file.write_all(&encoded)?;
+    file.sync_all()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(key)
+}
+
 fn load_or_create_identity() -> Result<identity::Keypair, Box<dyn Error>> {
     let path = env::var_os("OSIRIS_NODE_KEY")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(".osiris-node-key"));
+    let rotate = match env::var("OSIRIS_ROTATE_NODE_KEY") {
+        Ok(value) if value == "1" => true,
+        Ok(value) if value == "0" => false,
+        Ok(_) => return Err("OSIRIS_ROTATE_NODE_KEY must be 0 or 1".into()),
+        Err(env::VarError::NotPresent) => false,
+        Err(error) => return Err(error.into()),
+    };
 
-    if path.exists() {
+    if path.exists() && !rotate {
         let encoded = fs::read(&path)?;
         return Ok(identity::Keypair::from_protobuf_encoding(&encoded)?);
     }
-
-    let key = identity::Keypair::generate_ed25519();
-    let encoded = key.to_protobuf_encoding()?;
-    fs::write(&path, encoded)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+    if rotate && !path.exists() {
+        return Err("identity rotation requested but OSIRIS_NODE_KEY does not exist".into());
     }
+
+    if rotate {
+        let old_key = identity::Keypair::from_protobuf_encoding(&fs::read(&path)?)?;
+        let old_peer = PeerId::from(old_key.public());
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        let mut backup_name = path.as_os_str().to_os_string();
+        backup_name.push(format!(".backup-{timestamp}"));
+        let backup = PathBuf::from(backup_name);
+        if backup.exists() {
+            return Err(format!("identity backup already exists: {}", backup.display()).into());
+        }
+        fs::rename(&path, &backup)?;
+        match write_node_identity(&path) {
+            Ok(new_key) => {
+                let new_peer = PeerId::from(new_key.public());
+                emit!("identity_rotated old_peer={old_peer} new_peer={new_peer} backup={}", backup.display());
+                return Ok(new_key);
+            }
+            Err(error) => {
+                let _ = fs::rename(&backup, &path);
+                return Err(error);
+            }
+        }
+    }
+
+    let key = write_node_identity(&path)?;
     eprintln!("Created node identity at {} (keep this file private)", path.display());
     Ok(key)
 }
@@ -421,6 +462,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let bootstrap_peers = parse_bootstrap_peers(&mut swarm)?;
     let trusted_peers = parse_trusted_peers(env::var("OSIRIS_TRUSTED_PEERS").ok().as_deref())?;
+    let revoked_peers = parse_revoked_peers(env::var("OSIRIS_REVOKED_PEERS").ok().as_deref())?;
     let replay_path = env::var_os("OSIRIS_REPLAY_CACHE")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(".osiris-replay-cache"));
@@ -428,7 +470,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     emit!("replay_protection=durable cache_entries={} cache_path={}", replay_guard.seen.len(), replay_path.display());
     if let Some(allowed) = &trusted_peers {
         for (bootstrap_peer, _) in &bootstrap_peers {
-            if !allowed.contains(bootstrap_peer) {
+            if !allowed.contains(bootstrap_peer) || !is_peer_allowed(bootstrap_peer, &trusted_peers, &revoked_peers) {
                 return Err(format!(
                     "OSIRIS_TRUSTED_PEERS must include configured bootstrap peer {bootstrap_peer}"
                 ).into());
@@ -438,6 +480,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     } else {
         emit!("peer_authentication=open");
     }
+    emit!("peer_revocation=local revoked_peers={}", revoked_peers.as_ref().map_or(0, |peers| peers.len()));
     let reconnect_interval_secs = parse_interval_secs(
         env::var("OSIRIS_BOOTSTRAP_RECONNECT_INTERVAL_SECS").ok().as_deref(),
         15,
@@ -536,7 +579,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
                 SwarmEvent::ConnectionEstablished { peer_id, endpoint, connection_id, num_established, .. } => {
                     emit!("connection_established_detail peer={peer_id} endpoint={endpoint:?} connection={connection_id:?} total={num_established}");
-                    if !is_trusted_peer(&peer_id, &trusted_peers) {
+                    if !is_peer_allowed(&peer_id, &trusted_peers, &revoked_peers) {
                         emit!("peer_rejected={peer_id} reason=not_in_trusted_peer_allowlist");
                         let _ = swarm.disconnect_peer_id(peer_id);
                         continue;
@@ -548,7 +591,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Discovered(peers))) => {
                     for (peer, address) in peers {
-                        if !is_trusted_peer(&peer, &trusted_peers) {
+                        if !is_peer_allowed(&peer, &trusted_peers, &revoked_peers) {
                             emit!("mdns_peer_ignored={peer} reason=not_in_trusted_peer_allowlist");
                             continue;
                         }
@@ -568,7 +611,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     }
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Subscribed { peer_id, .. })) => {
-                    if !is_trusted_peer(&peer_id, &trusted_peers) {
+                    if !is_peer_allowed(&peer_id, &trusted_peers, &revoked_peers) {
                         emit!("peer_rejected={peer_id} reason=not_in_trusted_peer_allowlist");
                         let _ = swarm.disconnect_peer_id(peer_id);
                         continue;
@@ -578,7 +621,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message {
                     propagation_source, message, ..
                 })) => {
-                    if !is_trusted_peer(&propagation_source, &trusted_peers) {
+                    if !is_peer_allowed(&propagation_source, &trusted_peers, &revoked_peers) {
                         emit!("message_rejected peer={propagation_source} reason=not_in_trusted_peer_allowlist");
                         continue;
                     }
