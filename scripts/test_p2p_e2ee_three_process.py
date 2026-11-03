@@ -87,6 +87,8 @@ try:
 
         wait_for(lambda n, l: n == "node-a" and f"key_binding_accepted peer={node_b_peer} " in l,
                  25, "node A to accept node B's signed key binding")
+        wait_for(lambda n, l: n == "node-b" and f"key_binding_accepted peer={node_a_peer} " in l,
+                 25, "node B to accept node A's signed key binding")
         wait_for(lambda n, l: n == "node-c" and f"key_binding_accepted peer={node_a_peer} " in l,
                  25, "node C to accept node A's signed key binding")
         wait_for(lambda n, l: n == "node-a" and f"key_binding_accepted peer={node_c_peer} " in l,
