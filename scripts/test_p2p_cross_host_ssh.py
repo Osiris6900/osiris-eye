@@ -55,7 +55,7 @@ def main():
     parser.add_argument("--ssh-target", required=True, help="SSH destination for host B, e.g. user@host-b")
     parser.add_argument("--public-ip", required=True, help="Host A IP reachable from host B")
     parser.add_argument("--port", type=int, default=4001, help="Inbound TCP port on host A (default: 4001)")
-    parser.add_argument("--remote-binary", default="~/osiris-eye/target/release/osiris-p2p-node",
+    parser.add_argument("--remote-binary", default="osiris-eye/target/release/osiris-p2p-node",
                         help="P2P release binary path on host B")
     parser.add_argument("--binary", help="Local P2P release binary; auto-detected if omitted")
     parser.add_argument("--ssh-option", action="append", default=[], help="Extra SSH option; repeat as needed")
@@ -99,7 +99,7 @@ def main():
             bootstrap = f"/ip4/{args.public_ip}/tcp/{args.port}/p2p/{peer_id}"
 
             # Keep the remote key private and remove it when the SSH process exits.
-            remote_command = "set -eu; umask 077; key=" + shlex.quote(remote_key) + "; " \
+            remote_command = "set -eu; cd \"$HOME\"; umask 077; key=" + shlex.quote(remote_key) + "; " \
                 + "trap 'rm -f \"$key\"' EXIT; : > \"$key\"; " \
                 + "OSIRIS_NODE_KEY=\"$key\" OSIRIS_LISTEN_ADDR=/ip4/0.0.0.0/tcp/0 " \
                 + "OSIRIS_BOOTSTRAP_PEERS=" + shlex.quote(bootstrap) + " " \
