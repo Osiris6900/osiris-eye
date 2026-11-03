@@ -83,19 +83,28 @@ jobs:
         run: |
           set -euo pipefail
           NODE_LOG="$RUNNER_TEMP/osiris-host-a.log"
-          INSTRUMENT="OSIRIS-TAILSCALE-CROSSHOST"
-          PAYLOAD="tailscale cross-host p2p integrity probe"
-          DIGEST="$(printf '%s' "$PAYLOAD" | sha256sum | cut -d' ' -f1)"
-          for _ in $(seq 1 180); do
-            if grep -F "observation_received" "$NODE_LOG" | grep -F "$INSTRUMENT" | grep -F "$DIGEST"; then
-              echo "CROSS_HOST_P2P_EXCHANGE=PASS"
-              exit 0
+          INSTRUMENT="OSIRIS-TAILSCALE-STRESS"
+          MESSAGE_COUNT=20
+          for sequence in $(seq 1 "$MESSAGE_COUNT"); do
+            PAYLOAD="tailscale cross-host p2p stress probe $sequence"
+            DIGEST="$(printf '%s' "$PAYLOAD" | sha256sum | cut -d' ' -f1)"
+            RECEIVED=0
+            for _ in $(seq 1 30); do
+              if grep -F "observation_received" "$NODE_LOG" | grep -F "instrument=$INSTRUMENT" | grep -F "payload_sha256=$DIGEST" >/dev/null; then
+                RECEIVED=1
+                break
+              fi
+              sleep 1
+            done
+            if [ "$RECEIVED" -ne 1 ]; then
+              echo "Missing stress message sequence=$sequence digest=$DIGEST"
+              cat "$NODE_LOG"
+              exit 1
             fi
-            sleep 2
+            echo "CROSS_HOST_P2P_MESSAGE_RECEIVED=$sequence"
           done
-          echo "Host A did not receive the expected observation."
-          cat "$NODE_LOG"
-          exit 1
+          echo "CROSS_HOST_P2P_STRESS_MESSAGES=$MESSAGE_COUNT"
+          echo "CROSS_HOST_P2P_STRESS=PASS"
       - name: Stop Host A node
         if: always()
         run: |
@@ -213,11 +222,14 @@ jobs:
             exit 1
           fi
 
-          PAYLOAD="tailscale cross-host p2p integrity probe"
-          DIGEST="$(printf '%s' "$PAYLOAD" | sha256sum | cut -d' ' -f1)"
-          printf '{"schema":"osiris.observation.v1","instrument":"OSIRIS-TAILSCALE-CROSSHOST","observed_at":"2026-11-03T11:00:00Z","provider":"osiris-tailscale-ci","payload_sha256":"%s","payload":"%s"}\n' "$DIGEST" "$PAYLOAD" >&3
-          sleep 8
-          echo "Host B published integrity probe to Host A."
+          MESSAGE_COUNT=20
+          for sequence in $(seq 1 "$MESSAGE_COUNT"); do
+            PAYLOAD="tailscale cross-host p2p stress probe $sequence"
+            DIGEST="$(printf '%s' "$PAYLOAD" | sha256sum | cut -d' ' -f1)"
+            printf '{"schema":"osiris.observation.v1","instrument":"OSIRIS-TAILSCALE-STRESS","observed_at":"2026-11-03T11:00:00Z","provider":"osiris-tailscale-ci","payload_sha256":"%s","payload":"%s"}\n' "$DIGEST" "$PAYLOAD" >&3
+            sleep 0.25
+          done
+          echo "Host B published $MESSAGE_COUNT stress messages to Host A."
           exec 3>&-
           kill "$NODE_PID" 2>/dev/null || true
       - name: Stop Host B node
