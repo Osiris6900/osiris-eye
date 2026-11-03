@@ -200,11 +200,34 @@ fn parse_bootstrap_peers(
 #[derive(Clone, Debug, Serialize)]
 struct HealthSnapshot {
     status: &'static str,
+    ready: bool,
     peer_id: String,
     uptime_seconds: u64,
     connected_peers: usize,
     bootstrap_peers_connected: usize,
     bootstrap_peers_total: usize,
+}
+
+fn build_health_snapshot(
+    peer_id: &PeerId,
+    started_at: Instant,
+    swarm: &Swarm<Behaviour>,
+    bootstrap_peers: &[(PeerId, Multiaddr)],
+) -> HealthSnapshot {
+    let connected_peers = swarm.connected_peers().count();
+    let bootstrap_peers_connected = bootstrap_peers
+        .iter()
+        .filter(|(bootstrap_peer, _)| swarm.is_connected(bootstrap_peer))
+        .count();
+    HealthSnapshot {
+        status: "alive",
+        ready: bootstrap_peers.is_empty() || bootstrap_peers_connected == bootstrap_peers.len(),
+        peer_id: peer_id.to_string(),
+        uptime_seconds: started_at.elapsed().as_secs(),
+        connected_peers,
+        bootstrap_peers_connected,
+        bootstrap_peers_total: bootstrap_peers.len(),
+    }
 }
 
 async fn serve_health_connection(mut stream: TcpStream, state: watch::Receiver<HealthSnapshot>) {
@@ -223,11 +246,15 @@ async fn serve_health_connection(mut stream: TcpStream, state: watch::Receiver<H
 
     let (status, body) = if method != "GET" {
         ("405 Method Not Allowed", r#"{"error":"method_not_allowed"}"#.to_owned())
-    } else if path != "/health" {
-        ("404 Not Found", r#"{"error":"not_found"}"#.to_owned())
-    } else {
+    } else if path == "/health" {
         let snapshot = state.borrow().clone();
         ("200 OK", serde_json::to_string(&snapshot).unwrap_or_else(|_| r#"{"status":"error"}"#.to_owned()))
+    } else if path == "/ready" {
+        let snapshot = state.borrow().clone();
+        let status = if snapshot.ready { "200 OK" } else { "503 Service Unavailable" };
+        (status, serde_json::to_string(&snapshot).unwrap_or_else(|_| r#"{"status":"error"}"#.to_owned()))
+    } else {
+        ("404 Not Found", r#"{"error":"not_found"}"#.to_owned())
     };
     let response = format!(
         "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
@@ -324,14 +351,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let health_address: SocketAddr = env::var("OSIRIS_HEALTH_HTTP_ADDR")
         .unwrap_or_else(|_| "127.0.0.1:9090".to_owned())
         .parse()?;
-    let initial_health = HealthSnapshot {
-        status: "alive",
-        peer_id: peer_id.to_string(),
-        uptime_seconds: 0,
-        connected_peers: 0,
-        bootstrap_peers_connected: 0,
-        bootstrap_peers_total: bootstrap_peers.len(),
-    };
+    let initial_health = build_health_snapshot(&peer_id, started_at, &swarm, &bootstrap_peers);
     let (health_tx, health_rx) = watch::channel(initial_health);
     tokio::spawn(async move {
         if let Err(error) = serve_health_endpoint(health_address, health_rx).await {
@@ -352,21 +372,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
     loop {
         tokio::select! {
             _ = health_tick.tick() => {
-                let connected_peers = swarm.connected_peers().count();
-                let connected_bootstrap_peers = bootstrap_peers
-                    .iter()
-                    .filter(|(bootstrap_peer, _)| swarm.is_connected(bootstrap_peer))
-                    .count();
-                health_tx.send_replace(HealthSnapshot {
-                    status: "alive",
-                    peer_id: peer_id.to_string(),
-                    uptime_seconds: started_at.elapsed().as_secs(),
-                    connected_peers,
-                    bootstrap_peers_connected: connected_bootstrap_peers,
-                    bootstrap_peers_total: bootstrap_peers.len(),
-                });
+                let snapshot = build_health_snapshot(&peer_id, started_at, &swarm, &bootstrap_peers);
+                let connected_peers = snapshot.connected_peers;
+                let connected_bootstrap_peers = snapshot.bootstrap_peers_connected;
+                health_tx.send_replace(snapshot);
                 emit!(
-                    "node_health status=alive peer_id={} uptime_seconds={} connected_peers={} bootstrap_peers_connected={}/{}",
+                    "node_health status=alive ready={} peer_id={} uptime_seconds={} connected_peers={} bootstrap_peers_connected={}/{}",
+                    build_health_snapshot(&peer_id, started_at, &swarm, &bootstrap_peers).ready,
                     peer_id,
                     started_at.elapsed().as_secs(),
                     connected_peers,
