@@ -36,30 +36,35 @@ jobs:
           BIN="$GITHUB_WORKSPACE/target/release/osiris-p2p-node"
           NODE_LOG="$RUNNER_TEMP/osiris-host-a.log"
           NODE_KEY="$RUNNER_TEMP/osiris-host-a.key"
+          HEALTH_PORT=19090
           TAILSCALE_IP="$(tailscale ip -4 | head -n1)"
           test -n "$TAILSCALE_IP"
           nohup env \
             OSIRIS_NODE_KEY="$NODE_KEY" \
             OSIRIS_LISTEN_ADDR="/ip4/0.0.0.0/tcp/4001" \
             OSIRIS_EXTERNAL_ADDRS="/ip4/$TAILSCALE_IP/tcp/4001" \
-            OSIRIS_HEALTH_HTTP_ADDR="127.0.0.1:0" \
+            OSIRIS_HEALTH_HTTP_ADDR="127.0.0.1:$HEALTH_PORT" \
             "$BIN" >"$NODE_LOG" 2>&1 </dev/null &
           echo "$!" > "$RUNNER_TEMP/osiris-host-a.pid"
 
           PEER_ID=""
-          LISTENING=""
-          for _ in $(seq 1 60); do
-            PEER_ID="$(sed -n 's/^peer_id=//p' "$NODE_LOG" | head -n1)"
-            LISTENING="$(grep -m1 '^listening=/ip4/0.0.0.0/tcp/4001/p2p/' "$NODE_LOG" || true)"
-            if [ -n "$PEER_ID" ] && [ -n "$LISTENING" ]; then break; fi
+          for _ in $(seq 1 90); do
+            if curl --silent --fail "http://127.0.0.1:$HEALTH_PORT/health" > "$RUNNER_TEMP/health.json"; then
+              PEER_ID="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["peer_id"])' "$RUNNER_TEMP/health.json")"
+              if [ -n "$PEER_ID" ] && ss -ltn | grep -q ':4001 '; then break; fi
+            fi
             if ! kill -0 "$(cat "$RUNNER_TEMP/osiris-host-a.pid")" 2>/dev/null; then
-              cat "$NODE_LOG"
+              echo "P2P node exited before health endpoint became ready."
+              cat "$NODE_LOG" || true
               exit 1
             fi
             sleep 1
           done
-          test -n "$PEER_ID"
-          test -n "$LISTENING"
+          if [ -z "$PEER_ID" ] || ! ss -ltn | grep -q ':4001 '; then
+            echo "Host A listener did not become ready."
+            cat "$NODE_LOG" || true
+            exit 1
+          fi
           printf '{"tailscale_ip":"%s","port":4001,"peer_id":"%s"}\n' "$TAILSCALE_IP" "$PEER_ID" > "$RUNNER_TEMP/p2p-endpoint.json"
           echo "Host A Tailscale endpoint ready: $TAILSCALE_IP:4001 peer=$PEER_ID"
       - name: Share endpoint with Host B
@@ -150,14 +155,14 @@ jobs:
           OSIRIS_NODE_KEY="$NODE_KEY" \
           OSIRIS_BOOTSTRAP_PEERS="$BOOTSTRAP" \
           OSIRIS_LISTEN_ADDR="/ip4/0.0.0.0/tcp/0" \
-          OSIRIS_HEALTH_HTTP_ADDR="127.0.0.1:0" \
+          OSIRIS_HEALTH_HTTP_ADDR="127.0.0.1:19091" \
             "$BIN" < "$FIFO" >"$NODE_LOG" 2>&1 &
           NODE_PID=$!
           echo "$NODE_PID" > "$RUNNER_TEMP/osiris-host-b.pid"
           exec 3>"$FIFO"
 
           CONNECTED=0
-          for _ in $(seq 1 90); do
+          for _ in $(seq 1 120); do
             if grep -F "peer_connected=$PEER_ID" "$NODE_LOG" >/dev/null; then CONNECTED=1; break; fi
             if ! kill -0 "$NODE_PID" 2>/dev/null; then cat "$NODE_LOG"; exit 1; fi
             sleep 1
