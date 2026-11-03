@@ -35,3 +35,15 @@ No libp2p transport, NAT traversal, relay, DHT/Kademlia, GossipSub, shared multi
 
 ## Operational status
 The /p2p/status endpoint reports transport, discovery, distributed compute, shared registry, and live execution as disabled until those capabilities are implemented and tested.
+
+
+## End-to-end encrypted message envelope (new milestone)
+- X25519 ephemeral sender key agreement with the recipient's separately generated X25519 transport public key.
+- HKDF-SHA256 derives a per-message key; ChaCha20-Poly1305 encrypts and authenticates the payload and header.
+- The complete envelope is signed by the sender's Ed25519 node identity; receivers must pin/verify the sender public key and node ID.
+- Envelopes include recipient/sender IDs, protocol/cipher identifiers, timestamp, random message ID, salt, nonce, and ephemeral public key.
+- A bounded process-local replay guard and five-minute clock-skew limit are provided as primitives.
+- Payloads are capped at 1 MiB.
+
+### Important limits
+This milestone does not open network sockets or implement libp2p, Noise sessions, routing, NAT traversal, or peer discovery. The recipient's static transport private key means this envelope primitive does not provide full forward secrecy against later compromise of that recipient key. Replay protection is process-local and is not safe across multiple server instances or restarts. Production deployment requires durable distributed replay storage, secure hardware-backed key custody/rotation/revocation, rate limits, authenticated transport, and independent security review. Do not use this primitive as a substitute for a mature Noise/libp2p session once the actual network transport is integrated. Live trading remains disabled.
