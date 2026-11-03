@@ -69,10 +69,11 @@ def main():
             b.wait("listener_ready ")
             addr_b = next(x for x in b.history if "listener_ready " in x).split(" address=",1)[1].split()[0]
             c = Node("peer-c", env_for("c", bootstrap=addr_b))
-            a.wait(f"signed_revocation_registry=loaded records=1", 10)
-            b.wait("revocation_sync_v2_page_applied", 35)
+            a.wait("signed_revocation_registry=loaded records=1", 10)
+            # Match the stable event name emitted by the Rust P2P node.
+            b.wait("revocation_sync_page_v2_applied", 35)
             b.wait("applied=1", 35)
-            c.wait("revocation_sync_v2_page_applied", 35)
+            c.wait("revocation_sync_page_v2_applied", 35)
             c.wait("applied=1", 35)
             for name in ("b", "c"):
                 persisted = json.loads((td / f"{name}.json").read_text())
