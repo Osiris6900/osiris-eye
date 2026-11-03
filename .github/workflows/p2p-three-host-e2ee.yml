@@ -1,0 +1,188 @@
+name: P2P real three-host recipient-only E2EE acceptance
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: p2p-three-host-e2ee
+  cancel-in-progress: false
+
+jobs:
+  host-a:
+    name: Host A - sender/controller
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Connect to private test overlay
+        uses: tailscale/github-action@v3
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+          tags: tag:ci-p2p
+      - name: Build P2P binary
+        run: cargo build --release --manifest-path services/p2p-node/Cargo.toml
+      - name: Create ephemeral SSH key and Host A endpoint
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/osiris-3host"
+          chmod 700 "$RUNNER_TEMP/osiris-3host"
+          ssh-keygen -q -t ed25519 -N "" -f "$RUNNER_TEMP/osiris-3host/host-a"
+          printf '{"ip":"%s"}\n' "$(tailscale ip -4 | head -n1)" > "$RUNNER_TEMP/osiris-3host/host-a.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: three-e2ee-a-pub-${{ github.run_id }}
+          path: ${{ runner.temp }}/osiris-3host/host-a.pub
+          retention-days: 1
+      - name: Wait for Host B and C endpoints
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for artifact in "three-e2ee-b-endpoint-${{ github.run_id }}" "three-e2ee-c-endpoint-${{ github.run_id }}"; do
+            found=""
+            for _ in $(seq 1 180); do
+              found="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" --jq ".artifacts[] | select(.name == \"$artifact\" and .expired == false) | .id" | head -n1)"
+              [ -n "$found" ] && break
+              sleep 3
+            done
+            [ -n "$found" ] || { echo "Missing endpoint artifact: $artifact"; exit 1; }
+          done
+      - uses: actions/download-artifact@v4
+        with:
+          name: three-e2ee-b-endpoint-${{ github.run_id }}
+          path: ${{ runner.temp }}/osiris-3host
+      - uses: actions/download-artifact@v4
+        with:
+          name: three-e2ee-c-endpoint-${{ github.run_id }}
+          path: ${{ runner.temp }}/osiris-3host
+      - name: Pin SSH host keys and run three-host E2EE test
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/osiris-3host"
+          b="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["ip"])' "$dir/host-b.json")"
+          c="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["ip"])' "$dir/host-c.json")"
+          ssh-keyscan -T 15 -H "$b" "$c" > "$dir/known_hosts"
+          test -s "$dir/known_hosts"
+          python3 scripts/test_p2p_three_host_e2ee_ssh.py \
+            --ssh-target-b "runner@$b" --ssh-target-c "runner@$c" \
+            --host-a-ip "$(tailscale ip -4 | head -n1)" --port 4001 \
+            --remote-binary "$GITHUB_WORKSPACE/target/release/osiris-p2p-node" \
+            --ssh-option=-i --ssh-option="$dir/host-a" \
+            --ssh-option=-o --ssh-option=BatchMode=yes \
+            --ssh-option=-o --ssh-option=StrictHostKeyChecking=yes \
+            --ssh-option=-o --ssh-option="UserKnownHostsFile=$dir/known_hosts" \
+            --ssh-option=-o --ssh-option=ConnectTimeout=15
+      - name: Upload diagnostics on failure
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: three-e2ee-a-failure-${{ github.run_id }}
+          # Never upload the ephemeral SSH private key (host-a).
+          path: |
+            ${{ runner.temp }}/osiris-3host/host-a.json
+            ${{ runner.temp }}/osiris-3host/known_hosts
+          if-no-files-found: ignore
+          retention-days: 3
+
+  host-b:
+    name: Host B - intended recipient
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: tailscale/github-action@v3
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+          tags: tag:ci-p2p
+      - name: Build receiver
+        run: cargo build --release --manifest-path services/p2p-node/Cargo.toml
+      - name: Wait for sender SSH key
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          name="three-e2ee-a-pub-${{ github.run_id }}"
+          for _ in $(seq 1 180); do
+            id="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" --jq ".artifacts[] | select(.name == \"$name\" and .expired == false) | .id" | head -n1)"
+            [ -n "$id" ] && exit 0
+            sleep 3
+          done
+          echo "Host A public key artifact timed out"; exit 1
+      - uses: actions/download-artifact@v4
+        with:
+          name: three-e2ee-a-pub-${{ github.run_id }}
+          path: ${{ runner.temp }}/osiris-3host
+      - name: Start SSH receiver and publish endpoint
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/osiris-3host"
+          mkdir -p "$dir" "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
+          sudo apt-get update && sudo apt-get install -y openssh-server
+          cat "$dir/host-a.pub" > "$HOME/.ssh/authorized_keys"; chmod 600 "$HOME/.ssh/authorized_keys"
+          sudo ssh-keygen -A; sudo /usr/sbin/sshd
+          ip="$(tailscale ip -4 | head -n1)"; test -n "$ip"
+          for _ in $(seq 1 30); do timeout 2 bash -c ":</dev/tcp/$ip/22" 2>/dev/null && break; sleep 1; done
+          timeout 5 bash -c ":</dev/tcp/$ip/22"
+          printf '{"ip":"%s"}\n' "$ip" > "$dir/host-b.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: three-e2ee-b-endpoint-${{ github.run_id }}
+          path: ${{ runner.temp }}/osiris-3host/host-b.json
+          retention-days: 1
+      - name: Keep Host B online
+        run: sleep 600
+
+  host-c:
+    name: Host C - non-recipient observer
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: tailscale/github-action@v3
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+          tags: tag:ci-p2p
+      - name: Build observer
+        run: cargo build --release --manifest-path services/p2p-node/Cargo.toml
+      - name: Wait for sender SSH key
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          name="three-e2ee-a-pub-${{ github.run_id }}"
+          for _ in $(seq 1 180); do
+            id="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" --jq ".artifacts[] | select(.name == \"$name\" and .expired == false) | .id" | head -n1)"
+            [ -n "$id" ] && exit 0
+            sleep 3
+          done
+          echo "Host A public key artifact timed out"; exit 1
+      - uses: actions/download-artifact@v4
+        with:
+          name: three-e2ee-a-pub-${{ github.run_id }}
+          path: ${{ runner.temp }}/osiris-3host
+      - name: Start SSH receiver and publish endpoint
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/osiris-3host"
+          mkdir -p "$dir" "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
+          sudo apt-get update && sudo apt-get install -y openssh-server
+          cat "$dir/host-a.pub" > "$HOME/.ssh/authorized_keys"; chmod 600 "$HOME/.ssh/authorized_keys"
+          sudo ssh-keygen -A; sudo /usr/sbin/sshd
+          ip="$(tailscale ip -4 | head -n1)"; test -n "$ip"
+          for _ in $(seq 1 30); do timeout 2 bash -c ":</dev/tcp/$ip/22" 2>/dev/null && break; sleep 1; done
+          timeout 5 bash -c ":</dev/tcp/$ip/22"
+          printf '{"ip":"%s"}\n' "$ip" > "$dir/host-c.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: three-e2ee-c-endpoint-${{ github.run_id }}
+          path: ${{ runner.temp }}/osiris-3host/host-c.json
+          retention-days: 1
+      - name: Keep Host C online
+        run: sleep 600

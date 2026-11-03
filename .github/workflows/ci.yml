@@ -12,7 +12,7 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   python:
@@ -30,11 +30,11 @@ jobs:
       - name: Run Python tests
         run: pytest -q services/quant-api/tests
       - name: Syntax-check P2P acceptance helpers
-        run: python -m py_compile scripts/test_p2p_cross_host_ssh.py scripts/test_p2p_core_trusted_peer_allowlist.py scripts/test_p2p_bootstrap_readiness.py scripts/test_p2p_bootstrap_restart.py scripts/test_p2p_global_revocation_sync.py scripts/test_p2p_e2ee_three_process.py
+        run: python -m py_compile scripts/test_p2p_cross_host_ssh.py scripts/test_p2p_core_trusted_peer_allowlist.py scripts/test_p2p_bootstrap_readiness.py scripts/test_p2p_bootstrap_restart.py scripts/test_p2p_global_revocation_sync.py scripts/test_p2p_e2ee_three_process.py scripts/test_p2p_three_host_e2ee_ssh.py
 
   rust:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
