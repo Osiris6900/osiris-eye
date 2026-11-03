@@ -123,7 +123,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Subscribed { peer_id, .. })) => {
                 emit!("gossipsub_subscribed peer={peer_id}");
                 if role == "sender" && !published {
-                    let payload = r#"{\"schema\":\"osiris.observation.v1\",\"instrument\":\"BTC-USD\",\"provider\":\"relay-test\",\"payload\":\"three-process-relay-ok\"}"#.to_string();
+                    let payload = r#"{ "schema":"osiris.observation.v1","instrument":"BTC-USD","provider":"relay-test","payload":"three-process-relay-ok" }"#.to_string();
                     swarm.behaviour_mut().gossipsub.publish(topic.clone(), payload.into_bytes())?;
                     published = true;
                     emit!("relay_observation_published=true");
