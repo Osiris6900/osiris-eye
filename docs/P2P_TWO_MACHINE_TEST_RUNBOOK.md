@@ -54,9 +54,25 @@ Use the node's stdin JSON interface to publish a schema-valid observation envelo
 {"schema":"osiris.observation.v1","instrument":"TEST-PAIR","observed_at":"2026-11-03T00:00:00Z","provider":"manual-connectivity-test","payload_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
 ```
 
-The current envelope validator checks required field formats and lengths. The current node sends observation metadata/hash, not the underlying market-data payload; it does not prove that the hash matches separately stored bytes or that the observation is accurate.
+The current node validates the SHA-256 digest against the included payload before publishing. The receiver validates the same envelope and logs its instrument, provider, timestamp, digest, and payload byte count. This proves transport and payload-integrity checking for this test message; it does not prove that the observation is true or from a trusted market-data source.
 
-## 5. Pass criteria and evidence
+
+## 5. Automated SSH-driven cross-host test
+
+For a repeatable one-command test, run the helper on host A after building the release binary on both hosts. Host B must be reachable from host A over SSH, and host A's selected TCP port must be reachable from host B.
+
+On host A, from the repository root:
+
+```bash
+cargo build --release --manifest-path services/p2p-node/Cargo.toml
+python scripts/test_p2p_cross_host_ssh.py --ssh-target user@MACHINE_B --public-ip MACHINE_A_REACHABLE_IP --port 4001 --remote-binary osiris-eye/target/release/osiris-p2p-node
+```
+
+The helper starts host A's receiver, starts host B's sender through SSH, waits for the GossipSub subscription, publishes a unique test envelope from B, and passes only when A logs the same unique instrument ID and SHA-256 digest. The remote node key is temporary and removed when its process exits. The helper terminates both test processes on completion.
+
+Before running, clone/build the same commit on host B, ensure its binary path matches `--remote-binary`, and allow inbound TCP 4001 on host A only from host B's address. Use `--ssh-option` to pass extra SSH options when required. The helper does not configure cloud firewalls or routers for you.
+
+## 6. Pass criteria and evidence
 
 Record:
 - OS and Rust version on both machines;
@@ -68,14 +84,14 @@ Record:
 
 Pass only if node B connects to node A and node A receives the exact valid test envelope published by node B (or vice versa). Repeat in the opposite direction if bidirectional behavior is required.
 
-## Troubleshooting
+## 7. Troubleshooting
 
 - **No connection:** verify LAN reachability, IP, port, firewall, listener bind address, and exact PeerId.
 - **No message:** verify both nodes joined the same GossipSub topic and that the receiver subscribed before publication; retry after both subscriptions are visible.
 - **Works on LAN but not across networks:** expected until public bootstrap/relay and NAT traversal are designed and tested. Do not solve this by opening broad inbound firewall access.
 - **Identity changes:** preserve each node's local `.osiris-node-key` securely; do not copy one machine's identity key to another. Back up keys only through an approved secure process.
 
-## Current known limitations
+## 8. Current known limitations
 
 - Kademlia uses an in-memory store; peer records are not durable.
 - mDNS is LAN discovery only.
