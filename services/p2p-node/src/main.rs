@@ -1,7 +1,7 @@
 mod peer_auth;
 mod revocation;
 
-use revocation::RevocationRegistry;
+use revocation::{RevocationRegistry, RevocationSyncMessage};
 use peer_auth::{is_peer_allowed, parse_revoked_peers, parse_trusted_peers};
 use std::{collections::HashSet, env, error::Error, fs::{self, OpenOptions}, io::{BufRead, BufReader as StdBufReader, Write}, net::SocketAddr, path::PathBuf, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
 
@@ -26,6 +26,7 @@ use tokio::{io::{self, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
 
 const PROTOCOL_VERSION: &str = "/osiris-eye/p2p/1.0.0";
 const TOPIC_NAME: &str = "osiris/observations/1";
+const REVOCATION_TOPIC_NAME: &str = "osiris/revocations/1";
 
 const MAX_REPLAY_CACHE_BYTES: u64 = 64 * 1024 * 1024;
 
@@ -430,6 +431,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         gossipsub_config,
     )?;
     let topic = gossipsub::IdentTopic::new(TOPIC_NAME);
+    let revocation_topic = gossipsub::IdentTopic::new(REVOCATION_TOPIC_NAME);
     let mut behaviour = Behaviour {
         gossipsub,
         kademlia: kad::Behaviour::new(peer_id, MemoryStore::new(peer_id)),
@@ -440,6 +442,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     };
     behaviour.kademlia.set_mode(Some(kad::Mode::Server));
     behaviour.gossipsub.subscribe(&topic)?;
+    behaviour.gossipsub.subscribe(&revocation_topic)?;
 
     let mut swarm = SwarmBuilder::with_existing_identity(key)
         .with_tokio()
@@ -470,15 +473,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let registry_path = env::var_os("OSIRIS_REVOCATION_REGISTRY")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(".osiris-revocations.json"));
-    if let Some(authority_key) = authority_key {
+    let mut revocation_registry = if let Some(authority_key) = authority_key {
         let registry = RevocationRegistry::open(registry_path.clone(), authority_key)?;
-        let signed_peers = registry.revoked_peer_ids()?;
-        revoked_peer_set.extend(signed_peers);
-        emit!("signed_revocation_registry=loaded records={} path={}", revoked_peer_set.len(), registry_path.display());
+        revoked_peer_set.extend(registry.revoked_peer_ids()?);
+        emit!("signed_revocation_registry=loaded records={} path={}", registry.records().len(), registry_path.display());
+        Some(registry)
     } else {
         emit!("signed_revocation_registry=disabled reason=authority_public_key_not_configured");
-    }
-    let revoked_peers = if revoked_peer_set.is_empty() { None } else { Some(revoked_peer_set) };
+        None
+    };
+    let mut revoked_peers = if revoked_peer_set.is_empty() { None } else { Some(revoked_peer_set) };
     let replay_path = env::var_os("OSIRIS_REPLAY_CACHE")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(".osiris-replay-cache"));
