@@ -136,6 +136,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     return Ok(());
                 }
             }
+            SwarmEvent::ListenerError { listener_id, error } => {
+                emit!("relay_listener_error listener_id={listener_id:?} error={error}");
+            }
+            SwarmEvent::ListenerClosed { listener_id, reason } => {
+                emit!("relay_listener_closed listener_id={listener_id:?} reason={reason:?}");
+            }
+            SwarmEvent::ConnectionClosed { peer_id: closed_peer, cause, .. } => {
+                emit!("connection_closed peer={closed_peer} cause={cause:?}");
+            }
             SwarmEvent::OutgoingConnectionError { peer_id: failed_peer, error, .. } => {
                 emit!("connection_error peer={failed_peer:?} error={error}");
                 if role == "sender" && sender_circuit_started && sender_dial_attempts < 3 {
