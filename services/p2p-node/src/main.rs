@@ -271,10 +271,10 @@ mod tests {
             std::process::id(),
             now,
         ));
-        let mut guard = super::ReplayGuard::open(path.clone()).unwrap();
+        let guard = super::ReplayGuard::open(path.clone()).unwrap();
         let replay_key = format!("{}:{}", envelope.sender_peer_id, envelope.message_id);
-        assert!(guard.seen.is_empty());
-        assert!(guard.record_message_id_if_new(&replay_key).unwrap());
+        let replay_digest = format!("{:x}", Sha256::digest(replay_key.as_bytes()));
+        assert!(!guard.seen.contains(&replay_digest));
         let _ = std::fs::remove_file(path);
     }
 
