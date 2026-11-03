@@ -49,7 +49,7 @@ impl ObservationEnvelope {
 
 #[cfg(test)]
 mod tests {
-    use super::{peer_id_from_multiaddr, ObservationEnvelope};
+    use super::{parse_external_addresses, peer_id_from_multiaddr, ObservationEnvelope};
     use libp2p::{identity, Multiaddr, PeerId};
     use sha2::{Digest, Sha256};
     fn valid() -> ObservationEnvelope {
@@ -64,6 +64,18 @@ mod tests {
     #[test] fn rejects_payload_hash_mismatch() { let mut v=valid(); v.payload.push_str("-tampered"); assert_eq!(v.validate(),Err("payload_hash_mismatch")); }
     #[test] fn rejects_oversized_payload() { let mut v=valid(); v.payload="x".repeat(1_048_577); assert_eq!(v.validate(),Err("payload_too_large")); }
     #[test] fn rejects_empty_provider() { let mut v=valid(); v.provider.clear(); assert_eq!(v.validate(),Err("invalid_provider")); }
+    #[test] fn parses_public_tcp_external_addresses() {
+        let addresses = parse_external_addresses(Some("/ip4/203.0.113.10/tcp/4001,/dns4/node.example/tcp/4001")).unwrap();
+        assert_eq!(addresses.len(), 2);
+    }
+    #[test] fn rejects_external_address_without_tcp() {
+        assert!(parse_external_addresses(Some("/ip4/203.0.113.10/udp/4001")).is_err());
+    }
+    #[test] fn rejects_external_address_with_peer_id() {
+        let peer = PeerId::random();
+        let raw = format!("/ip4/203.0.113.10/tcp/4001/p2p/{peer}");
+        assert!(parse_external_addresses(Some(&raw)).is_err());
+    }
     #[test] fn extracts_peer_id_from_bootstrap_multiaddr() {
         let peer = PeerId::from(identity::Keypair::generate_ed25519().public());
         let address: Multiaddr = format!("/ip4/127.0.0.1/tcp/4001/p2p/{peer}").parse().unwrap();
@@ -134,6 +146,30 @@ fn peer_id_from_multiaddr(address: &Multiaddr) -> Option<PeerId> {
     })
 }
 
+fn parse_external_addresses(raw: Option<&str>) -> Result<Vec<Multiaddr>, Box<dyn Error>> {
+    let Some(raw) = raw else {
+        return Ok(Vec::new());
+    };
+
+    let mut addresses = Vec::new();
+    for entry in raw.split(',').map(str::trim).filter(|entry| !entry.is_empty()) {
+        let address: Multiaddr = entry.parse()?;
+        let has_tcp = address
+            .iter()
+            .any(|protocol| matches!(protocol, libp2p::multiaddr::Protocol::Tcp(_)));
+        let has_peer_id = peer_id_from_multiaddr(&address).is_some();
+        if !has_tcp || has_peer_id {
+            return Err(format!(
+                "external address must contain a TCP transport and must not contain /p2p/<peer-id>: {address}"
+            ).into());
+        }
+        if !addresses.contains(&address) {
+            addresses.push(address);
+        }
+    }
+    Ok(addresses)
+}
+
 fn parse_bootstrap_peers(
     swarm: &mut Swarm<Behaviour>,
 ) -> Result<Vec<(PeerId, Multiaddr)>, Box<dyn Error>> {
@@ -191,6 +227,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .with_behaviour(|_| behaviour)?
         .with_swarm_config(|config| config.with_idle_connection_timeout(Duration::from_secs(90)))
         .build();
+
+    // Public nodes behind a known public IP or DNS name should set
+    // OSIRIS_EXTERNAL_ADDRS to comma-separated reachable TCP multiaddresses.
+    // These are advertised to peers; firewall/NAT rules must forward the same port.
+    let external_addresses = parse_external_addresses(env::var("OSIRIS_EXTERNAL_ADDRS").ok().as_deref())?;
+    for address in &external_addresses {
+        swarm.add_external_address(address.clone());
+        emit!("external_address_advertised={address}");
+    }
 
     let listen: Multiaddr = env::var("OSIRIS_LISTEN_ADDR")
         .unwrap_or_else(|_| "/ip4/0.0.0.0/tcp/0".to_owned())
