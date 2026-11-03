@@ -74,13 +74,22 @@ impl PeerKeyStore {
         ).optional()?;
 
         match current {
-            Some((current_epoch, current_json)) if epoch < current_epoch => {
+            Some((current_epoch, _current_json)) if epoch < current_epoch => {
                 return Err("key epoch rollback rejected".into());
             }
-            Some((current_epoch, current_json)) if epoch == current_epoch && current_json != encoded => {
-                return Err("conflicting key binding at existing epoch".into());
+            Some((current_epoch, current_json)) if epoch == current_epoch => {
+                let previous: KeyBindingRecord = serde_json::from_str(&current_json)?;
+                if previous.transport_public_key != record.transport_public_key
+                    || previous.identity_public_key != record.identity_public_key {
+                    return Err("conflicting key binding at existing epoch".into());
+                }
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)?.as_secs() as i64;
+                transaction.execute(
+                    "UPDATE peer_key_bindings SET record_json = ?2, updated_at = ?3 WHERE peer_id = ?1",
+                    params![record.peer_id, encoded, now]
+                )?;
             }
-            Some((current_epoch, _)) if epoch == current_epoch => {}
             None => {
                 let count: i64 = transaction.query_row(
                     "SELECT COUNT(*) FROM peer_key_bindings", [], |row| row.get(0)
