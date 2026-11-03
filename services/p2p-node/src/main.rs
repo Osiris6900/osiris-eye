@@ -1034,7 +1034,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         continue;
                     }
                     if e2ee_enabled {
-                        let recipients = env::var("OSIRIS_E2EE_RECIPIENTS").unwrap_or_default();
+                        let recipients = if let Some(path) = env::var_os("OSIRIS_E2EE_RECIPIENTS_FILE") {
+                            fs::read_to_string(path)?
+                        } else {
+                            env::var("OSIRIS_E2EE_RECIPIENTS").unwrap_or_default()
+                        };
                         let recipients: Vec<&str> = recipients.split(',').map(str::trim).filter(|value| !value.is_empty()).collect();
                         if recipients.is_empty() {
                             emit!("publish_rejected reason=e2ee_recipients_required");
