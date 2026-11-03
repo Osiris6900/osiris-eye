@@ -82,7 +82,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: three-e2ee-a-failure-${{ github.run_id }}
-          path: ${{ runner.temp }}/osiris-3host/
+          # Never upload the ephemeral SSH private key (host-a).
+          path: |
+            ${{ runner.temp }}/osiris-3host/host-a.json
+            ${{ runner.temp }}/osiris-3host/known_hosts
           if-no-files-found: ignore
           retention-days: 3
 
