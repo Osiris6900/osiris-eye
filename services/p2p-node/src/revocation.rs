@@ -7,6 +7,7 @@ use std::{
     fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 const SCHEMA: &str = "osiris.revocation.v1";
