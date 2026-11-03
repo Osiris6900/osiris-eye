@@ -2,7 +2,7 @@
 
 ## Scope of this change
 
-This change adds the cryptographic record format, authority-key verification, durable local registry, per-peer monotonic sequence checks, and startup enforcement. It is the trust and storage foundation for network-wide synchronization; it does **not** yet gossip records between nodes. Do not describe this stage as globally synchronized.
+This change adds the cryptographic record format, authority-key verification, durable local registry, per-peer monotonic sequence checks, startup enforcement, and a first GossipSub synchronization path. Nodes with the same pinned authority key subscribe to a dedicated revocation topic, request a registry snapshot when a peer subscribes, validate incoming records, persist accepted records, disconnect newly revoked peers, and re-publish accepted records for mesh propagation. This is an initial synchronization implementation; do not treat it as production-global until multi-process, offline-node, partition-healing, and load tests pass.
 
 ## Trust model
 
@@ -40,4 +40,4 @@ Do not enable a registry with a placeholder or unverified authority key. Provisi
 - Expiry, un-revoke/appeal policy, and audit export.
 - Tests spanning multiple independent node processes with online and offline peers.
 
-Until those pieces land and pass multi-node acceptance tests, operators must distribute the signed registry file securely to each node. This is **not yet a global synchronized revocation system**.
+The current branch includes best-effort GossipSub snapshot/request and record propagation. Nodes must still be provisioned with the same authority key, and revocation changes will not propagate while a node is offline unless it reconnects to a peer holding the updated registry. Periodic anti-entropy, snapshot pagination, and multi-node acceptance tests remain release blockers. This is **not yet production-certified global synchronization**.
