@@ -90,12 +90,11 @@ def main():
         receiver_peer_line = receiver.wait_for("peer_id=", timeout=10)
         receiver_peer_id = receiver_peer_line.split("=", 1)[1]
 
-        # The relay server's ReservationReqAccepted event is authoritative.
-        # libp2p 0.56 does not surface a matching client-side event in this
-        # client behaviour; allow the reservation response to settle before
-        # the sender begins its circuit dial (the sender also retries).
-        relay_proc.wait_for("ReservationReqAccepted", timeout=25)
-        time.sleep(2)
+        # Do not infer a reservation from the server-side acceptance log.
+        # Start the sender only after the receiver's relay-client behaviour
+        # confirms that its reservation response was processed.
+        receiver.wait_for("relay_reservation_accepted=true", timeout=25)
+        receiver.wait_for("relay_reserved_address=", timeout=10)
 
         sender_env = base_env | {
             "OSIRIS_RELAY_CLIENT_ROLE": "sender",
@@ -103,8 +102,11 @@ def main():
             "OSIRIS_RELAY_TARGET_PEER": receiver_peer_id,
         }
         sender = Process("sender", [str(CLIENT)], sender_env)
-        sender.wait_for("relay_observation_published=true", timeout=20)
-        receiver.wait_for("relay_observation_received", timeout=20)
+        sender.wait_for("peer_connected=", timeout=15)
+        sender.wait_for("relay_observation_published=true", timeout=25)
+        receiver.wait_for("relay_observation_received", timeout=25)
+        if not any("relayed=true" in line for line in sender.history):
+            sender.wait_for("relayed=true", timeout=10)
         print("THREE_PROCESS_CIRCUIT_RELAY_TEST=PASS", flush=True)
     finally:
         stop_all()
