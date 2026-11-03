@@ -138,6 +138,29 @@ jobs:
           path: ${{ runner.temp }}
           github-token: ${{ github.token }}
           run-id: ${{ github.run_id }}
+      - name: Diagnose Tailscale path and TCP listener
+        env:
+          RUNNER_TEMP: ${{ runner.temp }}
+        run: |
+          set -u
+          ENDPOINT="$RUNNER_TEMP/p2p-endpoint.json"
+          TAILSCALE_IP="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["tailscale_ip"])' "$ENDPOINT")"
+          echo "=== Tailscale status ==="
+          tailscale status || true
+          echo "=== Route to Host A ==="
+          ip route get "$TAILSCALE_IP" || true
+          echo "=== Tailscale ping ==="
+          tailscale ping --timeout=10s "$TAILSCALE_IP"
+          PING_STATUS=$?
+          echo "=== TCP port 4001 ==="
+          nc -vz -w 8 "$TAILSCALE_IP" 4001
+          TCP_STATUS=$?
+          echo "TAILSCALE_PING_EXIT=$PING_STATUS"
+          echo "TCP_4001_EXIT=$TCP_STATUS"
+          if [ "$PING_STATUS" -ne 0 ] || [ "$TCP_STATUS" -ne 0 ]; then
+            echo "Network-layer diagnosis failed; stopping before Libp2p handshake."
+            exit 1
+          fi
       - name: Connect and publish integrity probe
         env:
           RUNNER_TEMP: ${{ runner.temp }}
