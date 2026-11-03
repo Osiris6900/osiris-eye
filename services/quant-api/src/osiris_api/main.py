@@ -782,6 +782,10 @@ from .market_routes import router as market_data_router
 
 app.include_router(market_data_router)
 
+from .p2p_routes import router as hybrid_p2p_router
+
+app.include_router(hybrid_p2p_router)
+
 
 from .instrument_routes import router as instrument_master_router
 app.include_router(instrument_master_router)
