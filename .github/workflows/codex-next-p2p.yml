@@ -1,10 +1,9 @@
 name: Start next P2P milestone with Codex
 
 on:
-  pull_request:
-    types: [closed]
-    branches: [main]
-  push:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
     branches: [main]
 
 permissions:
@@ -18,18 +17,16 @@ concurrency:
 jobs:
   next-p2p-milestone:
     if: >-
-      (github.event_name == 'pull_request' &&
-       github.event.pull_request.merged == true &&
-       contains(github.event.pull_request.title, 'P2P')) ||
-      (github.event_name == 'push' &&
-       contains(github.event.head_commit.message, 'P2P'))
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      contains(github.event.workflow_run.head_commit.message, 'P2P')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - name: Check out the updated main branch
+      - name: Check out the exact commit that passed CI
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.event.workflow_run.head_sha }}
           persist-credentials: false
 
       - name: Set up Rust
@@ -49,7 +46,7 @@ jobs:
           prompt: |
             You are the autonomous implementation agent for Osiris Eye's Rust/libp2p P2P network.
 
-            A P2P milestone has just landed on main. Inspect the repository state, especially:
+            A P2P milestone has passed the repository's CI on main. Inspect the exact checked-out repository state, especially:
             - services/p2p-node/src/main.rs
             - services/p2p-node/src/bin/relay-client.rs
             - scripts/test_p2p_*.py
