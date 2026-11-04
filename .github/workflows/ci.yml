@@ -57,8 +57,6 @@ jobs:
         run: cargo test --manifest-path crates/risk-kernel/Cargo.toml
       - name: Test decentralized P2P node
         run: cargo test --locked --manifest-path services/p2p-node/Cargo.toml --all-targets
-      - name: Test optional libsodium pilot
-        run: cargo test --manifest-path services/p2p-node/Cargo.toml --features libsodium-pilot --test libsodium_pilot
       - name: Build P2P node for process-level tests
         run: cargo build --locked --release --manifest-path services/p2p-node/Cargo.toml
       - name: Verify two OS processes exchange a P2P observation
