@@ -24,10 +24,15 @@ struct Record {
 }
 fn hex(bytes: &[u8]) -> String { bytes.iter().map(|b| format!("{b:02x}")).collect() }
 fn main() -> Result<(), Box<dyn Error>> {
-    let path = PathBuf::from(env::args().nth(1).ok_or("usage: make_revocation_fixture <record.json>")?);
+    let mut args = env::args().skip(1);
+    let path = PathBuf::from(args.next().ok_or("usage: make_revocation_fixture <record.json> [target-peer-id]")?);
     let key = SigningKey::from_bytes(&[42u8; 32]); // test-only authority; never use in production
     let authority_key = hex(key.verifying_key().as_bytes());
-    let peer_id = PeerId::from(identity::Keypair::generate_ed25519().public()).to_string();
+    let peer_id = match args.next() {
+        Some(value) => value.parse::<PeerId>()?.to_string(),
+        None => PeerId::from(identity::Keypair::generate_ed25519().public()).to_string(),
+    };
+    if args.next().is_some() { return Err("too many arguments".into()); }
     let issued_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
     let payload = Payload { schema: "osiris.revocation.v1", authority_key: &authority_key,
         peer_id: &peer_id, sequence: 1, issued_at, reason_code: "integration_test" };
