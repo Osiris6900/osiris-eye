@@ -9,6 +9,10 @@ description = "First peer-to-peer node for the OSIRIS EYE network"
 name = "osiris-p2p-node"
 path = "src/main.rs"
 
+[features]
+default = []
+libsodium-pilot = ["dep:sodiumoxide"]
+
 [dependencies]
 futures = "0.3"
 ed25519-dalek = "2.1"
@@ -23,3 +27,4 @@ hkdf = "0.12"
 rand_core = { version = "0.6", features = ["getrandom"] }
 x25519-dalek = { version = "2", features = ["static_secrets", "zeroize"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
+sodiumoxide = { version = "0.2.7", optional = true }
