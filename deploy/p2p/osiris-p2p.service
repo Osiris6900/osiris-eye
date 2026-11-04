@@ -20,7 +20,8 @@ ExecStart=/usr/local/bin/osiris-p2p-node
 StandardInput=null
 StandardOutput=journal
 StandardError=journal
-Restart=on-failure
+# Self-healing: restart after crashes AND clean exits so the node stays live 24/7.
+Restart=always
 RestartSec=5
 KillSignal=SIGINT
 TimeoutStopSec=15
