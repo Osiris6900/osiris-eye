@@ -72,6 +72,7 @@ def probe(host: str, port: int, timeout: float) -> dict:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", required=True)
+    parser.add_argument("--vantage-id", help="operator-declared identifier for the probing network")
     parser.add_argument("--port", type=int, default=4001)
     parser.add_argument("--timeout", type=float, default=3)
     args = parser.parse_args(argv)
@@ -79,6 +80,10 @@ def main(argv: list[str] | None = None) -> int:
         result = probe(args.host, args.port, args.timeout)
     except ValueError as exc:
         parser.error(str(exc))
+    if args.vantage_id is not None:
+        if not 1 <= len(args.vantage_id) <= 64 or not all(ch.isalnum() or ch in "-_" for ch in args.vantage_id):
+            parser.error("vantage-id must be 1..64 alphanumeric, dash or underscore characters")
+        result["vantage_id"] = args.vantage_id
     print(json.dumps(result, sort_keys=True))
     return 0 if result["tcp_reachable"] else 1
 
