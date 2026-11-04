@@ -1,0 +1,123 @@
+# OSIRIS EYE CI — CircleCI mirror of .github/workflows/ci.yml
+# Free plan: 30,000 credits/month, no credit card required.
+
+version: 2.1
+
+jobs:
+  python:
+    docker:
+      - image: cimg/python:3.11
+    resource_class: medium
+    steps:
+      - checkout
+      - run:
+          name: Install API and test dependencies
+          command: pip install -e "services/quant-api[dev]" 'PyYAML>=6,<7'
+      - run:
+          name: Run Python tests
+          command: pytest -q services/quant-api/tests
+      - run:
+          name: Validate workflow YAML and embedded Bash
+          command: |
+            python scripts/check_p2p_workflows.py
+            python scripts/test_check_p2p_workflows.py
+      - run:
+          name: Verify P2P coordination, SSH harness and deployment preflight
+          command: |
+            python scripts/test_p2p_workflow_coordination.py
+            python scripts/test_p2p_ssh_harness.py
+            python deploy/p2p/test_preflight.py
+      - run:
+          name: Validate public TCP probe without network access
+          command: python -m unittest discover -s scripts -p 'test_probe_p2p_public_tcp.py' -v
+      - run:
+          name: Validate multi-vantage TCP evidence gate offline
+          command: python -m unittest discover -s scripts -p 'test_check_p2p_public_evidence.py' -v
+      - run:
+          name: Validate sampled P2P outage evidence gate offline
+          command: python -m unittest discover -s scripts -p 'test_check_p2p_outage_recovery.py' -v
+      - run:
+          name: Verify decentralized bootstrap configuration gate
+          command: python -m unittest discover -s scripts -p 'test_check_decentralized_bootstrap.py' -v
+      - run:
+          name: Syntax-check P2P acceptance helpers
+          command: python -m py_compile scripts/test_p2p_cross_host_ssh.py scripts/test_p2p_cross_host_e2ee_ssh.py scripts/test_p2p_core_trusted_peer_allowlist.py scripts/test_p2p_bootstrap_readiness.py scripts/test_p2p_bootstrap_restart.py scripts/test_p2p_global_revocation_sync.py scripts/test_p2p_e2ee_three_process.py scripts/test_p2p_three_host_e2ee_ssh.py scripts/test_p2p_live_swarm_revocation.py scripts/test_p2p_core_relay_e2ee.py scripts/test_p2p_observation_freshness.py
+
+  rust:
+    docker:
+      - image: rust:1
+    resource_class: medium+
+    environment:
+      CARGO_BUILD_JOBS: "3"
+      CARGO_TERM_COLOR: always
+    steps:
+      - checkout
+      - run:
+          name: Install Python for process-level tests
+          command: apt-get update && apt-get install -y python3 python3-pip
+      - run:
+          name: Test Rust risk kernel
+          command: cargo test --manifest-path crates/risk-kernel/Cargo.toml
+      - run:
+          name: Test decentralized P2P node
+          command: cargo test --locked --manifest-path services/p2p-node/Cargo.toml --all-targets
+      - run:
+          name: Build P2P node for process-level tests
+          command: cargo build --locked --release --manifest-path services/p2p-node/Cargo.toml
+      - run:
+          name: Verify two OS processes exchange a P2P observation
+          command: python3 scripts/test_p2p_two_process.py
+      - run:
+          name: Verify core node rejects peers outside trusted allowlist
+          command: python3 scripts/test_p2p_core_trusted_peer_allowlist.py
+      - run:
+          name: Verify local P2P HTTP health endpoint
+          command: python3 scripts/test_p2p_http_health.py
+      - run:
+          name: Verify readiness changes with bootstrap connectivity
+          command: python3 scripts/test_p2p_bootstrap_readiness.py
+      - run:
+          name: Verify bootstrap peer reconnects after process restart
+          command: python3 scripts/test_p2p_bootstrap_restart.py
+      - run:
+          name: Verify relay server and two relay clients exchange an observation
+          command: python3 scripts/test_p2p_three_process_relay.py
+      - run:
+          name: Verify three-node authority-signed revocation synchronization
+          command: python3 scripts/test_p2p_global_revocation_sync.py
+      - run:
+          name: Verify live swarm disconnects revoked peer and denies reconnect
+          command: python3 scripts/test_p2p_live_swarm_revocation.py
+      - run:
+          name: Verify recipient E2EE and non-recipient rejection
+          command: python3 scripts/test_p2p_e2ee_three_process.py
+      - run:
+          name: Verify core-node E2EE through Circuit Relay v2
+          command: python3 scripts/test_p2p_core_relay_e2ee.py --evidence /tmp/core-relay-e2ee.json
+      - run:
+          name: Verify observation freshness and fail-closed configuration
+          command: python3 scripts/test_p2p_observation_freshness.py
+      - store_artifacts:
+          path: /tmp/core-relay-e2ee.json
+
+  web:
+    docker:
+      - image: cimg/node:lts
+    resource_class: medium
+    steps:
+      - checkout
+      - run:
+          name: Install web dependencies
+          working_directory: apps/web
+          command: npm install
+      - run:
+          name: Type-check and build web app
+          working_directory: apps/web
+          command: npm run build
+
+workflows:
+  ci:
+    jobs:
+      - python
+      - rust
+      - web
