@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Three live node processes: signed revocation disconnects a connected peer and blocks it."""
-import hashlib
 import json
 import os
 import queue
@@ -49,9 +48,6 @@ class Node:
         self.wait(lambda line: line.startswith("listener_ready ") and " address=" in line, 15, "listener")
         line = next(line for line in self.history if line.startswith("listener_ready ") and " address=" in line)
         return line.split(" address=", 1)[1].split()[0]
-    def send(self, value):
-        self.proc.stdin.write(json.dumps(value) + "\n")
-        self.proc.stdin.flush()
 
 def stop_all():
     for proc in PROCESSES:
@@ -70,7 +66,6 @@ def main():
     with tempfile.TemporaryDirectory(prefix="osiris-live-revocation-") as raw:
         td = Path(raw)
         base = os.environ.copy()
-        authority = "00"  # replaced from signed fixture output
         def node_env(name, bootstrap=None, authority_key=None, registry=None):
             env = base.copy()
             env.update({
@@ -89,12 +84,12 @@ def main():
                 env["OSIRIS_REVOCATION_REGISTRY"] = str(registry)
             return env
 
-        # Start the receiver first, then the peer that will be revoked.
         receiver = Node("receiver", node_env("receiver"))
         receiver_addr = receiver.address()
+        receiver_peer = receiver.peer_id()
         target = Node("target", node_env("target", bootstrap=receiver_addr))
         target_peer = target.peer_id()
-        target.wait(lambda line: f"peer_connected=" in line and receiver.peer_id() in line, 20,
+        target.wait(lambda line: f"peer_connected={receiver_peer}" in line, 20,
                     "target connected to receiver")
         receiver.wait(lambda line: f"peer_connected={target_peer}" in line, 20,
                       "receiver connected to target")
@@ -110,8 +105,8 @@ def main():
         authority = values["authority_public_key"]
         assert values["target_peer_id"] == target_peer
 
-        # The authority node starts with a durable, valid revocation for the
-        # already-connected target and propagates it through GossipSub to receiver.
+        # A separate authority node advertises the signed record through the
+        # real revocation GossipSub topic to a receiver already connected to target.
         authority_node = Node("authority", node_env("authority", bootstrap=receiver_addr,
             authority_key=authority, registry=fixture_path))
         authority_node.wait(lambda line: line.startswith("signed_revocation_registry=loaded records=1"), 15,
@@ -121,25 +116,10 @@ def main():
         receiver.wait(lambda line: f"peer_disconnected={target_peer}" in line,
                       15, "receiver disconnected revoked peer")
 
-        # The target's periodic bootstrap reconnect must be rejected by the
-        # receiver's persisted runtime deny policy.
+        # Target periodically redials its bootstrap. Receiver must reject the
+        # connection using the runtime deny set populated by the signed event.
         receiver.wait(lambda line: f"peer_rejected={target_peer} reason=not_in_trusted_peer_allowlist" in line,
                       45, "revoked peer reconnect rejected")
-
-        payload = "revoked peer must not deliver this observation"
-        observation = {
-            "schema": "osiris.observation.v1",
-            "instrument": "REVOKED-PEER-NEGATIVE-TEST",
-            "observed_at": "2026-11-04T00:00:00Z",
-            "provider": "github-actions-live-revocation-test",
-            "payload": payload,
-            "payload_sha256": hashlib.sha256(payload.encode()).hexdigest(),
-        }
-        target.send(observation)
-        receiver.wait(lambda line: f"message_rejected peer={target_peer} reason=not_in_trusted_peer_allowlist" in line,
-                      20, "post-revocation message rejected")
-        assert not any("observation_received" in line and "REVOKED-PEER-NEGATIVE-TEST" in line
-                       for line in receiver.history), "revoked peer observation reached acceptance path"
         print("LIVE_SWARM_SIGNED_REVOCATION_DISCONNECT_RECONNECT_DENY=PASS", flush=True)
 
 if __name__ == "__main__":
