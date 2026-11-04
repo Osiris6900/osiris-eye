@@ -9,7 +9,8 @@ import argparse
 import hashlib
 import json
 import os
-import queue
+import collections
+import re
 import shlex
 import subprocess
 import sys
@@ -26,31 +27,114 @@ CANDIDATES = [
 ]
 
 
+MAX_LOG_LINE_CHARS = 16_384
+
+
+class EventLog:
+    """Bounded, shared history: waiting for A must not consume B's readiness.
+
+    Losing output invalidates acceptance evidence, so an overflow fails the run
+    rather than silently dropping events that another wait still needs.
+    """
+
+    def __init__(self, max_events=4096, forbidden_by_source=None):
+        self.history = collections.deque(maxlen=max_events)
+        self.condition = threading.Condition()
+        self.failure = None
+        self.forbidden_by_source = forbidden_by_source or {}
+
+    def record(self, name, line, safe_line=None):
+        with self.condition:
+            safe = line if safe_line is None else safe_line
+            if any(value in line for value in self.forbidden_by_source.get(name, ())):
+                self.failure = f"{name} exposed forbidden observation plaintext"
+                safe = "<forbidden observation plaintext redacted>"
+            if len(line) > MAX_LOG_LINE_CHARS:
+                self.failure = f"{name} exceeded the maximum output line length"
+                safe = "<oversized output line redacted>"
+            if len(self.history) == self.history.maxlen:
+                self.failure = "acceptance output history capacity exceeded"
+            self.history.append((name, safe))
+            self.condition.notify_all()
+        return safe
+
+
 def pump(name, stream, events):
-    for raw in iter(stream.readline, ""):
-        line = raw.rstrip()
-        print(f"[{name}] {line}", flush=True)
-        events.put((name, line))
-    events.put((name, "<stdout-closed>"))
+    in_private_key = False
+    while True:
+        raw = stream.readline(MAX_LOG_LINE_CHARS + 2)
+        if not raw:
+            break
+        line = raw.rstrip("\r\n")
+        if "-----BEGIN " in line and "PRIVATE KEY-----" in line:
+            in_private_key = True
+        if in_private_key:
+            redacted = "<private key material redacted>"
+            if "-----END " in line and "PRIVATE KEY-----" in line:
+                in_private_key = False
+        else:
+            redacted = re.sub(
+                r"(?i)((?:private[_ -]?key|secret|token|password)\s*[:=]\s*)\S+",
+                r"\1<redacted>", line,
+            )
+        # Validate the original line before redaction; forbidden evidence cannot
+        # disappear through log filtering or retention limits.
+        safe = events.record(name, line, redacted)
+        print(f"[{name}] {safe}", flush=True)
+    events.record(name, "<stdout-closed>")
 
 
 def wait_for(events, processes, predicate, timeout, description):
     deadline = time.monotonic() + timeout
-    seen = []
-    while time.monotonic() < deadline:
-        try:
-            name, line = events.get(timeout=min(0.25, max(0.01, deadline - time.monotonic())))
-        except queue.Empty:
+    with events.condition:
+        while True:
+            recent = [f"{name}: {line}" for name, line in list(events.history)[-30:]]
+            if events.failure:
+                raise RuntimeError(f"{events.failure}; recent output: {recent}")
             for process_name, proc in processes:
                 if proc.poll() is not None:
                     raise RuntimeError(
-                        f"{process_name} exited with {proc.returncode}; recent output: {seen[-30:]}"
+                        f"{process_name} exited with {proc.returncode}; recent output: {recent}"
                     )
-            continue
-        seen.append(f"{name}: {line}")
-        if predicate(name, line):
-            return line
-    raise TimeoutError(f"timed out waiting for {description}; recent output: {seen[-30:]}")
+            if any(line == "<stdout-closed>" for _, line in events.history):
+                raise RuntimeError(f"node output closed before acceptance completed; recent output: {recent}")
+            for name, line in events.history:
+                if predicate(name, line):
+                    return line
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(f"timed out waiting for {description}; recent output: {recent}")
+            events.condition.wait(timeout=min(0.25, remaining))
+
+
+def remote_command(binary, bootstrap):
+    """Launch from the remote home and clean child plus state on SSH teardown."""
+    binary = binary if binary.startswith(("/", "./")) else "./" + binary
+    return (
+        'set -eu; cd "$HOME"; umask 077; '
+        'tmp=$(mktemp -d /tmp/osiris-xhost-e2ee.XXXXXX); child=""; '
+        'cleanup() { status=$?; trap - EXIT HUP INT TERM; '
+        'if [ -n "$child" ]; then kill "$child" 2>/dev/null || true; '
+        'for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do '
+        'kill -0 "$child" 2>/dev/null || break; sleep 0.1; done; '
+        'kill -KILL "$child" 2>/dev/null || true; '
+        'wait "$child" 2>/dev/null || true; fi; rm -rf "$tmp"; exit "$status"; }; '
+        "trap cleanup EXIT; trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM; "
+        'unset OSIRIS_E2EE_RECIPIENTS OSIRIS_E2EE_RECIPIENTS_FILE OSIRIS_RELAY_ADDRESS '
+        'OSIRIS_REVOCATION_AUTHORITY_PUBLIC_KEY; '
+        'export OSIRIS_NODE_KEY="$tmp/identity" '
+        'OSIRIS_TRANSPORT_KEY="$tmp/transport" '
+        'OSIRIS_PEER_KEY_STORE="$tmp/peer-keys.sqlite3" '
+        'OSIRIS_REPLAY_CACHE="$tmp/replay" '
+        'OSIRIS_REVOCATION_REGISTRY="$tmp/revocations.json" '
+        'OSIRIS_ROTATE_NODE_KEY=0 OSIRIS_TRANSPORT_KEY_EPOCH=1 '
+        'OSIRIS_TRUSTED_PEERS= OSIRIS_REVOKED_PEERS= OSIRIS_EXTERNAL_ADDRS= OSIRIS_MDNS_ENABLED=0 '
+        'OSIRIS_E2EE_ENABLED=1 OSIRIS_LISTEN_ADDR=/ip4/0.0.0.0/tcp/0 '
+        'OSIRIS_HEALTH_HTTP_ADDR=127.0.0.1:0 '
+        'OSIRIS_BOOTSTRAP_PEERS=' + shlex.quote(bootstrap) + '; '
+        + shlex.quote(binary) + ' <&0 & child=$!; status=0; wait "$child" || status=$?; '
+        'child=""; exit "$status"'
+    )
 
 
 def main():
@@ -78,7 +162,7 @@ def main():
     if not 1 <= args.port <= 65535:
         raise SystemExit("--port must be between 1 and 65535")
 
-    events = queue.Queue()
+    events = EventLog()
     processes = []
     local = remote = None
     instrument = f"OSIRIS-XHOST-E2EE-{uuid.uuid4().hex[:12].upper()}"
@@ -90,12 +174,16 @@ def main():
             tmp = Path(raw_tmp)
             recipients_file = tmp / "recipients.txt"
             recipients_file.write_text("", encoding="utf-8")
-            local_env = os.environ.copy()
+            # Never join an operator's configured network or reuse its durable
+            # files merely because the acceptance command inherits app settings.
+            local_env = {key: value for key, value in os.environ.items() if not key.startswith("OSIRIS_")}
             local_env.update({
                 "OSIRIS_NODE_KEY": str(tmp / "host-a.identity"),
                 "OSIRIS_TRANSPORT_KEY": str(tmp / "host-a.transport"),
                 "OSIRIS_PEER_KEY_STORE": str(tmp / "host-a.peer-keys.sqlite3"),
                 "OSIRIS_REPLAY_CACHE": str(tmp / "host-a.replay"),
+                "OSIRIS_REVOCATION_REGISTRY": str(tmp / "host-a.revocations.json"),
+                "OSIRIS_MDNS_ENABLED": "0",
                 "OSIRIS_E2EE_ENABLED": "1",
                 "OSIRIS_E2EE_RECIPIENTS_FILE": str(recipients_file),
                 "OSIRIS_LISTEN_ADDR": f"/ip4/0.0.0.0/tcp/{args.port}",
@@ -124,27 +212,9 @@ def main():
             )
             bootstrap = f"/ip4/{args.public_ip}/tcp/{args.port}/p2p/{host_a_peer}"
 
-            remote_binary = args.remote_binary
-            if not remote_binary.startswith(("/", "./")):
-                remote_binary = "./" + remote_binary
-            remote_command = (
-                "set -eu; cd \"$HOME\"; umask 077; tmp=$(mktemp -d /tmp/osiris-xhost-e2ee.XXXXXX); "
-                "trap 'rm -rf \"$tmp\"' EXIT; "
-                "export OSIRIS_NODE_KEY=\"$tmp/identity\" "
-                "OSIRIS_TRANSPORT_KEY=\"$tmp/transport\" "
-                "OSIRIS_PEER_KEY_STORE=\"$tmp/peer-keys.sqlite3\" "
-                "OSIRIS_REPLAY_CACHE=\"$tmp/replay\" "
-                "OSIRIS_E2EE_ENABLED=1 OSIRIS_LISTEN_ADDR=/ip4/0.0.0.0/tcp/0 "
-                "OSIRIS_HEALTH_HTTP_ADDR=127.0.0.1:0 "
-                "OSIRIS_BOOTSTRAP_PEERS=" + shlex.quote(bootstrap) + "; "
-                + shlex.quote(remote_binary)
-                + " <&0 & child=$!; "
-                + 'cleanup() { kill "$child" 2>/dev/null || true; '
-                + 'wait "$child" 2>/dev/null || true; rm -rf "$tmp"; }; '
-                + 'trap cleanup EXIT HUP INT TERM; wait "$child"'
-            )
             remote = subprocess.Popen(
-                ["ssh", "-T", *args.ssh_option, args.ssh_target, remote_command],
+                ["ssh", "-T", *args.ssh_option, args.ssh_target,
+                 remote_command(args.remote_binary, bootstrap)],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, bufsize=1,
             )

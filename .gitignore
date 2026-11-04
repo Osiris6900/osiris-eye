@@ -1,0 +1,21 @@
+# Build outputs and local runtime state (never commit identity/private keys).
+**/target/
+**/node_modules/
+**/dist/
+**/__pycache__/
+**/.pytest_cache/
+*.py[cod]
+.venv/
+.env
+.env.*
+!.env.example
+data/
+.osiris-*
+*.sqlite
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+*.identity
+*.transport
+*.replay
+*.backup-*

@@ -26,11 +26,20 @@ jobs:
           cache: pip
           cache-dependency-path: services/quant-api/pyproject.toml
       - name: Install API and test dependencies
-        run: pip install -e "services/quant-api[dev]"
+        run: pip install -e "services/quant-api[dev]" 'PyYAML>=6,<7'
       - name: Run Python tests
         run: pytest -q services/quant-api/tests
+      - name: Validate workflow YAML and embedded Bash
+        run: |
+          python scripts/check_p2p_workflows.py
+          python scripts/test_check_p2p_workflows.py
+      - name: Verify P2P coordination, SSH harness and deployment preflight
+        run: |
+          python scripts/test_p2p_workflow_coordination.py
+          python scripts/test_p2p_ssh_harness.py
+          python deploy/p2p/test_preflight.py
       - name: Syntax-check P2P acceptance helpers
-        run: python -m py_compile scripts/test_p2p_cross_host_ssh.py scripts/test_p2p_core_trusted_peer_allowlist.py scripts/test_p2p_bootstrap_readiness.py scripts/test_p2p_bootstrap_restart.py scripts/test_p2p_global_revocation_sync.py scripts/test_p2p_e2ee_three_process.py scripts/test_p2p_three_host_e2ee_ssh.py scripts/test_p2p_live_swarm_revocation.py
+        run: python -m py_compile scripts/test_p2p_cross_host_ssh.py scripts/test_p2p_cross_host_e2ee_ssh.py scripts/test_p2p_core_trusted_peer_allowlist.py scripts/test_p2p_bootstrap_readiness.py scripts/test_p2p_bootstrap_restart.py scripts/test_p2p_global_revocation_sync.py scripts/test_p2p_e2ee_three_process.py scripts/test_p2p_three_host_e2ee_ssh.py scripts/test_p2p_live_swarm_revocation.py scripts/test_p2p_core_relay_e2ee.py scripts/test_p2p_observation_freshness.py
 
   rust:
     runs-on: ubuntu-latest
@@ -41,9 +50,9 @@ jobs:
       - name: Test Rust risk kernel
         run: cargo test --manifest-path crates/risk-kernel/Cargo.toml
       - name: Test decentralized P2P node
-        run: cargo test --manifest-path services/p2p-node/Cargo.toml --all-targets
+        run: cargo test --locked --manifest-path services/p2p-node/Cargo.toml --all-targets
       - name: Build P2P node for process-level tests
-        run: cargo build --release --manifest-path services/p2p-node/Cargo.toml
+        run: cargo build --locked --release --manifest-path services/p2p-node/Cargo.toml
       - name: Verify two OS processes exchange a P2P observation
         run: python scripts/test_p2p_two_process.py
       - name: Verify core node rejects peers outside trusted allowlist
@@ -62,6 +71,18 @@ jobs:
         run: python scripts/test_p2p_live_swarm_revocation.py
       - name: Verify recipient E2EE and non-recipient rejection
         run: python scripts/test_p2p_e2ee_three_process.py
+      - name: Verify core-node E2EE through Circuit Relay v2
+        run: python scripts/test_p2p_core_relay_e2ee.py --evidence "${{ runner.temp }}/core-relay-e2ee.json"
+      - name: Verify observation freshness and fail-closed configuration
+        run: python scripts/test_p2p_observation_freshness.py
+      - name: Retain core relay acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-relay-e2ee-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/core-relay-e2ee.json
+          if-no-files-found: ignore
+          retention-days: 7
 
   web:
     runs-on: ubuntu-latest

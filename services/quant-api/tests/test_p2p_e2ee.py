@@ -49,7 +49,8 @@ def test_rejects_wrong_sender_identity():
 def test_rejects_tampered_ciphertext_signature():
     _, _, _, envelope, args = make_pair()
     tampered = copy.deepcopy(envelope)
-    tampered["ciphertext"] = tampered["ciphertext"][:-2] + "AA"
+    first_character = "A" if tampered["ciphertext"][0] != "A" else "B"
+    tampered["ciphertext"] = first_character + tampered["ciphertext"][1:]
     with pytest.raises(ValueError, match="sender_signature_invalid"):
         decrypt_from_peer(tampered, **args)
 
@@ -80,8 +81,73 @@ def test_replay_guard_is_bounded():
     assert guard.check_and_record("a")
     assert guard.check_and_record("b")
     assert not guard.check_and_record("a")
-    assert guard.check_and_record("c")
-    assert guard.check_and_record("a")
+    with pytest.raises(RuntimeError, match="replay_store_capacity_exceeded"):
+        guard.check_and_record("c")
+    assert not guard.check_and_record("a")
+
+
+@pytest.mark.parametrize("guard_type", [ReplayGuard, SQLiteReplayGuard])
+def test_failed_decryption_does_not_consume_replay_slot(tmp_path, guard_type):
+    _, _, transport, envelope, args = make_pair()
+    args["replay_guard"] = guard_type(capacity=1) if guard_type is ReplayGuard else guard_type(tmp_path / "replay.sqlite3", capacity=1)
+    args["recipient_transport_private_key"] = generate_transport_identity()["private_key"]
+    with pytest.raises(ValueError, match="message_authentication_failed"):
+        decrypt_from_peer(envelope, **args)
+    args["recipient_transport_private_key"] = transport["private_key"]
+    assert decrypt_from_peer(envelope, **args) == b"private payload"
+
+
+@pytest.mark.parametrize("now", [float("nan"), float("inf"), True, -1])
+def test_rejects_invalid_clock_instead_of_bypassing_expiry(now):
+    _, _, _, envelope, args = make_pair()
+    with pytest.raises(ValueError, match="invalid_current_timestamp"):
+        decrypt_from_peer(envelope, **args, now=now)
+
+
+@pytest.mark.parametrize("capacity", [True, 1.5, float("nan"), float("inf")])
+def test_replay_capacity_requires_integer(tmp_path, capacity):
+    with pytest.raises(ValueError, match="capacity_must_be_positive_integer"):
+        ReplayGuard(capacity)
+    with pytest.raises(ValueError, match="capacity_must_be_positive_integer"):
+        SQLiteReplayGuard(tmp_path / "bad.sqlite3", capacity)
+
+
+def test_oversized_ciphertext_rejected_before_signature_verification():
+    from osiris_api.p2p_e2ee import MAX_CIPHERTEXT_ENCODED_LENGTH
+    _, _, _, envelope, args = make_pair()
+    envelope["ciphertext"] = "A" * (MAX_CIPHERTEXT_ENCODED_LENGTH + 1)
+    with pytest.raises(ValueError, match="invalid_envelope_field_size"):
+        decrypt_from_peer(envelope, **args)
+
+
+def test_legacy_durable_replay_entries_remain_rejected(tmp_path):
+    _, _, _, envelope, args = make_pair()
+    args["replay_guard"] = SQLiteReplayGuard(tmp_path / "legacy.sqlite3")
+    assert args["replay_guard"].check_and_record(envelope["message_id"])
+    with pytest.raises(ValueError, match="replayed_message"):
+        decrypt_from_peer(envelope, **args)
+
+
+def test_sender_cannot_reserve_another_senders_message_id(monkeypatch):
+    import osiris_api.p2p_e2ee as encryption_module
+
+    monkeypatch.setattr(encryption_module.secrets, "token_bytes", lambda size: bytes(size))
+    _, _, _, first_envelope, first_args = make_pair()
+    _, _, _, second_envelope, second_args = make_pair()
+    assert first_envelope["message_id"] == second_envelope["message_id"]
+    shared_guard = ReplayGuard()
+    first_args["replay_guard"] = second_args["replay_guard"] = shared_guard
+    assert decrypt_from_peer(first_envelope, **first_args) == b"private payload"
+    assert decrypt_from_peer(second_envelope, **second_args) == b"private payload"
+
+
+def test_memory_replay_guard_admission_is_atomic_across_threads():
+    from concurrent.futures import ThreadPoolExecutor
+
+    guard = ReplayGuard(capacity=1)
+    with ThreadPoolExecutor(max_workers=8) as workers:
+        accepted = list(workers.map(guard.check_and_record, ["same-message"] * 64))
+    assert sum(accepted) == 1
 
 
 
