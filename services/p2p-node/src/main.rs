@@ -5,7 +5,7 @@ mod peer_key_store;
 
 use revocation::{RevocationRegistry, RevocationSyncMessage};
 use e2ee::{create_key_binding, decrypt_for_recipient, encrypt_for_recipient, verify_key_binding, EncryptedEnvelope, KeyBindingRecord, TransportKeyPair};
-use peer_auth::{is_peer_allowed, parse_revoked_peers, parse_trusted_peers};
+use peer_auth::{is_peer_allowed, parse_revoked_peers, parse_trusted_peers, run_if_peer_allowed};
 use peer_key_store::PeerKeyStore;
 use std::{collections::{HashMap, HashSet}, env, error::Error, fs::{self, OpenOptions}, io::{BufRead, BufReader as StdBufReader, Write}, net::SocketAddr, path::PathBuf, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
 
@@ -944,11 +944,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
                             emit!("encrypted_message_ignored reason=e2ee_disabled");
                             continue;
                         }
-                        if !is_peer_allowed(&authenticated_source, &trusted_peers, &revoked_peers) {
-                            emit!("encrypted_message_rejected peer={authenticated_source} reason=peer_not_allowed");
-                            continue;
-                        }
-                        match serde_json::from_slice::<EncryptedEnvelope>(&message.data) {
+                        let parsed_envelope = match run_if_peer_allowed(
+                            &authenticated_source, &trusted_peers, &revoked_peers,
+                            || serde_json::from_slice::<EncryptedEnvelope>(&message.data),
+                        ) {
+                            Ok(parsed) => parsed,
+                            Err(()) => {
+                                emit!("encrypted_message_rejected peer={authenticated_source} reason=peer_not_allowed");
+                                continue;
+                            }
+                        };
+                        match parsed_envelope {
                             Ok(envelope) if envelope.sender_peer_id == authenticated_source.to_string()
                                 && envelope.recipient_peer_id == peer_id.to_string() => {
                                 let Some(binding_record) = peer_key_store.get(&authenticated_source.to_string())? else {
