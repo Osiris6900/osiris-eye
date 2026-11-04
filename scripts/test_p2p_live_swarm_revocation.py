@@ -60,13 +60,24 @@ def stop_all():
             proc.kill()
             proc.wait()
 
+def make_fixture(path, target_peer=None):
+    command = [CARGO, "run", "--quiet", "--manifest-path",
+        str(ROOT / "services/p2p-node/Cargo.toml"), "--example", "make_revocation_fixture", "--", str(path)]
+    if target_peer:
+        command.append(target_peer)
+    result = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, check=True)
+    return dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+
 def main():
     if not BINARY.exists():
         raise SystemExit(f"missing {BINARY}; build release node first")
     with tempfile.TemporaryDirectory(prefix="osiris-live-revocation-") as raw:
         td = Path(raw)
+        # The test authority is deterministic and test-only. Obtain its public key
+        # before starting nodes so receiver and target both validate the event.
+        authority = make_fixture(td / "placeholder.json")["authority_public_key"]
         base = os.environ.copy()
-        def node_env(name, bootstrap=None, authority_key=None, registry=None):
+        def node_env(name, bootstrap=None, registry=None):
             env = base.copy()
             env.update({
                 "OSIRIS_NODE_KEY": str(td / f"{name}.key"),
@@ -75,13 +86,11 @@ def main():
                 "OSIRIS_HEALTH_HTTP_ADDR": "127.0.0.1:0",
                 "OSIRIS_REPLAY_CACHE": str(td / f"{name}.replay"),
                 "OSIRIS_REVOCATION_SYNC_INTERVAL_SECS": "30",
+                "OSIRIS_REVOCATION_AUTHORITY_PUBLIC_KEY": authority,
+                "OSIRIS_REVOCATION_REGISTRY": str(registry or (td / f"{name}.revocations.json")),
             })
             if bootstrap:
                 env["OSIRIS_BOOTSTRAP_PEERS"] = bootstrap
-            if authority_key:
-                env["OSIRIS_REVOCATION_AUTHORITY_PUBLIC_KEY"] = authority_key
-            if registry:
-                env["OSIRIS_REVOCATION_REGISTRY"] = str(registry)
             return env
 
         receiver = Node("receiver", node_env("receiver"))
@@ -95,20 +104,14 @@ def main():
                       "receiver connected to target")
 
         fixture_path = td / "authority.json"
-        fixture = subprocess.run(
-            [CARGO, "run", "--quiet", "--manifest-path",
-             str(ROOT / "services/p2p-node/Cargo.toml"), "--example", "make_revocation_fixture",
-             "--", str(fixture_path), target_peer],
-            cwd=ROOT, text=True, capture_output=True, check=True,
-        )
-        values = dict(line.split("=", 1) for line in fixture.stdout.splitlines() if "=" in line)
-        authority = values["authority_public_key"]
+        values = make_fixture(fixture_path, target_peer)
+        assert values["authority_public_key"] == authority
         assert values["target_peer_id"] == target_peer
 
-        # A separate authority node advertises the signed record through the
-        # real revocation GossipSub topic to a receiver already connected to target.
+        # The authority node advertises a valid signed record through the real
+        # revocation GossipSub topic to a receiver already connected to target.
         authority_node = Node("authority", node_env("authority", bootstrap=receiver_addr,
-            authority_key=authority, registry=fixture_path))
+            registry=fixture_path))
         authority_node.wait(lambda line: line.startswith("signed_revocation_registry=loaded records=1"), 15,
                             "authority registry loaded")
         receiver.wait(lambda line: f"signed_peer_revocation_applied peer={target_peer}" in line,
