@@ -109,7 +109,7 @@ jobs:
       - run:
           name: Install web dependencies
           working_directory: apps/web
-          command: npm install
+          command: npm install --legacy-peer-deps
       - run:
           name: Type-check and build web app
           working_directory: apps/web
