@@ -114,8 +114,8 @@ def main():
             registry=fixture_path))
         authority_node.wait(lambda line: line.startswith("signed_revocation_registry=loaded records=1"), 15,
                             "authority registry loaded")
-        receiver.wait(lambda line: f"signed_peer_revocation_applied peer={target_peer}" in line,
-                      45, "receiver applied signed revocation")
+        receiver.wait(lambda line: "revocation_sync_page_v2_applied" in line and "applied=1" in line,
+                      45, "receiver applied one signed revocation record")
         receiver.wait(lambda line: f"peer_disconnected={target_peer}" in line,
                       15, "receiver disconnected revoked peer")
 
