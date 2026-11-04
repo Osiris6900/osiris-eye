@@ -149,6 +149,14 @@ jobs:
             if [ "$count" -lt 2 ]; then echo "GossipSub did not resubscribe after bootstrap restart."; cat "$peer_log"; exit 1; fi
           done
 
+          # Require the restarted bootstrap to observe both leaf subscriptions.
+          B_PEER="$(sed -n 's/^peer_id=//p' "$TMP/b.log" | head -n1)"
+          C_PEER="$(sed -n 's/^peer_id=//p' "$TMP/c.log" | head -n1)"
+          test -n "$B_PEER" && test -n "$C_PEER"
+          wait_for "Restarted A sees B gossip subscription" "$TMP/a.log" "gossipsub_subscribed peer=$B_PEER" 60
+          wait_for "Restarted A sees C gossip subscription" "$TMP/a.log" "gossipsub_subscribed peer=$C_PEER" 60
+          # Gossipsub heartbeat establishes the forwarding mesh asynchronously.
+          sleep 3
           publish_probe "OSIRIS-THREE-PEER-RECONNECTED" "three peer reconnect propagation probe"
           echo "BOOTSTRAP_RECONNECT=PASS"
           echo "THREE_PEER_MESH_AND_RECOVERY=PASS"
