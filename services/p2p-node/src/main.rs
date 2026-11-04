@@ -2,11 +2,13 @@ mod peer_auth;
 mod revocation;
 mod e2ee;
 mod peer_key_store;
+mod peer_cache;
 mod observation_policy;
 
 use revocation::{RevocationRegistry, RevocationSyncMessage};
 use e2ee::{create_key_binding, decrypt_for_recipient, encrypt_for_recipient, verify_key_binding, EncryptedEnvelope, KeyBindingRecord, TransportKeyPair};
 use peer_auth::{is_peer_allowed, parse_revoked_peers, parse_trusted_peers, read_peer_setting, run_if_peer_allowed};
+use peer_cache::{CachedPeer, PeerCache};
 use peer_key_store::PeerKeyStore;
 use std::{collections::{HashMap, HashSet}, env, error::Error, fs::{self, OpenOptions}, io::{BufRead, BufReader as StdBufReader, Write}, net::SocketAddr, path::PathBuf, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
 
@@ -19,7 +21,7 @@ macro_rules! emit {
 
 use futures::StreamExt;
 use libp2p::{
-    connection_limits, gossipsub, identify, identity, relay,
+    autonat, connection_limits, dcutr, gossipsub, identify, identity, relay, upnp,
     core::{transport::OrTransport, upgrade, Transport},
     kad::{self, store::MemoryStore},
     mdns, noise,
@@ -621,6 +623,80 @@ mod tests {
         assert!(super::parse_mdns_enabled(Some("false")).is_err());
         assert!(super::parse_mdns_enabled(Some("")).is_err());
     }
+    #[test] fn relay_failover_parser_accepts_multiple_relays_and_deduplicates() {
+        let first = PeerId::random();
+        let second = PeerId::random();
+        let list = format!(
+            "/ip4/127.0.0.1/tcp/4001/p2p/{first}, /ip4/127.0.0.2/tcp/4002/p2p/{second}, /ip4/127.0.0.3/tcp/4003/p2p/{first}"
+        );
+        let relays = super::parse_relay_addresses(Some(&list)).unwrap();
+        assert_eq!(relays.len(), 2);
+        assert_eq!(relays[0].0, first);
+        assert_eq!(relays[1].0, second);
+        assert!(super::parse_relay_addresses(None).unwrap().is_empty());
+    }
+    #[test] fn relay_failover_parser_rejects_invalid_entry_in_list() {
+        let relay = PeerId::random();
+        let list = format!("/ip4/127.0.0.1/tcp/4001/p2p/{relay}, /ip4/127.0.0.1/tcp/4002");
+        assert!(super::parse_relay_addresses(Some(&list)).is_err());
+    }
+    #[test] fn relay_readiness_needs_only_one_active_reservation() {
+        let relays = super::parse_relay_addresses(Some(&format!(
+            "/ip4/127.0.0.1/tcp/4001/p2p/{}, /ip4/127.0.0.2/tcp/4002/p2p/{}",
+            PeerId::random(), PeerId::random()))).unwrap();
+        assert!(super::relay_readiness(&[], &Default::default()).is_none());
+        assert_eq!(super::relay_readiness(&relays, &Default::default()), Some(false));
+        let mut active = std::collections::HashSet::new();
+        active.insert(relays[1].0);
+        assert_eq!(super::relay_readiness(&relays, &active), Some(true));
+    }
+    #[test] fn rejoin_plan_skips_self_bootstrap_relays_and_policy_blocked_peers() {
+        let self_peer = PeerId::random();
+        let bootstrap_peer = PeerId::random();
+        let relay_peer = PeerId::random();
+        let blocked_peer = PeerId::random();
+        let plain_peer = PeerId::random();
+        let cached: Vec<super::CachedPeer> = [
+            (self_peer, 1u16), (bootstrap_peer, 2), (relay_peer, 3), (blocked_peer, 4), (plain_peer, 5),
+        ].iter().map(|(peer, port)| super::CachedPeer {
+            peer_id: peer.to_string(),
+            addresses: vec![format!("/ip4/127.0.0.1/tcp/400{port}")],
+            last_seen: 100,
+            source: "dht".into(),
+        }).collect();
+        let bootstrap = vec![(bootstrap_peer, "/ip4/127.0.0.1/tcp/9001".parse::<Multiaddr>().unwrap())];
+        let relays = vec![(relay_peer, "/ip4/127.0.0.1/tcp/9002".parse::<Multiaddr>().unwrap())];
+        let mut revoked = std::collections::HashSet::new();
+        revoked.insert(blocked_peer);
+        let plan = super::plan_rejoin_dials(
+            &cached, &self_peer, &bootstrap, &relays, &None, &Some(revoked), 16);
+        assert_eq!(plan.len(), 1);
+        assert_eq!(plan[0].0, plain_peer);
+        assert!(super::plan_rejoin_dials(&cached, &self_peer, &bootstrap, &relays, &None, &None, 0).is_empty());
+    }
+    #[test] fn seed_list_parser_skips_comments_and_bad_lines() {
+        let peer = PeerId::random();
+        let body = format!(
+            "# community seeds\n\nnot-a-multiaddr\n/ip4/127.0.0.1/tcp/4001\n/ip4/127.0.0.1/tcp/4001/p2p/{peer}\n# trailing\n"
+        );
+        let seeds = super::parse_seed_list(&body);
+        assert_eq!(seeds.len(), 1);
+        assert_eq!(seeds[0].0, peer);
+    }
+    #[test] fn seed_url_resolution_defaults_and_disables() {
+        assert_eq!(super::resolve_seed_url(None).as_deref(), Some(super::DEFAULT_BOOTSTRAP_SEED_URL));
+        assert_eq!(super::resolve_seed_url(Some("off")), None);
+        assert_eq!(super::resolve_seed_url(Some("none")), None);
+        assert_eq!(super::resolve_seed_url(Some("  ")), None);
+        assert_eq!(super::resolve_seed_url(Some("https://example.com/seeds.txt")).as_deref(), Some("https://example.com/seeds.txt"));
+    }
+    #[test] fn flag_parser_accepts_only_binary_values() {
+        assert!(super::parse_flag(None, "X", true).unwrap());
+        assert!(!super::parse_flag(None, "X", false).unwrap());
+        assert!(super::parse_flag(Some("1"), "X", false).unwrap());
+        assert!(!super::parse_flag(Some("0"), "X", true).unwrap());
+        assert!(super::parse_flag(Some("true"), "X", true).is_err());
+    }
 }
 
 #[derive(NetworkBehaviour)]
@@ -631,6 +707,15 @@ struct Behaviour {
     mdns: Toggle<mdns::tokio::Behaviour>,
     identify: identify::Behaviour,
     relay: relay::client::Behaviour,
+    // Every node can optionally serve as a relay for others. With many nodes
+    // opted in, the mesh needs no dedicated relay VPS.
+    relay_server: Toggle<relay::Behaviour>,
+    autonat: autonat::Behaviour,
+    // NAT-to-NAT direct connections via relayed signalling (DCUtR).
+    dcutr: dcutr::Behaviour,
+    // Ask the home router for a public port mapping so a laptop node becomes
+    // reachable without any manual firewall rule.
+    upnp: Toggle<upnp::tokio::Behaviour>,
     connection_limits: connection_limits::Behaviour,
 }
 
@@ -641,6 +726,10 @@ enum BehaviourEvent {
     Mdns(mdns::Event),
     Identify(identify::Event),
     Relay(relay::client::Event),
+    RelayServer(relay::Event),
+    Autonat(autonat::Event),
+    Dcutr(dcutr::Event),
+    Upnp(upnp::Event),
 }
 
 impl From<gossipsub::Event> for BehaviourEvent {
@@ -658,6 +747,22 @@ impl From<identify::Event> for BehaviourEvent {
 
 impl From<relay::client::Event> for BehaviourEvent {
     fn from(event: relay::client::Event) -> Self { Self::Relay(event) }
+}
+
+impl From<relay::Event> for BehaviourEvent {
+    fn from(event: relay::Event) -> Self { Self::RelayServer(event) }
+}
+
+impl From<autonat::Event> for BehaviourEvent {
+    fn from(event: autonat::Event) -> Self { Self::Autonat(event) }
+}
+
+impl From<dcutr::Event> for BehaviourEvent {
+    fn from(event: dcutr::Event) -> Self { Self::Dcutr(event) }
+}
+
+impl From<upnp::Event> for BehaviourEvent {
+    fn from(event: upnp::Event) -> Self { Self::Upnp(event) }
 }
 impl From<std::convert::Infallible> for BehaviourEvent {
     fn from(event: std::convert::Infallible) -> Self { match event {} }
@@ -812,6 +917,16 @@ fn parse_external_addresses(raw: Option<&str>) -> Result<Vec<Multiaddr>, Box<dyn
     Ok(addresses)
 }
 
+/// Built-in fallback bootstrap entries, used only when the operator has
+/// configured nothing else. The community seed file below is the maintained
+/// public entry point; keep embedded seeds empty until well-known public
+/// OSIRIS peers exist.
+const EMBEDDED_BOOTSTRAP_SEEDS: &[&str] = &[];
+const MAX_SEED_FILE_BYTES: u64 = 65_536;
+const MAX_SEED_PEERS: usize = 128;
+const DEFAULT_BOOTSTRAP_SEED_URL: &str =
+    "https://raw.githubusercontent.com/Osiris6900/osiris-eye/main/deploy/p2p/bootstrap-peers.txt";
+
 /// A reservation endpoint must identify the relay, not an application recipient.
 /// Circuit recipient addresses belong in OSIRIS_BOOTSTRAP_PEERS instead.
 fn parse_relay_address(raw: Option<&str>) -> Result<Option<(PeerId, Multiaddr)>, Box<dyn Error>> {
@@ -828,6 +943,25 @@ fn parse_relay_address(raw: Option<&str>) -> Result<Option<(PeerId, Multiaddr)>,
         return Err("OSIRIS_RELAY_ADDRESS must end in /p2p/<relay-id>".into());
     };
     Ok(Some((*peer, address)))
+}
+
+/// Comma-separated relay list. Failover across several relays keeps the node
+/// reachable even when any single relay dies.
+fn parse_relay_addresses(raw: Option<&str>) -> Result<Vec<(PeerId, Multiaddr)>, Box<dyn Error>> {
+    let Some(raw) = raw else { return Ok(Vec::new()); };
+    let mut relays: Vec<(PeerId, Multiaddr)> = Vec::new();
+    for entry in raw.split(',').map(str::trim).filter(|entry| !entry.is_empty()) {
+        let (peer, address) = parse_relay_address(Some(entry))?
+            .ok_or("relay address entry unexpectedly empty")?;
+        if relays.iter().any(|(known, _)| *known == peer) { continue; }
+        if relays.len() >= 16 { return Err("at most 16 relay addresses are supported".into()); }
+        relays.push((peer, address));
+    }
+    Ok(relays)
+}
+
+fn relay_readiness(relay_addresses: &[(PeerId, Multiaddr)], active: &HashSet<PeerId>) -> Option<bool> {
+    if relay_addresses.is_empty() { None } else { Some(!active.is_empty()) }
 }
 
 fn parse_mdns_enabled(raw: Option<&str>) -> Result<bool, Box<dyn Error>> {
@@ -855,6 +989,89 @@ fn parse_bootstrap_peers(raw: Option<&str>) -> Result<Vec<(PeerId, Multiaddr)>, 
     Ok(peers)
 }
 
+/// Restart rejoin plan: cached peers are dialled again only if they are not
+/// already covered by static config and still pass live trust/revocation
+/// policy. The cache is discovery data, never an authorization source.
+fn plan_rejoin_dials(
+    cached_peers: &[CachedPeer],
+    self_peer: &PeerId,
+    bootstrap_peers: &[(PeerId, Multiaddr)],
+    relay_addresses: &[(PeerId, Multiaddr)],
+    trusted_peers: &Option<HashSet<PeerId>>,
+    revoked_peers: &Option<HashSet<PeerId>>,
+    dial_limit: usize,
+) -> Vec<(PeerId, Vec<Multiaddr>)> {
+    let mut plan = Vec::new();
+    for cached in cached_peers {
+        if plan.len() >= dial_limit { break; }
+        let Ok(candidate) = cached.peer_id.parse::<PeerId>() else { continue; };
+        if candidate == *self_peer { continue; }
+        if bootstrap_peers.iter().any(|(peer, _)| *peer == candidate) { continue; }
+        if relay_addresses.iter().any(|(peer, _)| *peer == candidate) { continue; }
+        if !is_peer_allowed(&candidate, trusted_peers, revoked_peers) { continue; }
+        let addresses: Vec<Multiaddr> = cached.addresses.iter()
+            .filter_map(|raw| raw.parse::<Multiaddr>().ok())
+            .take(4)
+            .collect();
+        if addresses.is_empty() { continue; }
+        plan.push((candidate, addresses));
+    }
+    plan
+}
+
+fn parse_flag(raw: Option<&str>, setting: &str, default: bool) -> Result<bool, Box<dyn Error>> {
+    match raw.map(str::trim) {
+        None => Ok(default),
+        Some("1") => Ok(true),
+        Some("0") => Ok(false),
+        _ => Err(format!("{setting} must be 0 or 1").into()),
+    }
+}
+
+/// Seed list format: one multiaddress per line, `#` comments allowed, every
+/// entry must end in /p2p/<peer-id>. Invalid lines are skipped so a partially
+/// corrupt community file can never block startup.
+fn parse_seed_list(body: &str) -> Vec<(PeerId, Multiaddr)> {
+    let mut peers = Vec::new();
+    for line in body.lines().map(str::trim) {
+        if line.is_empty() || line.starts_with('#') { continue; }
+        let Ok(address) = line.parse::<Multiaddr>() else { continue; };
+        let peer = match address.iter().last() {
+            Some(libp2p::multiaddr::Protocol::P2p(peer)) => peer,
+            _ => continue,
+        };
+        if peers.iter().any(|(known, _)| *known == peer) { continue; }
+        if peers.len() >= MAX_SEED_PEERS { break; }
+        peers.push((peer, address));
+    }
+    peers
+}
+
+fn resolve_seed_url(raw: Option<&str>) -> Option<String> {
+    match raw.map(str::trim) {
+        None => Some(DEFAULT_BOOTSTRAP_SEED_URL.to_owned()),
+        Some("") | Some("off") | Some("none") => None,
+        Some(url) => Some(url.to_owned()),
+    }
+}
+
+/// Fetch the community seed file. HTTPS only, no redirects, strict size cap.
+/// Runs inside tokio::task::spawn_blocking at the call site.
+fn fetch_seed_list(url: &str, timeout: Duration) -> Result<String, Box<dyn Error + Send + Sync>> {
+    use std::io::Read as _;
+    if !url.starts_with("https://") {
+        return Err("bootstrap seed URL must use https://".into());
+    }
+    let agent = ureq::AgentBuilder::new().redirects(0).timeout(timeout).build();
+    let response = agent.get(url).set("user-agent", "osiris-eye-node").call()?;
+    let mut body = String::new();
+    response.into_reader().take(MAX_SEED_FILE_BYTES + 1).read_to_string(&mut body)?;
+    if body.len() as u64 > MAX_SEED_FILE_BYTES {
+        return Err("bootstrap seed file exceeds the 64 KiB limit".into());
+    }
+    Ok(body)
+}
+
 #[derive(Clone, Debug, Serialize)]
 struct HealthSnapshot {
     status: &'static str,
@@ -866,6 +1083,8 @@ struct HealthSnapshot {
     bootstrap_peers_total: usize,
     relay_configured: bool,
     relay_reservation_active: bool,
+    relays_total: usize,
+    relay_reservations: usize,
 }
 
 fn build_health_snapshot(
@@ -874,6 +1093,8 @@ fn build_health_snapshot(
     swarm: &Swarm<Behaviour>,
     bootstrap_peers: &[(PeerId, Multiaddr)],
     relay_ready: Option<bool>,
+    relays_total: usize,
+    relay_reservations: usize,
 ) -> HealthSnapshot {
     let connected_peers = swarm.connected_peers().count();
     let bootstrap_peers_connected = bootstrap_peers
@@ -891,6 +1112,8 @@ fn build_health_snapshot(
         bootstrap_peers_total: bootstrap_peers.len(),
         relay_configured: relay_ready.is_some(),
         relay_reservation_active: relay_ready.unwrap_or(false),
+        relays_total,
+        relay_reservations,
     }
 }
 
@@ -980,6 +1203,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let key_binding_topic = gossipsub::IdentTopic::new(KEY_BINDING_TOPIC_NAME);
     let encrypted_topic = gossipsub::IdentTopic::new(ENCRYPTED_TOPIC_NAME);
     let mdns_enabled = parse_mdns_enabled(read_peer_setting("OSIRIS_MDNS_ENABLED")?.as_deref())?;
+    // Home-router port mapping (UPnP) makes a laptop node publicly reachable
+    // with no manual firewall work. AutoNAT observes the result. DCUtR
+    // upgrades relayed connections to direct ones. All default on; set to 0
+    // to disable.
+    let upnp_enabled = parse_flag(read_peer_setting("OSIRIS_UPNP_ENABLED")?.as_deref(), "OSIRIS_UPNP_ENABLED", true)?;
+    // Opt-in: also serve as a relay for other nodes. With enough nodes opted
+    // in, the mesh needs no dedicated relay server at all.
+    let relay_server_enabled = parse_flag(read_peer_setting("OSIRIS_RELAY_SERVER")?.as_deref(), "OSIRIS_RELAY_SERVER", false)?;
+    // Without a configured relay, borrow reservations from connected peers.
+    let auto_relay_enabled = parse_flag(read_peer_setting("OSIRIS_AUTO_RELAY")?.as_deref(), "OSIRIS_AUTO_RELAY", true)?;
     let (relay_transport, relay_behaviour) = relay::client::new(peer_id);
     let mut behaviour = Behaviour {
         gossipsub,
@@ -995,6 +1228,23 @@ async fn main() -> Result<(), Box<dyn Error>> {
             identify::Config::new(PROTOCOL_VERSION.to_owned(), key.public()),
         ),
         relay: relay_behaviour,
+        relay_server: if relay_server_enabled {
+            // Same conservative limits as the standalone relay binary.
+            let mut config = relay::Config::default();
+            config.max_reservations = 64;
+            config.max_reservations_per_peer = 2;
+            config.max_circuits = 8;
+            config.max_circuits_per_peer = 2;
+            config.reservation_duration = Duration::from_secs(30 * 60);
+            config.max_circuit_duration = Duration::from_secs(60);
+            config.max_circuit_bytes = 1_048_576;
+            Some(relay::Behaviour::new(peer_id, config))
+        } else { None }.into(),
+        autonat: autonat::Behaviour::new(peer_id, autonat::Config::default()),
+        dcutr: dcutr::Behaviour::new(peer_id),
+        upnp: if upnp_enabled {
+            Some(upnp::tokio::Behaviour::default())
+        } else { None }.into(),
         connection_limits: connection_limits::Behaviour::new(
             connection_limits::ConnectionLimits::default()
                 .with_max_pending_incoming(Some(32))
@@ -1038,9 +1288,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .parse()?;
     swarm.listen_on(listen)?;
 
-    let relay_address = parse_relay_address(read_peer_setting("OSIRIS_RELAY_ADDRESS")?.as_deref())?;
-    let mut relay_listener = None;
-    let mut relay_reservation_active = false;
+    // OSIRIS_RELAY_ADDRESSES (comma-separated) enables relay failover;
+    // OSIRIS_RELAY_ADDRESS remains as the single-relay shorthand.
+    let mut relay_addresses = parse_relay_addresses(read_peer_setting("OSIRIS_RELAY_ADDRESSES")?.as_deref())?;
+    if relay_addresses.is_empty() {
+        relay_addresses = parse_relay_address(read_peer_setting("OSIRIS_RELAY_ADDRESS")?.as_deref())?
+            .into_iter()
+            .collect();
+    }
+    let mut relay_listeners: HashMap<PeerId, libp2p::core::transport::ListenerId> = HashMap::new();
+    let mut active_relay_reservations: HashSet<PeerId> = HashSet::new();
     let bootstrap_peers = parse_bootstrap_peers(read_peer_setting("OSIRIS_BOOTSTRAP_PEERS")?.as_deref())?;
     let trusted_peers = parse_trusted_peers(read_peer_setting("OSIRIS_TRUSTED_PEERS")?.as_deref())?;
     let mut revoked_peer_set = parse_revoked_peers(read_peer_setting("OSIRIS_REVOKED_PEERS")?.as_deref())?
@@ -1068,6 +1325,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .unwrap_or_else(|| PathBuf::from(".osiris-peer-keys.sqlite3"));
     let mut peer_key_store = PeerKeyStore::open(peer_key_store_path.clone())?;
     emit!("peer_key_store=loaded bindings={} path={}", peer_key_store.len()?, peer_key_store_path.display());
+    // Durable peer cache: restart-proof rejoin without any fixed bootstrap.
+    let peer_cache_path = env::var_os("OSIRIS_PEER_CACHE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(".osiris-peer-cache.sqlite3"));
+    let peer_cache_max_age_secs = parse_interval_secs(
+        env::var("OSIRIS_PEER_CACHE_MAX_AGE_SECS").ok().as_deref(), 7 * 24 * 60 * 60, 3600, 2_592_000);
+    let peer_cache_dial_on_start = parse_interval_secs(
+        env::var("OSIRIS_PEER_CACHE_DIAL_ON_START").ok().as_deref(), 16, 0, 64) as usize;
+    let mut peer_cache = PeerCache::open(peer_cache_path.clone())?;
     emit!("replay_protection=durable cache_entries={} cache_path={}", replay_guard.seen.len(), replay_path.display());
     for (bootstrap_peer, _) in &bootstrap_peers {
         if !is_peer_allowed(bootstrap_peer, &trusted_peers, &revoked_peers) {
@@ -1076,12 +1342,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
             ).into());
         }
     }
-    if let Some((relay_peer, address)) = &relay_address {
+    for (relay_peer, address) in &relay_addresses {
         if !is_peer_allowed(relay_peer, &trusted_peers, &revoked_peers) {
             return Err("configured relay is not allowed by local trust/revocation policy".into());
         }
         swarm.dial(address.clone())?;
         emit!("relay_configured peer={relay_peer} address={address}");
+    }
+    if relay_addresses.len() > 1 {
+        emit!("relay_failover=enabled relays={}", relay_addresses.len());
     }
     // Parse and admit every configured endpoint before any outbound dial.
     for (bootstrap_peer, address) in &bootstrap_peers {
@@ -1089,6 +1358,51 @@ async fn main() -> Result<(), Box<dyn Error>> {
         swarm.dial(address.clone())?;
     }
     if !bootstrap_peers.is_empty() { let _ = swarm.behaviour_mut().kademlia.bootstrap(); }
+    // A revoked peer must never come back through the restart-rejoin path.
+    if let Some(revoked) = &revoked_peers {
+        for revoked_peer in revoked {
+            let _ = peer_cache.remove(&revoked_peer.to_string());
+        }
+    }
+    let startup_now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+    let cached_peers = peer_cache.load_recent(256, peer_cache_max_age_secs, startup_now)?;
+    let rejoin_plan = plan_rejoin_dials(
+        &cached_peers, &peer_id, &bootstrap_peers, &relay_addresses,
+        &trusted_peers, &revoked_peers, peer_cache_dial_on_start);
+    emit!(
+        "peer_cache=loaded cache_total={} rejoin_candidates={} rejoin_dials={} path={}",
+        peer_cache.len()?, cached_peers.len(), rejoin_plan.len(), peer_cache.path().display());
+    for (cached_peer, addresses) in rejoin_plan {
+        match swarm.dial(DialOpts::peer_id(cached_peer).addresses(addresses).build()) {
+            Ok(()) => emit!("peer_cache_rejoin_dial peer={cached_peer}"),
+            Err(error) => emit!("peer_cache_rejoin_skipped peer={cached_peer} error={error}"),
+        }
+    }
+    // Last-resort bootstrap when neither config nor cache knows any peer:
+    // embedded seeds plus a small community seed file fetched over HTTPS.
+    let (seed_tx, mut seed_rx) = tokio::sync::mpsc::channel::<Result<String, String>>(1);
+    let mut seed_channel_open;
+    for (seed_peer, seed_address) in parse_seed_list(&EMBEDDED_BOOTSTRAP_SEEDS.join("\n")) {
+        if seed_peer == peer_id || !is_peer_allowed(&seed_peer, &trusted_peers, &revoked_peers) {
+            continue;
+        }
+        swarm.behaviour_mut().kademlia.add_address(&seed_peer, seed_address.clone());
+        match swarm.dial(seed_address) {
+            Ok(()) => emit!("bootstrap_seed_dial peer={seed_peer} source=embedded"),
+            Err(error) => emit!("bootstrap_seed_skipped peer={seed_peer} error={error}"),
+        }
+    }
+    if let Some(seed_url) = resolve_seed_url(env::var("OSIRIS_BOOTSTRAP_SEED_URL").ok().as_deref()) {
+        emit!("bootstrap_seed_fetch=scheduled url={seed_url}");
+        tokio::task::spawn_blocking(move || {
+            let result = fetch_seed_list(&seed_url, Duration::from_secs(15)).map_err(|error| error.to_string());
+            let _ = seed_tx.blocking_send(result);
+        });
+        seed_channel_open = true;
+    } else {
+        emit!("bootstrap_seed_fetch=disabled");
+        seed_channel_open = false;
+    }
     if let Some(allowed) = &trusted_peers {
         emit!("peer_authentication=allowlist trusted_peers={}", allowed.len());
     } else {
@@ -1134,7 +1448,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let health_address: SocketAddr = env::var("OSIRIS_HEALTH_HTTP_ADDR")
         .unwrap_or_else(|_| "127.0.0.1:9090".to_owned())
         .parse()?;
-    let initial_health = build_health_snapshot(&peer_id, started_at, &swarm, &bootstrap_peers, relay_address.as_ref().map(|_| relay_reservation_active));
+    let initial_health = build_health_snapshot(&peer_id, started_at, &swarm, &bootstrap_peers, relay_readiness(&relay_addresses, &active_relay_reservations), relay_addresses.len(), active_relay_reservations.len());
     let (health_tx, health_rx) = watch::channel(initial_health);
     tokio::spawn(async move {
         if let Err(error) = serve_health_endpoint(health_address, health_rx).await {
@@ -1149,6 +1463,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let binding_bytes = serde_json::to_vec(&local_key_binding)?;
     let _ = swarm.behaviour_mut().gossipsub.publish(key_binding_topic.clone(), binding_bytes);
     emit!("mdns_enabled={mdns_enabled}");
+    emit!("upnp_enabled={upnp_enabled} autonat=enabled hole_punch=enabled");
+    emit!("relay_server={} auto_relay={auto_relay_enabled}", if relay_server_enabled { "enabled" } else { "disabled" });
     emit!("connection_limits pending_incoming=32 pending_outgoing=32 established_total=256 established_per_peer=4");
     emit!("bootstrap_peers={}", bootstrap_peers.len());
     emit!("bootstrap_reconnect_interval_seconds={reconnect_interval_secs}");
@@ -1183,13 +1499,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
             _ = health_tick.tick() => {
-                let snapshot = build_health_snapshot(&peer_id, started_at, &swarm, &bootstrap_peers, relay_address.as_ref().map(|_| relay_reservation_active));
+                let snapshot = build_health_snapshot(&peer_id, started_at, &swarm, &bootstrap_peers, relay_readiness(&relay_addresses, &active_relay_reservations), relay_addresses.len(), active_relay_reservations.len());
                 let connected_peers = snapshot.connected_peers;
                 let connected_bootstrap_peers = snapshot.bootstrap_peers_connected;
                 health_tx.send_replace(snapshot);
                 emit!(
                     "node_health status=alive ready={} peer_id={} uptime_seconds={} connected_peers={} bootstrap_peers_connected={}/{}",
-                    build_health_snapshot(&peer_id, started_at, &swarm, &bootstrap_peers, relay_address.as_ref().map(|_| relay_reservation_active)).ready,
+                    build_health_snapshot(&peer_id, started_at, &swarm, &bootstrap_peers, relay_readiness(&relay_addresses, &active_relay_reservations), relay_addresses.len(), active_relay_reservations.len()).ready,
                     peer_id,
                     started_at.elapsed().as_secs(),
                     connected_peers,
@@ -1207,18 +1523,38 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
             _ = reconnect_tick.tick() => {
-                if let Some((relay_peer, address)) = &relay_address {
+                for (relay_peer, address) in &relay_addresses {
                     if is_peer_allowed(relay_peer, &trusted_peers, &revoked_peers)
                         && !swarm.is_connected(relay_peer) {
                         match swarm.dial(address.clone()) {
                             Ok(()) => emit!("relay_reconnect_attempt peer={relay_peer}"),
                             Err(error) => emit!("relay_reconnect_error peer={relay_peer} error={error}"),
                         }
-                    } else if swarm.is_connected(relay_peer) && relay_listener.is_none()
+                    } else if swarm.is_connected(relay_peer) && !relay_listeners.contains_key(relay_peer)
                         && is_peer_allowed(relay_peer, &trusted_peers, &revoked_peers) {
                         match swarm.listen_on(address.clone().with(libp2p::multiaddr::Protocol::P2pCircuit)) {
-                            Ok(listener) => { relay_listener = Some(listener); emit!("relay_reservation_requested=true"); }
-                            Err(error) => emit!("relay_reservation_error={error}"),
+                            Ok(listener) => { relay_listeners.insert(*relay_peer, listener); emit!("relay_reservation_requested=true relay_peer={relay_peer}"); }
+                            Err(error) => emit!("relay_reservation_error peer={relay_peer} error={error}"),
+                        }
+                    }
+                }
+                // No configured relay: ask up to two already-connected,
+                // policy-allowed bootstrap peers for a reservation instead.
+                if auto_relay_enabled && relay_addresses.is_empty() {
+                    let mut auto_relay_requests = 0usize;
+                    for (bootstrap_peer, address) in &bootstrap_peers {
+                        if auto_relay_requests >= 2 { break; }
+                        if relay_listeners.contains_key(bootstrap_peer)
+                            || active_relay_reservations.contains(bootstrap_peer) { continue; }
+                        if !swarm.is_connected(bootstrap_peer)
+                            || !is_peer_allowed(bootstrap_peer, &trusted_peers, &revoked_peers) { continue; }
+                        match swarm.listen_on(address.clone().with(libp2p::multiaddr::Protocol::P2pCircuit)) {
+                            Ok(listener) => {
+                                relay_listeners.insert(*bootstrap_peer, listener);
+                                auto_relay_requests += 1;
+                                emit!("auto_relay_reservation_requested=true relay_peer={bootstrap_peer}");
+                            }
+                            Err(error) => emit!("auto_relay_reservation_error peer={bootstrap_peer} error={error}"),
                         }
                     }
                 }
@@ -1244,12 +1580,40 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 let query = swarm.behaviour_mut().kademlia.get_closest_peers(PeerId::random());
                 emit!("dht_walk_started query={query:?}");
             }
+            seeds = seed_rx.recv(), if seed_channel_open => {
+                seed_channel_open = false;
+                match seeds {
+                    Some(Ok(body)) => {
+                        let fetched_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+                        let mut dialed = 0usize;
+                        for (seed_peer, seed_address) in parse_seed_list(&body) {
+                            if seed_peer == peer_id || swarm.is_connected(&seed_peer) { continue; }
+                            if !is_peer_allowed(&seed_peer, &trusted_peers, &revoked_peers) {
+                                emit!("bootstrap_seed_ignored peer={seed_peer} reason=not_in_trusted_peer_allowlist");
+                                continue;
+                            }
+                            swarm.behaviour_mut().kademlia.add_address(&seed_peer, seed_address.clone());
+                            let _ = peer_cache.remember(&seed_peer.to_string(), &[seed_address.to_string()], "seed", fetched_at);
+                            match swarm.dial(seed_address) {
+                                Ok(()) => { dialed += 1; emit!("bootstrap_seed_dial peer={seed_peer}"); }
+                                Err(error) => emit!("bootstrap_seed_skipped peer={seed_peer} error={error}"),
+                            }
+                        }
+                        if dialed > 0 { let _ = swarm.behaviour_mut().kademlia.bootstrap(); }
+                        emit!("bootstrap_seed_fetch=applied dialed={dialed}");
+                    }
+                    Some(Err(error)) => emit!("bootstrap_seed_fetch=failed error={error}"),
+                    None => {}
+                }
+            }
             event = swarm.select_next_some() => match event {
                 SwarmEvent::NewListenAddr { listener_id, address } => {
                     let address = local_listen_address(address, peer_id);
                     emit!("listener_ready listener={listener_id:?} address={address}");
-                    if relay_listener == Some(listener_id) {
-                        emit!("relay_reserved_address={address}");
+                    if let Some(relay_peer) = relay_listeners.iter()
+                        .find(|(_, id)| **id == listener_id)
+                        .map(|(peer, _)| *peer) {
+                        emit!("relay_reserved_address={address} relay_peer={relay_peer}");
                     }
                 }
                 SwarmEvent::ListenerError { listener_id, error } => {
@@ -1257,9 +1621,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
                 SwarmEvent::ListenerClosed { listener_id, addresses, reason } => {
                     emit!("listener_closed listener={listener_id:?} addresses={addresses:?} reason={reason:?}");
-                    if relay_listener == Some(listener_id) {
-                        relay_listener = None;
-                        relay_reservation_active = false;
+                    if let Some(relay_peer) = relay_listeners.iter()
+                        .find(|(_, id)| **id == listener_id)
+                        .map(|(peer, _)| *peer) {
+                        relay_listeners.remove(&relay_peer);
+                        active_relay_reservations.remove(&relay_peer);
                     }
                 }
                 SwarmEvent::Dialing { peer_id: target, connection_id } => {
@@ -1280,20 +1646,32 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     }
                     emit!("peer_connected={peer_id}");
                     emit!("peer_connection_path peer={peer_id} relayed={}", endpoint.is_relayed());
-                    if let Some((relay_peer, address)) = &relay_address {
-                        if *relay_peer == peer_id && relay_listener.is_none() {
+                    let connected_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+                    if let Err(error) = peer_cache.remember(
+                        &peer_id.to_string(),
+                        &[endpoint.get_remote_address().to_string()],
+                        "connection",
+                        connected_at,
+                    ) {
+                        emit!("peer_cache_write_deferred peer={peer_id} error={error}");
+                    }
+                    if let Some((relay_peer, address)) = relay_addresses.iter()
+                        .find(|(relay_peer, _)| *relay_peer == peer_id) {
+                        if !relay_listeners.contains_key(relay_peer) {
                             match swarm.listen_on(address.clone().with(libp2p::multiaddr::Protocol::P2pCircuit)) {
-                                Ok(listener) => { relay_listener = Some(listener); emit!("relay_reservation_requested=true"); }
-                                Err(error) => emit!("relay_reservation_error={error}"),
+                                Ok(listener) => { relay_listeners.insert(peer_id, listener); emit!("relay_reservation_requested=true relay_peer={peer_id}"); }
+                                Err(error) => emit!("relay_reservation_error peer={peer_id} error={error}"),
                             }
                         }
                     }
                 }
                 SwarmEvent::ConnectionClosed { peer_id, cause, num_established, .. } => {
                     emit!("peer_disconnected={peer_id} cause={cause:?} remaining={num_established}");
-                    if num_established == 0 && relay_address.as_ref().is_some_and(|(relay_peer, _)| *relay_peer == peer_id) {
-                        relay_reservation_active = false;
-                        if let Some(listener) = relay_listener.take() { swarm.remove_listener(listener); }
+                    if num_established == 0 {
+                        active_relay_reservations.remove(&peer_id);
+                        if let Some(listener) = relay_listeners.remove(&peer_id) {
+                            let _ = swarm.remove_listener(listener);
+                        }
                     }
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Discovered(peers))) => {
@@ -1302,6 +1680,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
                             emit!("mdns_peer_ignored={peer} reason=not_in_trusted_peer_allowlist");
                             continue;
                         }
+                        let discovered_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+                        let _ = peer_cache.remember(&peer.to_string(), &[address.to_string()], "mdns", discovered_at);
                         swarm.behaviour_mut().kademlia.add_address(&peer, address.clone());
                         if !swarm.is_connected(&peer) {
                             match swarm.dial(address) {
@@ -1474,6 +1854,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                     Ok(true) => {
                                         let peer = record.peer_id.parse::<PeerId>()?;
                                         revoked_peers.get_or_insert_with(HashSet::new).insert(peer);
+                                        let _ = peer_cache.remove(&record.peer_id);
                                         let bytes = serde_json::to_vec(&RevocationSyncMessage::Record(record))?;
                                         let _ = swarm.behaviour_mut().gossipsub.publish(revocation_topic.clone(), bytes);
                                         emit!("signed_peer_revocation_applied peer={peer} source={propagation_source}");
@@ -1490,6 +1871,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                         Ok(true) => {
                                             let peer = record.peer_id.parse::<PeerId>()?;
                                             revoked_peers.get_or_insert_with(HashSet::new).insert(peer);
+                                            let _ = peer_cache.remove(&record.peer_id);
                                             let bytes = serde_json::to_vec(&RevocationSyncMessage::Record(record))?;
                                             let _ = swarm.behaviour_mut().gossipsub.publish(revocation_topic.clone(), bytes);
                                             let _ = swarm.disconnect_peer_id(peer);
@@ -1514,6 +1896,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                         Ok(true) => {
                                             let revoked_peer = record.peer_id.parse::<PeerId>()?;
                                             revoked_peers.get_or_insert_with(HashSet::new).insert(revoked_peer);
+                                            let _ = peer_cache.remove(&record.peer_id);
                                             let bytes = serde_json::to_vec(&RevocationSyncMessage::Record(record))?;
                                             let _ = swarm.behaviour_mut().gossipsub.publish(revocation_topic.clone(), bytes);
                                             let _ = swarm.disconnect_peer_id(revoked_peer);
@@ -1569,14 +1952,41 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     }
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Relay(relay::client::Event::ReservationReqAccepted { relay_peer_id, renewal, .. })) => {
-                    if relay_address.as_ref().is_some_and(|(configured, _)| *configured == relay_peer_id)
+                    if (relay_addresses.iter().any(|(configured, _)| *configured == relay_peer_id)
+                        || relay_listeners.contains_key(&relay_peer_id))
                         && is_peer_allowed(&relay_peer_id, &trusted_peers, &revoked_peers) {
-                        relay_reservation_active = true;
-                        emit!("relay_reservation_accepted=true relay_peer={relay_peer_id} renewal={renewal}");
+                        active_relay_reservations.insert(relay_peer_id);
+                        emit!("relay_reservation_accepted=true relay_peer={relay_peer_id} renewal={renewal} active_reservations={}", active_relay_reservations.len());
                     }
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Relay(event)) => {
                     emit!("relay_client_event={event:?}");
+                }
+                SwarmEvent::Behaviour(BehaviourEvent::RelayServer(event)) => {
+                    emit!("relay_server_event={event:?}");
+                }
+                SwarmEvent::Behaviour(BehaviourEvent::Autonat(autonat::Event::StatusChanged { old, new })) => {
+                    emit!("autonat_status old={old:?} new={new:?}");
+                }
+                SwarmEvent::Behaviour(BehaviourEvent::Autonat(event)) => {
+                    emit!("autonat_event={event:?}");
+                }
+                SwarmEvent::Behaviour(BehaviourEvent::Dcutr(dcutr::Event { remote_peer_id, result })) => {
+                    match result {
+                        Ok(_) => emit!("hole_punch_succeeded peer={remote_peer_id}"),
+                        Err(error) => emit!("hole_punch_failed peer={remote_peer_id} error={error}"),
+                    }
+                }
+                SwarmEvent::Behaviour(BehaviourEvent::Upnp(upnp::Event::NewExternalAddr(address))) => {
+                    swarm.add_external_address(address.clone());
+                    emit!("upnp_external_address={address}");
+                }
+                SwarmEvent::Behaviour(BehaviourEvent::Upnp(upnp::Event::ExpiredExternalAddr(address))) => {
+                    swarm.remove_external_address(&address);
+                    emit!("upnp_external_address_expired={address}");
+                }
+                SwarmEvent::Behaviour(BehaviourEvent::Upnp(event)) => {
+                    emit!("upnp_event={event:?}");
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Kademlia(kad::Event::OutboundQueryProgressed {
                     result: kad::QueryResult::GetClosestPeers(Ok(found)),
@@ -1597,6 +2007,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         for address in peer_info.addrs.iter().take(4) {
                             swarm.behaviour_mut().kademlia.add_address(&discovered, address.clone());
                         }
+                        let discovered_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+                        let cache_addresses: Vec<String> = peer_info.addrs.iter().take(4).map(ToString::to_string).collect();
+                        let _ = peer_cache.remember(&discovered.to_string(), &cache_addresses, "dht", discovered_at);
                         if dialed >= 4 { continue; }
                         let dial = DialOpts::peer_id(discovered)
                             .addresses(peer_info.addrs.clone())
@@ -1624,6 +2037,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         swarm.behaviour_mut().kademlia.add_address(&identified_peer, address.clone());
                         added += 1;
                     }
+                    let identified_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+                    let cache_addresses: Vec<String> = info.listen_addrs.iter().take(8).map(ToString::to_string).collect();
+                    let _ = peer_cache.remember(&identified_peer.to_string(), &cache_addresses, "identify", identified_at);
                     emit!("identify_received peer={identified_peer} agent={} dht_addrs_added={added}", info.agent_version);
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Identify(event)) => {
