@@ -2,6 +2,9 @@ name: P2P three-peer mesh and reconnect acceptance
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/p2p-three-peer-mesh.yml'
   workflow_run:
     workflows: ["CI"]
     types: [completed]
@@ -16,7 +19,7 @@ concurrency:
 
 jobs:
   three-peer-mesh:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
