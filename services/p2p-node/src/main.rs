@@ -20,11 +20,11 @@ macro_rules! emit {
 use futures::StreamExt;
 use libp2p::{
     connection_limits, gossipsub, identify, identity, relay,
-    core::{transport::OrTransport, upgrade, StreamProtocol, Transport},
+    core::{transport::OrTransport, upgrade, Transport},
     kad::{self, store::MemoryStore},
     mdns, noise,
     swarm::{behaviour::toggle::Toggle, dial_opts::DialOpts, Config as SwarmConfig, NetworkBehaviour, SwarmEvent},
-    tcp, yamux, Multiaddr, PeerId, Swarm,
+    tcp, yamux, Multiaddr, PeerId, StreamProtocol, Swarm,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
