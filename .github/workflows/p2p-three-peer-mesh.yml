@@ -106,7 +106,9 @@ jobs:
           publish_probe() {
             local instrument="$1" payload="$2" digest
             digest="$(printf '%s' "$payload" | sha256sum | cut -d' ' -f1)"
-            printf '{"schema":"osiris.observation.v1","instrument":"%s","observed_at":"2026-11-03T00:00:00Z","provider":"osiris-three-peer-ci","payload_sha256":"%s","payload":"%s"}\n' "$instrument" "$digest" "$payload" >&4
+            local observed_at
+            observed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            printf '{"schema":"osiris.observation.v1","instrument":"%s","observed_at":"%s","provider":"osiris-three-peer-ci","payload_sha256":"%s","payload":"%s"}\n' "$instrument" "$observed_at" "$digest" "$payload" >&4
             wait_for "Host C received $instrument from Host B" "$TMP/c.log" "instrument=$instrument" 45
           }
 
