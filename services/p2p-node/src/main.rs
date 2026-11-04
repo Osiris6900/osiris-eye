@@ -23,14 +23,17 @@ use libp2p::{
     core::{transport::OrTransport, upgrade, Transport},
     kad::{self, store::MemoryStore},
     mdns, noise,
-    swarm::{behaviour::toggle::Toggle, Config as SwarmConfig, NetworkBehaviour, SwarmEvent},
-    tcp, yamux, Multiaddr, PeerId, Swarm,
+    swarm::{behaviour::toggle::Toggle, dial_opts::DialOpts, Config as SwarmConfig, NetworkBehaviour, SwarmEvent},
+    tcp, yamux, Multiaddr, PeerId, StreamProtocol, Swarm,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::{io::{self, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader}, net::{TcpListener, TcpStream}, sync::watch};
 
 const PROTOCOL_VERSION: &str = "/osiris-eye/p2p/1.0.0";
+// Dedicated DHT protocol so OSIRIS peers form their own routing table and never
+// mix with the public IPFS Kademlia network.
+const DHT_PROTOCOL_NAME: &str = "/osiris-eye/kad/1.0.0";
 const TOPIC_NAME: &str = "osiris/observations/1";
 const REVOCATION_TOPIC_NAME: &str = "osiris/revocations/1";
 const KEY_BINDING_TOPIC_NAME: &str = "osiris/e2ee/key-bindings/1";
@@ -545,6 +548,19 @@ mod tests {
         assert_eq!(super::parse_interval_secs(Some("999"), 15, 5, 300), 300);
         assert_eq!(super::parse_interval_secs(Some("45"), 15, 5, 300), 45);
     }
+    #[test] fn dht_walk_interval_uses_default_when_unset_or_invalid() {
+        assert_eq!(super::parse_interval_secs(None, 120, 30, 3600), 120);
+        assert_eq!(super::parse_interval_secs(Some("bad"), 120, 30, 3600), 120);
+    }
+    #[test] fn dht_walk_interval_is_clamped_to_safe_bounds() {
+        assert_eq!(super::parse_interval_secs(Some("1"), 120, 30, 3600), 30);
+        assert_eq!(super::parse_interval_secs(Some("99999"), 120, 30, 3600), 3600);
+        assert_eq!(super::parse_interval_secs(Some("300"), 120, 30, 3600), 300);
+    }
+    #[test] fn dht_protocol_is_osiris_scoped_not_public_ipfs() {
+        assert_eq!(super::DHT_PROTOCOL_NAME, "/osiris-eye/kad/1.0.0");
+        assert!(!super::DHT_PROTOCOL_NAME.contains("ipfs"));
+    }
     #[test] fn parses_public_tcp_external_addresses() {
         let addresses = parse_external_addresses(Some("/ip4/203.0.113.10/tcp/4001,/dns4/node.example/tcp/4001")).unwrap();
         assert_eq!(addresses.len(), 2);
@@ -967,7 +983,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let (relay_transport, relay_behaviour) = relay::client::new(peer_id);
     let mut behaviour = Behaviour {
         gossipsub,
-        kademlia: kad::Behaviour::new(peer_id, MemoryStore::new(peer_id)),
+        kademlia: kad::Behaviour::with_config(
+            peer_id,
+            MemoryStore::new(peer_id),
+            kad::Config::new(StreamProtocol::new(DHT_PROTOCOL_NAME)),
+        ),
         mdns: if mdns_enabled {
             Some(mdns::tokio::Behaviour::new(mdns::Config::default(), peer_id)?)
         } else { None }.into(),
@@ -1081,6 +1101,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
         5,
         300,
     );
+    // How often the node walks the DHT to discover new peers on the internet.
+    let dht_walk_interval_secs = parse_interval_secs(
+        env::var("OSIRIS_DHT_WALK_INTERVAL_SECS").ok().as_deref(),
+        120,
+        30,
+        3600,
+    );
     let revocation_sync_interval_secs = parse_interval_secs(
         env::var("OSIRIS_REVOCATION_SYNC_INTERVAL_SECS").ok().as_deref(),
         60,
@@ -1092,6 +1119,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     revocation_sync_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut reconnect_tick = tokio::time::interval(Duration::from_secs(reconnect_interval_secs));
     reconnect_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut dht_walk_tick = tokio::time::interval(Duration::from_secs(dht_walk_interval_secs));
+    dht_walk_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let health_interval_secs = env::var("OSIRIS_HEALTH_INTERVAL_SECS")
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
@@ -1123,6 +1152,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     emit!("connection_limits pending_incoming=32 pending_outgoing=32 established_total=256 established_per_peer=4");
     emit!("bootstrap_peers={}", bootstrap_peers.len());
     emit!("bootstrap_reconnect_interval_seconds={reconnect_interval_secs}");
+    emit!("dht_protocol={DHT_PROTOCOL_NAME}");
+    emit!("dht_walk_interval_seconds={dht_walk_interval_secs}");
     emit!("revocation_sync_interval_seconds={revocation_sync_interval_secs}");
     emit!("health_interval_seconds={health_interval_secs}");
     emit!("Live trading and broker order submission are not part of this node.");
@@ -1206,6 +1237,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         Err(error) => emit!("dht_bootstrap_refresh_skipped={error:?}"),
                     }
                 }
+            }
+            _ = dht_walk_tick.tick() => {
+                // Random-target walk: over time this visits the whole DHT and
+                // surfaces peers the node has never seen before.
+                let query = swarm.behaviour_mut().kademlia.get_closest_peers(PeerId::random());
+                emit!("dht_walk_started query={query:?}");
             }
             event = swarm.select_next_some() => match event {
                 SwarmEvent::NewListenAddr { listener_id, address } => {
@@ -1541,8 +1578,53 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 SwarmEvent::Behaviour(BehaviourEvent::Relay(event)) => {
                     emit!("relay_client_event={event:?}");
                 }
+                SwarmEvent::Behaviour(BehaviourEvent::Kademlia(kad::Event::OutboundQueryProgressed {
+                    result: kad::QueryResult::GetClosestPeers(Ok(found)),
+                    ..
+                })) => {
+                    // Random-walk result: feed every discovered peer back into the
+                    // DHT and dial a bounded number of new, policy-allowed peers so
+                    // the mesh grows across the internet without operator action.
+                    let mut dialed = 0usize;
+                    for peer_info in &found.peers {
+                        let discovered = peer_info.peer_id;
+                        if discovered == peer_id || swarm.is_connected(&discovered) { continue; }
+                        if !is_peer_allowed(&discovered, &trusted_peers, &revoked_peers) {
+                            emit!("dht_peer_ignored peer={discovered} reason=not_in_trusted_peer_allowlist");
+                            continue;
+                        }
+                        if peer_info.addrs.is_empty() { continue; }
+                        for address in peer_info.addrs.iter().take(4) {
+                            swarm.behaviour_mut().kademlia.add_address(&discovered, address.clone());
+                        }
+                        if dialed >= 4 { continue; }
+                        let dial = DialOpts::peer_id(discovered)
+                            .addresses(peer_info.addrs.clone())
+                            .build();
+                        match swarm.dial(dial) {
+                            Ok(()) => { dialed += 1; emit!("dht_peer_dial_started peer={discovered}"); }
+                            Err(error) => emit!("dht_peer_dial_skipped peer={discovered} error={error}"),
+                        }
+                    }
+                    emit!("dht_walk_finished peers_found={} dialed={dialed}", found.peers.len());
+                }
                 SwarmEvent::Behaviour(BehaviourEvent::Kademlia(event)) => {
                     println!("dht_event={event:?}");
+                }
+                SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { peer_id: identified_peer, info, .. })) => {
+                    // Feed observed listen addresses into the DHT so the routing
+                    // table keeps growing from real peers, not just bootstrap config.
+                    if identified_peer == peer_id { continue; }
+                    if !is_peer_allowed(&identified_peer, &trusted_peers, &revoked_peers) {
+                        emit!("identify_ignored peer={identified_peer} reason=not_in_trusted_peer_allowlist");
+                        continue;
+                    }
+                    let mut added = 0usize;
+                    for address in info.listen_addrs.iter().take(8) {
+                        swarm.behaviour_mut().kademlia.add_address(&identified_peer, address.clone());
+                        added += 1;
+                    }
+                    emit!("identify_received peer={identified_peer} agent={} dht_addrs_added={added}", info.agent_version);
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Identify(event)) => {
                     println!("identify_event={event:?}");
