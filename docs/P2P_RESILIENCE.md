@@ -71,3 +71,5 @@ carries that knowledge across restarts.
 - Configure `OSIRIS_RELAY_ADDRESSES` with two or more relays for failover.
 - Back up `OSIRIS_PEER_CACHE` alongside the identity keys.
 - Contribute long-lived public peers to `deploy/p2p/bootstrap-peers.txt`.
+- Keep the node online: every running node adds discovery and relay capacity
+  to the mesh for everyone else.
