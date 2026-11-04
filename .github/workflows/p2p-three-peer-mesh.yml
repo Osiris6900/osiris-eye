@@ -2,6 +2,9 @@ name: P2P three-peer mesh and reconnect acceptance
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/p2p-three-peer-mesh.yml'
   workflow_run:
     workflows: ["CI"]
     types: [completed]
@@ -16,7 +19,7 @@ concurrency:
 
 jobs:
   three-peer-mesh:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -43,6 +46,7 @@ jobs:
 
           start_a() {
             OSIRIS_NODE_KEY="$TMP/a.key" \
+            OSIRIS_REPLAY_CACHE="$TMP/a.replay-cache" \
             OSIRIS_LISTEN_ADDR="/ip4/127.0.0.1/tcp/4101" \
             OSIRIS_HEALTH_HTTP_ADDR="127.0.0.1:19101" \
             OSIRIS_BOOTSTRAP_RECONNECT_INTERVAL_SECS=5 \
@@ -52,6 +56,7 @@ jobs:
           }
           start_b() {
             OSIRIS_NODE_KEY="$TMP/b.key" \
+            OSIRIS_REPLAY_CACHE="$TMP/b.replay-cache" \
             OSIRIS_BOOTSTRAP_PEERS="$BOOTSTRAP" \
             OSIRIS_LISTEN_ADDR="/ip4/127.0.0.1/tcp/0" \
             OSIRIS_HEALTH_HTTP_ADDR="127.0.0.1:19102" \
@@ -62,6 +67,7 @@ jobs:
           }
           start_c() {
             OSIRIS_NODE_KEY="$TMP/c.key" \
+            OSIRIS_REPLAY_CACHE="$TMP/c.replay-cache" \
             OSIRIS_BOOTSTRAP_PEERS="$BOOTSTRAP" \
             OSIRIS_LISTEN_ADDR="/ip4/127.0.0.1/tcp/0" \
             OSIRIS_HEALTH_HTTP_ADDR="127.0.0.1:19103" \
@@ -106,7 +112,9 @@ jobs:
           publish_probe() {
             local instrument="$1" payload="$2" digest
             digest="$(printf '%s' "$payload" | sha256sum | cut -d' ' -f1)"
-            printf '{"schema":"osiris.observation.v1","instrument":"%s","observed_at":"2026-11-03T00:00:00Z","provider":"osiris-three-peer-ci","payload_sha256":"%s","payload":"%s"}\n' "$instrument" "$digest" "$payload" >&4
+            local observed_at
+            observed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            printf '{"schema":"osiris.observation.v1","instrument":"%s","observed_at":"%s","provider":"osiris-three-peer-ci","payload_sha256":"%s","payload":"%s"}\n' "$instrument" "$observed_at" "$digest" "$payload" >&4
             wait_for "Host C received $instrument from Host B" "$TMP/c.log" "instrument=$instrument" 45
           }
 
@@ -141,6 +149,14 @@ jobs:
             if [ "$count" -lt 2 ]; then echo "GossipSub did not resubscribe after bootstrap restart."; cat "$peer_log"; exit 1; fi
           done
 
+          # Require the restarted bootstrap to observe both leaf subscriptions.
+          B_PEER="$(sed -n 's/^peer_id=//p' "$TMP/b.log" | head -n1)"
+          C_PEER="$(sed -n 's/^peer_id=//p' "$TMP/c.log" | head -n1)"
+          test -n "$B_PEER" && test -n "$C_PEER"
+          wait_for "Restarted A sees B gossip subscription" "$TMP/a.log" "gossipsub_subscribed peer=$B_PEER" 60
+          wait_for "Restarted A sees C gossip subscription" "$TMP/a.log" "gossipsub_subscribed peer=$C_PEER" 60
+          # Gossipsub heartbeat establishes the forwarding mesh asynchronously.
+          sleep 3
           publish_probe "OSIRIS-THREE-PEER-RECONNECTED" "three peer reconnect propagation probe"
           echo "BOOTSTRAP_RECONNECT=PASS"
           echo "THREE_PEER_MESH_AND_RECOVERY=PASS"
