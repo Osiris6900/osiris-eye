@@ -15,14 +15,27 @@ concurrency:
   group: p2p-tailscale-cross-host-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+
+# Coordinated hosts must be rerun together; each attempt has fresh artifacts.
 jobs:
   host-a:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    # Never execute PR/fork code after attaching secret-authenticated networking.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
     name: Host A - Tailscale P2P listener
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - uses: dtolnay/rust-toolchain@stable
       - name: Connect runner to Tailscale
         uses: tailscale/github-action@v3
@@ -75,10 +88,16 @@ jobs:
       - name: Share endpoint with Host B
         uses: actions/upload-artifact@v4
         with:
-          name: p2p-endpoint-${{ github.run_id }}
+          name: p2p-endpoint-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/p2p-endpoint.json
           if-no-files-found: error
           retention-days: 1
+      - name: Wait for Host B readiness after its build and network diagnosis
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/p2p_workflow_coordination.py wait-artifact \
+            --name "p2p-host-b-ready-${{ github.run_id }}-${{ github.run_attempt }}" --timeout 600
       - name: Wait for Host B observation to arrive
         run: |
           set -euo pipefail
@@ -89,7 +108,7 @@ jobs:
             PAYLOAD="tailscale cross-host p2p stress probe $sequence"
             DIGEST="$(printf '%s' "$PAYLOAD" | sha256sum | cut -d' ' -f1)"
             RECEIVED=0
-            for _ in $(seq 1 30); do
+            for _ in $(seq 1 240); do
               if grep -F "observation_received" "$NODE_LOG" | grep -F "instrument=$INSTRUMENT" | grep -F "payload_sha256=$DIGEST" >/dev/null; then
                 RECEIVED=1
                 break
@@ -105,6 +124,21 @@ jobs:
           done
           echo "CROSS_HOST_P2P_STRESS_MESSAGES=$MESSAGE_COUNT"
           echo "CROSS_HOST_P2P_STRESS=PASS"
+      - name: Record Host A acceptance result
+        if: always()
+        env:
+          TEST_STATUS: ${{ job.status }}
+        run: |
+          python3 scripts/p2p_workflow_coordination.py write-result \
+            --path "$RUNNER_TEMP/p2p-host-a-result.json" --status "$TEST_STATUS"
+      - name: Share Host A completion with Host B
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p2p-host-a-finished-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/p2p-host-a-result.json
+          if-no-files-found: error
+          retention-days: 1
       - name: Stop Host A node
         if: always()
         run: |
@@ -113,12 +147,21 @@ jobs:
           fi
 
   host-b:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    # Never execute PR/fork code after attaching secret-authenticated networking.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
     name: Host B - Tailscale P2P client
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - uses: dtolnay/rust-toolchain@stable
       - name: Connect runner to Tailscale
         uses: tailscale/github-action@v3
@@ -134,22 +177,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          ARTIFACT_NAME="p2p-endpoint-${{ github.run_id }}"
-          FOUND=""
-          for _ in $(seq 1 120); do
-            FOUND="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" --jq ".artifacts[] | select(.name == \"$ARTIFACT_NAME\" and .expired == false) | .id" | head -n1)"
-            if [ -n "$FOUND" ]; then
-              echo "Host A endpoint artifact is ready."
-              exit 0
-            fi
-            sleep 3
-          done
-          echo "Timed out waiting for Host A endpoint artifact."
-          exit 1
+          python3 scripts/p2p_workflow_coordination.py wait-artifact \
+            --name "p2p-endpoint-${{ github.run_id }}-${{ github.run_attempt }}" --timeout 600
       - name: Download Host A endpoint
         uses: actions/download-artifact@v4
         with:
-          name: p2p-endpoint-${{ github.run_id }}
+          name: p2p-endpoint-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}
           github-token: ${{ github.token }}
           run-id: ${{ github.run_id }}
@@ -165,17 +198,28 @@ jobs:
           echo "=== Route to Host A ==="
           ip route get "$TAILSCALE_IP" || true
           echo "=== Tailscale ping ==="
-          tailscale ping --timeout=10s "$TAILSCALE_IP"
-          PING_STATUS=$?
+          PING_STATUS=0
+          tailscale ping --timeout=10s "$TAILSCALE_IP" || PING_STATUS=$?
           echo "=== TCP port 4001 ==="
-          nc -vz -w 8 "$TAILSCALE_IP" 4001
-          TCP_STATUS=$?
+          TCP_STATUS=0
+          nc -vz -w 8 "$TAILSCALE_IP" 4001 || TCP_STATUS=$?
           echo "TAILSCALE_PING_EXIT=$PING_STATUS"
           echo "TCP_4001_EXIT=$TCP_STATUS"
           if [ "$PING_STATUS" -ne 0 ] || [ "$TCP_STATUS" -ne 0 ]; then
             echo "Network-layer diagnosis failed; stopping before Libp2p handshake."
             exit 1
           fi
+      - name: Record Host B readiness
+        run: |
+          python3 scripts/p2p_workflow_coordination.py write-result \
+            --path "$RUNNER_TEMP/p2p-host-b-ready.json" --status success
+      - name: Notify Host A that Host B is ready
+        uses: actions/upload-artifact@v4
+        with:
+          name: p2p-host-b-ready-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/p2p-host-b-ready.json
+          if-no-files-found: error
+          retention-days: 1
       - name: Connect and publish integrity probe
         env:
           RUNNER_TEMP: ${{ runner.temp }}
@@ -231,7 +275,19 @@ jobs:
           done
           echo "Host B published $MESSAGE_COUNT stress messages to Host A."
           exec 3>&-
-          kill "$NODE_PID" 2>/dev/null || true
+      - name: Wait for Host A to verify every published observation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/p2p_workflow_coordination.py wait-artifact \
+            --name "p2p-host-a-finished-${{ github.run_id }}-${{ github.run_attempt }}" --timeout 600
+      - uses: actions/download-artifact@v4
+        with:
+          name: p2p-host-a-finished-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}
+      - name: Require successful receiver acceptance
+        run: |
+          python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1]))["status"] == "success" else 1)' "$RUNNER_TEMP/p2p-host-a-result.json"
       - name: Stop Host B node
         if: always()
         run: |

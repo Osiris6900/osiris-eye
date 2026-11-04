@@ -5,12 +5,17 @@ use std::{
     collections::HashMap,
     error::Error,
     fs::{self, OpenOptions},
-    io::Write,
+    io::{Read, Write},
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
 const SCHEMA: &str = "osiris.revocation.v1";
+// Keep both recovery and authenticated announcements bounded. The registry is
+// append-only in policy: reaching capacity rejects additions, never evicts bans.
+const MAX_REGISTRY_RECORDS: usize = 16_384;
+const MAX_REGISTRY_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_REASON_BYTES: usize = 128;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SignedRevocationRecord {
@@ -49,6 +54,10 @@ impl SignedRevocationRecord {
         if self.schema != SCHEMA {
             return Err("unsupported revocation record schema".into());
         }
+        if self.peer_id.len() > 128 || self.reason_code.len() > MAX_REASON_BYTES
+            || self.reason_code.trim().is_empty() || self.sequence == 0 || self.issued_at == 0 {
+            return Err("revocation record has invalid sequence, timestamp, peer, or reason".into());
+        }
         let configured = decode_hex::<32>(authority_hex)?;
         let embedded = decode_hex::<32>(&self.authority_key)?;
         if configured != embedded {
@@ -59,9 +68,6 @@ impl SignedRevocationRecord {
         let signature = Signature::from_bytes(&signature_bytes);
         key.verify(&self.payload()?, &signature)
             .map_err(|_| "invalid revocation signature")?;
-        if self.sequence == 0 || self.issued_at == 0 || self.reason_code.trim().is_empty() {
-            return Err("revocation record has invalid sequence, timestamp, or reason".into());
-        }
         Ok(self.peer_id.parse::<PeerId>()?)
     }
 }
@@ -71,8 +77,18 @@ fn decode_hex<const N: usize>(value: &str) -> Result<[u8; N], Box<dyn Error>> {
         return Err("invalid hex field length".into());
     }
     let mut output = [0u8; N];
-    for (index, byte) in output.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(&value[index * 2..index * 2 + 2], 16)?;
+    fn nibble(byte: u8) -> Result<u8, Box<dyn Error>> {
+        match byte {
+            b'0'..=b'9' => Ok(byte - b'0'),
+            b'a'..=b'f' => Ok(byte - b'a' + 10),
+            b'A'..=b'F' => Ok(byte - b'A' + 10),
+            _ => Err("invalid hex field character".into()),
+        }
+    }
+    // Parse bytes rather than slicing str: malformed UTF-8 boundaries in a
+    // network-supplied Unicode string must return an error, never panic.
+    for (byte, pair) in output.iter_mut().zip(value.as_bytes().chunks_exact(2)) {
+        *byte = (nibble(pair[0])? << 4) | nibble(pair[1])?;
     }
     Ok(output)
 }
@@ -107,8 +123,19 @@ impl RevocationRegistry {
         VerifyingKey::from_bytes(&decode_hex::<32>(&authority_hex)?)?;
         let mut registry = Self { path, authority_hex, records: HashMap::new() };
         if registry.path.exists() {
-            let bytes = fs::read(&registry.path)?;
+            let file = fs::File::open(&registry.path)?;
+            if file.metadata()?.len() > MAX_REGISTRY_BYTES {
+                return Err("revocation registry exceeds size limit".into());
+            }
+            let mut bytes = Vec::new();
+            file.take(MAX_REGISTRY_BYTES + 1).read_to_end(&mut bytes)?;
+            if bytes.len() as u64 > MAX_REGISTRY_BYTES {
+                return Err("revocation registry exceeds size limit".into());
+            }
             let loaded: Vec<SignedRevocationRecord> = serde_json::from_slice(&bytes)?;
+            if loaded.len() > MAX_REGISTRY_RECORDS {
+                return Err("revocation registry exceeds record limit".into());
+            }
             for record in loaded {
                 registry.apply(record, false)?;
             }
@@ -122,6 +149,9 @@ impl RevocationRegistry {
         let peer_id = peer.to_string();
         if self.records.get(&peer_id).is_some_and(|old| record.sequence <= old.sequence) {
             return Ok(false);
+        }
+        if !self.records.contains_key(&peer_id) && self.records.len() >= MAX_REGISTRY_RECORDS {
+            return Err("revocation registry capacity exceeded; existing revocations retained".into());
         }
         if persist {
             // Persist the candidate snapshot before publishing it in memory. A disk
@@ -165,6 +195,9 @@ impl RevocationRegistry {
         let mut records: Vec<_> = snapshot.values().cloned().collect();
         records.sort_by(|a, b| a.peer_id.cmp(&b.peer_id));
         let bytes = serde_json::to_vec_pretty(&records)?;
+        if bytes.len() as u64 > MAX_REGISTRY_BYTES {
+            return Err("revocation registry exceeds size limit".into());
+        }
         let parent = self.path.parent()
             .filter(|parent| !parent.as_os_str().is_empty())
             .unwrap_or_else(|| Path::new("."));
@@ -320,5 +353,42 @@ mod tests {
         ).unwrap();
         assert!(registry.apply(signed_record(&key, peer, 2), false).unwrap());
         assert!(!registry.apply(signed_record(&key, peer, 1), false).unwrap());
+    }
+
+    #[test]
+    fn untrusted_unicode_hex_returns_error_without_panicking() {
+        // These strings have the expected byte lengths, but slicing pairs as
+        // UTF-8 text would split the three-byte character and panic.
+        let malformed_key = format!("{}€", "a".repeat(61));
+        let malformed_signature = format!("{}€", "a".repeat(125));
+        assert!(decode_hex::<32>(&malformed_key).is_err());
+        assert!(decode_hex::<64>(&malformed_signature).is_err());
+        let key = SigningKey::from_bytes(&[61u8; 32]);
+        let mut record = signed_record(&key, PeerId::random(), 1);
+        record.signature = malformed_signature;
+        assert!(record.verify(&encode_hex(key.verifying_key().as_bytes())).is_err());
+    }
+
+    #[test]
+    fn oversized_registry_is_rejected_before_loading() {
+        let key = SigningKey::from_bytes(&[62u8; 32]);
+        let path = std::env::temp_dir().join(format!("osiris-revocation-oversized-{}", std::process::id()));
+        let file = fs::File::create(&path).unwrap();
+        file.set_len(MAX_REGISTRY_BYTES + 1).unwrap();
+        drop(file);
+        assert!(RevocationRegistry::open(path.clone(), encode_hex(key.verifying_key().as_bytes())).is_err());
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn oversized_reason_is_rejected_without_changing_registry() {
+        let key = SigningKey::from_bytes(&[63u8; 32]);
+        let path = std::env::temp_dir().join(format!("osiris-revocation-reason-{}", std::process::id()));
+        let mut registry = RevocationRegistry::open(path, encode_hex(key.verifying_key().as_bytes())).unwrap();
+        let mut record = signed_record(&key, PeerId::random(), 1);
+        record.reason_code = "x".repeat(MAX_REASON_BYTES + 1);
+        record.signature = encode_hex(&key.sign(&record.payload().unwrap()).to_bytes());
+        assert!(registry.apply(record, true).is_err());
+        assert!(registry.records().is_empty());
     }
 }

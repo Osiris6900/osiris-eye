@@ -11,6 +11,10 @@ concurrency:
   group: p2p-real-cross-host-e2ee
   cancel-in-progress: false
 
+env:
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+
+# Coordinated hosts must be rerun together; each attempt has fresh artifacts.
 jobs:
   host-a:
     name: Host A - E2EE sender and SSH controller
@@ -34,12 +38,11 @@ jobs:
           ssh-keygen -q -t ed25519 -N "" -f "$RUNNER_TEMP/osiris-e2ee/host-a"
           HOST_A_IP="$(tailscale ip -4 | head -n1)"
           test -n "$HOST_A_IP"
-          printf '{"tailscale_ip":"%s","port":4001}
-' "$HOST_A_IP" > "$RUNNER_TEMP/osiris-e2ee/host-a.json"
+          printf '{"tailscale_ip":"%s","port":4001}\n' "$HOST_A_IP" > "$RUNNER_TEMP/osiris-e2ee/host-a.json"
       - name: Share only the ephemeral public SSH key
         uses: actions/upload-artifact@v4
         with:
-          name: e2ee-host-a-ssh-pub-${{ github.run_id }}
+          name: e2ee-host-a-ssh-pub-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/osiris-e2ee/host-a.pub
           if-no-files-found: error
           retention-days: 1
@@ -48,18 +51,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          ARTIFACT="e2ee-host-b-endpoint-${{ github.run_id }}"
-          FOUND=""
-          for _ in $(seq 1 180); do
-            FOUND="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" --jq ".artifacts[] | select(.name == \"$ARTIFACT\" and .expired == false) | .id" | head -n1)"
-            if [ -n "$FOUND" ]; then break; fi
-            sleep 3
-          done
-          test -n "$FOUND" || { echo "Timed out waiting for Host B endpoint"; exit 1; }
+          python3 scripts/p2p_workflow_coordination.py wait-artifact \
+            --name "e2ee-host-b-endpoint-${{ github.run_id }}-${{ github.run_attempt }}" --timeout 600
       - name: Download Host B SSH endpoint
         uses: actions/download-artifact@v4
         with:
-          name: e2ee-host-b-endpoint-${{ github.run_id }}
+          name: e2ee-host-b-endpoint-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/osiris-e2ee
           github-token: ${{ github.token }}
           run-id: ${{ github.run_id }}
@@ -70,9 +67,9 @@ jobs:
           set -euo pipefail
           DIR="$RUNNER_TEMP/osiris-e2ee"
           HOST_A_IP="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["tailscale_ip"])' "$DIR/host-a.json")"
-          HOST_B_IP="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["tailscale_ip"])' "$DIR/host-b.json")"
-          ssh-keyscan -T 15 -H "$HOST_B_IP" > "$DIR/known_hosts"
-          test -s "$DIR/known_hosts"
+          HOST_B_IP="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["ip"])' "$DIR/host-b.json")"
+          python3 scripts/p2p_workflow_coordination.py known-hosts \
+            --path "$DIR/known_hosts" --endpoint "$DIR/host-b.json"
           python3 scripts/test_p2p_cross_host_e2ee_ssh.py \
             --ssh-target "runner@$HOST_B_IP" \
             --public-ip "$HOST_A_IP" \
@@ -83,14 +80,37 @@ jobs:
             --ssh-option=-o --ssh-option=StrictHostKeyChecking=yes \
             --ssh-option=-o --ssh-option="UserKnownHostsFile=$DIR/known_hosts" \
             --ssh-option=-o --ssh-option=ConnectTimeout=15
+      - name: Record controller completion
+        if: always()
+        env:
+          TEST_STATUS: ${{ job.status }}
+        run: |
+          python3 scripts/p2p_workflow_coordination.py write-result \
+            --path "$RUNNER_TEMP/osiris-e2ee/result.json" --status "$TEST_STATUS"
+      - name: Release receiver after test completion
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2ee-controller-finished-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/osiris-e2ee/result.json
+          if-no-files-found: error
+          retention-days: 1
       - name: Upload E2EE logs on failure
         if: failure() || cancelled()
         uses: actions/upload-artifact@v4
         with:
-          name: e2ee-host-a-failure-${{ github.run_id }}
-          path: ${{ runner.temp }}/osiris-e2ee/
+          name: e2ee-host-a-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          # Allowlist public diagnostics; never upload the host-a private SSH key.
+          path: |
+            ${{ runner.temp }}/osiris-e2ee/host-a.json
+            ${{ runner.temp }}/osiris-e2ee/host-b.json
+            ${{ runner.temp }}/osiris-e2ee/known_hosts
+            ${{ runner.temp }}/osiris-e2ee/result.json
           if-no-files-found: ignore
           retention-days: 3
+      - name: Remove ephemeral SSH client key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/osiris-e2ee/host-a"
 
   host-b:
     name: Host B - Tailscale SSH receiver
@@ -111,18 +131,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          ARTIFACT="e2ee-host-a-ssh-pub-${{ github.run_id }}"
-          FOUND=""
-          for _ in $(seq 1 180); do
-            FOUND="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" --jq ".artifacts[] | select(.name == \"$ARTIFACT\" and .expired == false) | .id" | head -n1)"
-            if [ -n "$FOUND" ]; then break; fi
-            sleep 3
-          done
-          test -n "$FOUND" || { echo "Timed out waiting for Host A public key"; exit 1; }
+          python3 scripts/p2p_workflow_coordination.py wait-artifact \
+            --name "e2ee-host-a-ssh-pub-${{ github.run_id }}-${{ github.run_attempt }}" --timeout 600
       - name: Download Host A public SSH key
         uses: actions/download-artifact@v4
         with:
-          name: e2ee-host-a-ssh-pub-${{ github.run_id }}
+          name: e2ee-host-a-ssh-pub-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/osiris-e2ee
           github-token: ${{ github.token }}
           run-id: ${{ github.run_id }}
@@ -134,7 +148,8 @@ jobs:
           chmod 700 "$HOME/.ssh"
           sudo apt-get update
           sudo apt-get install -y openssh-server
-          cat "$DIR/host-a.pub" > "$HOME/.ssh/authorized_keys"
+          printf 'restrict ' > "$HOME/.ssh/authorized_keys"
+          cat "$DIR/host-a.pub" >> "$HOME/.ssh/authorized_keys"
           chmod 600 "$HOME/.ssh/authorized_keys"
           sudo ssh-keygen -A
           sudo /usr/sbin/sshd
@@ -145,14 +160,22 @@ jobs:
             sleep 1
           done
           timeout 5 bash -c ":</dev/tcp/$HOST_B_IP/22"
-          printf '{"tailscale_ip":"%s","ssh_port":22}
-' "$HOST_B_IP" > "$DIR/host-b.json"
+          python3 scripts/p2p_workflow_coordination.py write-endpoint \
+            --path "$DIR/host-b.json" --ip "$HOST_B_IP" \
+            --host-key /etc/ssh/ssh_host_ed25519_key.pub
       - name: Publish Host B SSH endpoint
         uses: actions/upload-artifact@v4
         with:
-          name: e2ee-host-b-endpoint-${{ github.run_id }}
+          name: e2ee-host-b-endpoint-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/osiris-e2ee/host-b.json
           if-no-files-found: error
           retention-days: 1
       - name: Keep receiver available for Host A test
-        run: sleep 600
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/p2p_workflow_coordination.py wait-artifact \
+            --name "e2ee-controller-finished-${{ github.run_id }}-${{ github.run_attempt }}" --timeout 900
+      - name: Remove ephemeral SSH authorization
+        if: always()
+        run: rm -f "$HOME/.ssh/authorized_keys"

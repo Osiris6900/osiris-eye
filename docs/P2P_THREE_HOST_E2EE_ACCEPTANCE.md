@@ -1,13 +1,15 @@
 # Three-host P2P E2EE non-recipient acceptance
 
-Status: planned acceptance gate; not yet implemented or passed.
+Status: harness and manual workflow implemented; passing cross-host evidence is
+still required for the exact release commit.
 
 ## Objective
 
 Extend the two-host recipient-delivery proof with a third, independently running
 P2P node that is connected to the same network but is not an intended recipient.
-The test must demonstrate that the third node cannot recover the recipient's
-observation plaintext.
+The test must demonstrate exact recipient delivery and explicit discard by the
+non-recipient. Separate primitive tests cover wrong-key decryption failure; a
+recipient-discard path is not an attempted cryptographic break.
 
 ## Topology
 
@@ -56,22 +58,30 @@ compromise. It is not an independent cryptographic audit or production
 security certification. No live broker credentials or order routing are
 authorized by this test.
 
-## Implementation sequence
+## Implemented test paths
 
-1. Add a third-host launch and lifecycle to the existing SSH acceptance
-   harness, with separate ephemeral credentials and strict cleanup.
-2. Add an explicit non-recipient receive/decrypt rejection signal in the node
-   only if the current message path does not expose a testable result.
-3. Add a manually dispatched three-host GitHub Actions workflow using three
-   independent hosted runners on the private test overlay.
-4. Verify the workflow's logs prove recipient success and the observer's
-   recipient-gated discard; a green build alone is insufficient.
-5. Run at least one separate-host acceptance and retain its evidence before
-   marking this gate complete.
+- `scripts/test_p2p_three_host_e2ee_ssh.py` launches local A and SSH-managed B/C
+  with fresh node state and bounded cleanup. It selects B as the sole recipient,
+  checks B's exact observation digest and C's explicit non-recipient discard, and
+  rejects plaintext identifiers/digests in C's logs.
+- `.github/workflows/p2p-three-host-e2ee.yml` is manually dispatched and uses
+  three separate runners on a private test overlay. Same-run artifacts carry
+  public SSH keys/endpoints; host public keys are pinned before SSH. Private
+  keys and private node state must never be uploaded.
+- Two-host acceptance remains available through
+  `scripts/test_p2p_cross_host_e2ee_ssh.py` and its separate workflow.
 
-## Current state
+## Current evidence and completion gate
 
-The existing two-host harness proves only recipient delivery between A and B.
-The existing local three-process test is not a substitute for a third
-independent host. This document records the next acceptance gate; it does not
-claim that implementation or execution is complete.
+The baseline local three-process E2EE test passed recipient delivery and
+non-recipient rejection. The three-host harness and workflow exist, but no
+passing three-host run has been established. The hardening branch repairs
+workflow syntax, host coordination and SSH host-key pinning; those changes still
+require execution on separate hosts with the configured test overlay.
+
+Before marking this gate complete, retain the evidence listed above and verify
+that all three identities are distinct, every node remains connected during the
+probe, B decrypts the exact digest and C explicitly discards the envelope. A green
+build, a two-host result or three local processes cannot substitute for this
+acceptance. Public Internet/NAT reachability, hostile-load resilience and
+independent cryptographic audit remain separate gates.

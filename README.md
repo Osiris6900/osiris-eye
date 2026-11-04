@@ -123,6 +123,10 @@ custody, WORM retention, or proof of source-event truth. See
 [Phase 18 documentation](docs/PHASE18_PORTABLE_AUDIT_BUNDLES.md).
 
 
-## OSIRIS P2P public node deployment
+## OSIRIS P2P observation network
 
-Public-node setup, persistent identity, external address advertising, firewall requirements, bootstrap configuration, relay operation, and current limitations are documented in [docs/P2P_PUBLIC_NODE_DEPLOYMENT.md](docs/P2P_PUBLIC_NODE_DEPLOYMENT.md). The guide is operational preparation only; public reachability still requires independently hosted machines and cross-network acceptance testing.
+The Rust node exchanges signed observations over authenticated libp2p connections. Recipient E2EE is opt-in (`OSIRIS_E2EE_ENABLED=1`); durable key-epoch storage, replay protection and authority-signed revocation support its key lifecycle. The hardening work adds explicit Circuit Relay v2 support to the core node, bounded connection admission, strict observation timestamps and optional freshness checks, plus coordinated cross-host acceptance helpers.
+
+The first release targets encrypted market-data research and paper trading. There is no automatic observation-to-paper-order adapter or live order routing. Public-node deployment, live peer count, cross-host E2EE acceptance and independent security assurance require their own evidence; implementation alone does not establish them.
+
+See the [release gates and validation commands](docs/P2P_RELEASE_GATES.md), [security model](docs/P2P_SECURITY_MODEL.md), [E2EE configuration](docs/P2P_LIVE_E2EE_ROLLOUT.md), [hardened receiver profile](docs/P2P_HARDENED_DEPLOYMENT.md) and [public-node setup](docs/P2P_PUBLIC_NODE_DEPLOYMENT.md). The deployment files are operator preparation; no service or public endpoint is started by this repository.

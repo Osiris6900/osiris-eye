@@ -2,10 +2,11 @@ mod peer_auth;
 mod revocation;
 mod e2ee;
 mod peer_key_store;
+mod observation_policy;
 
 use revocation::{RevocationRegistry, RevocationSyncMessage};
 use e2ee::{create_key_binding, decrypt_for_recipient, encrypt_for_recipient, verify_key_binding, EncryptedEnvelope, KeyBindingRecord, TransportKeyPair};
-use peer_auth::{is_peer_allowed, parse_revoked_peers, parse_trusted_peers, run_if_peer_allowed};
+use peer_auth::{is_peer_allowed, parse_revoked_peers, parse_trusted_peers, read_peer_setting, run_if_peer_allowed};
 use peer_key_store::PeerKeyStore;
 use std::{collections::{HashMap, HashSet}, env, error::Error, fs::{self, OpenOptions}, io::{BufRead, BufReader as StdBufReader, Write}, net::SocketAddr, path::PathBuf, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
 
@@ -18,11 +19,12 @@ macro_rules! emit {
 
 use futures::StreamExt;
 use libp2p::{
-    gossipsub, identify, identity,
+    connection_limits, gossipsub, identify, identity, relay,
+    core::{transport::OrTransport, upgrade, Transport},
     kad::{self, store::MemoryStore},
     mdns, noise,
-    swarm::{NetworkBehaviour, SwarmEvent},
-    tcp, yamux, Multiaddr, PeerId, Swarm, SwarmBuilder,
+    swarm::{behaviour::toggle::Toggle, Config as SwarmConfig, NetworkBehaviour, SwarmEvent},
+    tcp, yamux, Multiaddr, PeerId, Swarm,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -39,33 +41,86 @@ const REVOCATION_REQUEST_TTL: Duration = Duration::from_secs(120);
 
 const MAX_REPLAY_CACHE_BYTES: u64 = 64 * 1024 * 1024;
 
+/// A node-local, single-writer replay journal. Never prune IDs while their
+/// messages could still be replayed. Concurrent writers must use separate paths.
 #[derive(Debug)]
 struct ReplayGuard {
     path: PathBuf,
+    file: fs::File,
+    expected_bytes: u64,
     seen: HashSet<String>,
 }
 
 impl ReplayGuard {
     fn open(path: PathBuf) -> Result<Self, Box<dyn Error>> {
-        let mut seen = HashSet::new();
-        if path.exists() {
-            let file = fs::File::open(&path)?;
-            for line in StdBufReader::new(file).lines() {
-                let line = line?;
-                let (timestamp, id) = line.split_once(' ')
-                    .ok_or("corrupt replay cache entry; refusing to start")?;
-                timestamp.parse::<u64>()
-                    .map_err(|_| "corrupt replay cache timestamp; refusing to start")?;
-                if id.len() != 64 || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
-                    return Err("corrupt replay cache message ID; refusing to start".into());
+        let mut options = OpenOptions::new();
+        options.read(true).append(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let (file, created) = match options.open(&path) {
+            Ok(file) => (file, true),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                if fs::symlink_metadata(&path)?.file_type().is_symlink() {
+                    return Err("replay cache must not be a symbolic link".into());
                 }
-                seen.insert(id.to_ascii_lowercase());
+                (OpenOptions::new().read(true).append(true).open(&path)?, false)
             }
-            if fs::metadata(&path)?.len() > MAX_REPLAY_CACHE_BYTES {
-                return Err("replay cache exceeds 64 MiB; archive it safely before restart".into());
+            Err(error) => return Err(error.into()),
+        };
+        let metadata = file.metadata()?;
+        if !metadata.is_file() {
+            return Err("replay cache must be a regular file".into());
+        }
+        // Check BEFORE parsing; an oversized sparse/corrupt file must not be
+        // scanned or allocated into memory as attacker-controlled records.
+        let expected_bytes = metadata.len();
+        if expected_bytes > MAX_REPLAY_CACHE_BYTES {
+            return Err("replay cache exceeds 64 MiB; archive it safely before restart".into());
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            file.set_permissions(fs::Permissions::from_mode(0o600))?;
+        }
+        if created {
+            file.sync_all()?;
+            #[cfg(unix)]
+            {
+                let parent = path.parent().filter(|parent| !parent.as_os_str().is_empty())
+                    .unwrap_or_else(|| std::path::Path::new("."));
+                fs::File::open(parent)?.sync_all()?;
             }
         }
-        Ok(Self { path, seen })
+        let mut seen = HashSet::new();
+        let mut reader = StdBufReader::new(file.try_clone()?);
+        loop {
+            // Maximum wire record: 20 timestamp digits + space + 64 hex + LF.
+            // A bounded reader prevents a corrupt line from allocating 64 MiB.
+            let mut entry = Vec::with_capacity(86);
+            let count = std::io::Read::take(&mut reader, 87).read_until(b'\n', &mut entry)?;
+            if count == 0 { break; }
+            if count > 86 || entry.last() != Some(&b'\n') {
+                return Err("corrupt replay cache entry length; refusing to start".into());
+            }
+            let line = std::str::from_utf8(&entry[..entry.len() - 1])?;
+            let (timestamp, id) = line.split_once(' ')
+                .ok_or("corrupt replay cache entry; refusing to start")?;
+            if timestamp.is_empty() || !timestamp.bytes().all(|byte| byte.is_ascii_digit()) {
+                return Err("corrupt replay cache timestamp; refusing to start".into());
+            }
+            timestamp.parse::<u64>()
+                .map_err(|_| "corrupt replay cache timestamp; refusing to start")?;
+            if id.len() != 64 || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return Err("corrupt replay cache message ID; refusing to start".into());
+            }
+            seen.insert(id.to_ascii_lowercase());
+        }
+        let guard = Self { path, file, expected_bytes, seen };
+        guard.check_storage()?;
+        Ok(guard)
     }
 
     fn message_id(envelope: &ObservationEnvelope) -> Result<String, Box<dyn Error>> {
@@ -76,45 +131,54 @@ impl ReplayGuard {
         Ok(format!("{:x}", Sha256::digest(canonical)))
     }
 
-    /// Persist before accepting. A crash after sync may reject a retry, never accept a duplicate.
+    /// Detect journal truncation, replacement, or a second writer. Never treat
+    /// filesystem errors as an empty journal or keep accepting after corruption.
+    fn check_storage(&self) -> Result<(), Box<dyn Error>> {
+        let metadata = self.file.metadata()?;
+        let path_metadata = fs::symlink_metadata(&self.path)?;
+        if !path_metadata.is_file() || metadata.len() != self.expected_bytes
+            || path_metadata.len() != self.expected_bytes {
+            return Err("replay cache changed outside this writer; refusing new messages".into());
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if metadata.dev() != path_metadata.dev() || metadata.ino() != path_metadata.ino() {
+                return Err("replay cache file was replaced; refusing new messages".into());
+            }
+        }
+        Ok(())
+    }
 
-    fn record_message_id_if_new(&mut self, message_id: &str) -> Result<bool, Box<dyn Error>> {
-        if message_id.is_empty() || message_id.len() > 128 {
-            return Err("invalid replay message ID".into());
-        }
-        let id = format!("{:x}", Sha256::digest(message_id.as_bytes()));
-        if self.seen.contains(&id) {
-            return Ok(false);
-        }
+    /// Persist before accepting. A crash after sync may reject a retry, never
+    /// accept a duplicate. A failed or partial append poisons this writer until
+    /// the operator repairs the journal; no IDs are evicted to recover capacity.
+    fn record_digest_if_new(&mut self, id: String) -> Result<bool, Box<dyn Error>> {
+        self.check_storage()?;
+        if self.seen.contains(&id) { return Ok(false); }
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
         let entry = format!("{timestamp} {id}\n");
-        let current_size = fs::metadata(&self.path).map(|m| m.len()).unwrap_or(0);
-        if current_size.saturating_add(entry.len() as u64) > MAX_REPLAY_CACHE_BYTES {
-            return Err("replay cache reached 64 MiB capacity; refusing new encrypted messages".into());
+        let next_bytes = self.expected_bytes.saturating_add(entry.len() as u64);
+        if next_bytes > MAX_REPLAY_CACHE_BYTES {
+            return Err("replay cache reached 64 MiB capacity; refusing new messages".into());
         }
-        let mut file = OpenOptions::new().create(true).append(true).open(&self.path)?;
-        file.write_all(entry.as_bytes())?;
-        file.sync_data()?;
+        self.file.write_all(entry.as_bytes())?;
+        self.file.sync_all()?;
+        self.expected_bytes = next_bytes;
         self.seen.insert(id);
         Ok(true)
     }
 
+    fn record_message_id_if_new(&mut self, message_id: &str) -> Result<bool, Box<dyn Error>> {
+        if message_id.is_empty() || message_id.len() > 128
+            || !message_id.bytes().all(|byte| byte.is_ascii_graphic()) {
+            return Err("invalid replay message ID".into());
+        }
+        self.record_digest_if_new(format!("{:x}", Sha256::digest(message_id.as_bytes())))
+    }
+
     fn record_if_new(&mut self, envelope: &ObservationEnvelope) -> Result<bool, Box<dyn Error>> {
-        let id = Self::message_id(envelope)?;
-        if self.seen.contains(&id) {
-            return Ok(false);
-        }
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-        let entry = format!("{timestamp} {id}\n");
-        let current_size = fs::metadata(&self.path).map(|m| m.len()).unwrap_or(0);
-        if current_size.saturating_add(entry.len() as u64) > MAX_REPLAY_CACHE_BYTES {
-            return Err("replay cache reached 64 MiB capacity; refusing new observations".into());
-        }
-        let mut file = OpenOptions::new().create(true).append(true).open(&self.path)?;
-        file.write_all(entry.as_bytes())?;
-        file.sync_data()?;
-        self.seen.insert(id);
-        Ok(true)
+        self.record_digest_if_new(Self::message_id(envelope)?)
     }
 }
 
@@ -134,6 +198,7 @@ impl ObservationEnvelope {
         if self.instrument.trim().is_empty() || self.instrument.len() > 64 { return Err("invalid_instrument"); }
         if self.provider.trim().is_empty() || self.provider.len() > 64 { return Err("invalid_provider"); }
         if self.observed_at.trim().is_empty() || self.observed_at.len() > 40 { return Err("invalid_observed_at"); }
+        observation_policy::validate_timestamp(&self.observed_at, 0, None)?;
         if self.payload.len() > 1_048_576 { return Err("payload_too_large"); }
         let digest = self.payload_sha256.as_bytes();
         if digest.len() != 64 || !digest.iter().all(u8::is_ascii_hexdigit) { return Err("invalid_payload_sha256"); }
@@ -141,6 +206,48 @@ impl ObservationEnvelope {
         if !actual.eq_ignore_ascii_case(&self.payload_sha256) { return Err("payload_hash_mismatch"); }
         Ok(())
     }
+
+    fn validate_for_network(&self, max_age: Option<u64>) -> Result<(), &'static str> {
+        self.validate()?;
+        let now = SystemTime::now().duration_since(UNIX_EPOCH)
+            .map_err(|_| "invalid_system_clock")?.as_secs();
+        observation_policy::validate_timestamp(&self.observed_at, now, max_age)
+    }
+}
+
+/// Parse and validate before any durable replay admission. Rejected market
+/// observations must not consume the finite replay journal.
+fn parse_observation(data: &[u8], max_age: Option<u64>) -> Result<ObservationEnvelope, &'static str> {
+    if data.len() > 2 * 1024 * 1024 { return Err("observation_too_large"); }
+    let observation: ObservationEnvelope = serde_json::from_slice(data)
+        .map_err(|_| "invalid_json")?;
+    observation.validate_for_network(max_age)?;
+    Ok(observation)
+}
+
+enum EncryptedObservationError {
+    Invalid(&'static str),
+    Replay,
+    Storage(Box<dyn Error>),
+}
+
+fn admit_decrypted_observation(
+    plaintext: &[u8], replay_key: &str, max_age: Option<u64>, replay_guard: &mut ReplayGuard,
+) -> Result<ObservationEnvelope, EncryptedObservationError> {
+    let observation = parse_observation(plaintext, max_age)
+        .map_err(EncryptedObservationError::Invalid)?;
+    match replay_guard.record_message_id_if_new(replay_key)
+        .map_err(EncryptedObservationError::Storage)? {
+        true => Ok(observation),
+        false => Err(EncryptedObservationError::Replay),
+    }
+}
+
+fn local_listen_address(mut address: Multiaddr, peer_id: PeerId) -> Multiaddr {
+    if !matches!(address.iter().last(), Some(libp2p::multiaddr::Protocol::P2p(peer)) if peer == peer_id) {
+        address.push(libp2p::multiaddr::Protocol::P2p(peer_id));
+    }
+    address
 }
 
 #[cfg(test)]
@@ -153,6 +260,58 @@ mod tests {
             observed_at: "2026-11-03T00:00:00Z".into(), provider: "coinbase-public".into(),
             payload_sha256: format!("{:x}", Sha256::digest(b"test-payload")), payload: "test-payload".into() }
     }
+
+    #[test]
+    fn rejected_decrypted_observations_do_not_fill_replay_journal() {
+        let path = replay_test_path("validated-admission");
+        let mut guard = super::ReplayGuard::open(path.clone()).unwrap();
+        let mut invalid_hash = valid();
+        invalid_hash.payload.push_str("tampered");
+        let mut stale = valid();
+        stale.observed_at = "1970-01-01T00:00:00Z".into();
+        for (data, max_age) in [
+            (b"invalid-json".to_vec(), None),
+            (serde_json::to_vec(&invalid_hash).unwrap(), None),
+            (serde_json::to_vec(&stale).unwrap(), Some(300)),
+        ] {
+            assert!(matches!(super::admit_decrypted_observation(
+                &data, "sender:message-1", max_age, &mut guard,
+            ), Err(super::EncryptedObservationError::Invalid(_))));
+            assert!(guard.seen.is_empty());
+            assert_eq!(std::fs::metadata(&path).unwrap().len(), 0);
+        }
+        let data = serde_json::to_vec(&valid()).unwrap();
+        assert!(super::admit_decrypted_observation(&data, "sender:message-1", None, &mut guard).is_ok());
+        assert_eq!(guard.seen.len(), 1);
+        assert!(matches!(super::admit_decrypted_observation(
+            &data, "sender:message-1", None, &mut guard,
+        ), Err(super::EncryptedObservationError::Replay)));
+        drop(guard);
+        let mut restarted = super::ReplayGuard::open(path.clone()).unwrap();
+        assert!(matches!(super::admit_decrypted_observation(
+            &data, "sender:message-1", None, &mut restarted,
+        ), Err(super::EncryptedObservationError::Replay)));
+        drop(restarted);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn observation_input_rejects_bad_json_and_validates_next_record() {
+        assert_eq!(super::parse_observation(b"not-json", None).err(), Some("invalid_json"));
+        let data = serde_json::to_vec(&valid()).unwrap();
+        assert!(super::parse_observation(&data, None).is_ok());
+    }
+
+    #[test]
+    fn listener_address_has_exactly_one_local_peer_suffix() {
+        let local = PeerId::random();
+        let relay = PeerId::random();
+        let direct: Multiaddr = "/ip4/127.0.0.1/tcp/4001".parse().unwrap();
+        assert_eq!(super::local_listen_address(direct.clone(), local).to_string(), format!("{direct}/p2p/{local}"));
+        let circuit: Multiaddr = format!("{direct}/p2p/{relay}/p2p-circuit/p2p/{local}").parse().unwrap();
+        assert_eq!(super::local_listen_address(circuit.clone(), local), circuit);
+    }
+
     #[test] fn replay_guard_persists_seen_messages_across_restart() {
         let path = std::env::temp_dir().join(format!("osiris-replay-{}-{}.cache", std::process::id(),
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
@@ -188,6 +347,83 @@ mod tests {
         let path = std::env::temp_dir().join(format!("osiris-replay-corrupt-{}.cache", std::process::id()));
         std::fs::write(&path, "not-a-valid-entry\\n").unwrap();
         assert!(super::ReplayGuard::open(path.clone()).is_err());
+        let _ = std::fs::remove_file(path);
+    }
+    fn replay_test_path(label: &str) -> std::path::PathBuf {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        std::env::temp_dir().join(format!("osiris-replay-{label}-{}-{}.cache",
+            std::process::id(), NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)))
+    }
+    #[test] fn replay_guard_rejects_oversized_sparse_file_before_loading() {
+        let path = replay_test_path("oversize");
+        let file = std::fs::File::create(&path).unwrap();
+        file.set_len(super::MAX_REPLAY_CACHE_BYTES + 1).unwrap();
+        let error = super::ReplayGuard::open(path.clone()).unwrap_err().to_string();
+        assert!(error.contains("exceeds 64 MiB"), "{error}");
+        let _ = std::fs::remove_file(path);
+    }
+    #[test] fn replay_guard_rejects_unbounded_or_truncated_records() {
+        let path = replay_test_path("malformed-record");
+        for bytes in [vec![b'x'; 1024], format!("1 {}", "a".repeat(64)).into_bytes(),
+            format!("+1 {}\n", "a".repeat(64)).into_bytes()] {
+            std::fs::write(&path, bytes).unwrap();
+            assert!(super::ReplayGuard::open(path.clone()).is_err());
+        }
+        let _ = std::fs::remove_file(path);
+    }
+    #[test] fn replay_guard_refuses_external_truncation_and_missing_path() {
+        let path = replay_test_path("external-change");
+        let mut guard = super::ReplayGuard::open(path.clone()).unwrap();
+        assert!(guard.record_message_id_if_new("first").unwrap());
+        std::fs::OpenOptions::new().write(true).open(&path).unwrap().set_len(0).unwrap();
+        assert!(guard.record_message_id_if_new("second").is_err());
+        std::fs::remove_file(&path).unwrap();
+        assert!(guard.record_message_id_if_new("third").is_err());
+        assert!(!path.exists(), "must not silently recreate a deleted replay cache");
+    }
+    #[cfg(unix)]
+    #[test] fn replay_guard_refuses_replaced_file_with_same_length() {
+        let path = replay_test_path("replacement");
+        let replacement = replay_test_path("replacement-new");
+        let mut guard = super::ReplayGuard::open(path.clone()).unwrap();
+        assert!(guard.record_message_id_if_new("first").unwrap());
+        std::fs::copy(&path, &replacement).unwrap();
+        std::fs::rename(&replacement, &path).unwrap();
+        assert!(guard.record_message_id_if_new("second").is_err());
+        let _ = std::fs::remove_file(path);
+    }
+    #[test] fn replay_guard_capacity_failure_never_records_new_id() {
+        let path = replay_test_path("capacity");
+        let mut guard = super::ReplayGuard::open(path.clone()).unwrap();
+        guard.file.set_len(super::MAX_REPLAY_CACHE_BYTES).unwrap();
+        guard.expected_bytes = super::MAX_REPLAY_CACHE_BYTES;
+        assert!(guard.record_message_id_if_new("at-capacity").is_err());
+        assert!(guard.seen.is_empty());
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), super::MAX_REPLAY_CACHE_BYTES);
+        let _ = std::fs::remove_file(path);
+    }
+    #[test] fn replay_guard_rejects_control_and_non_ascii_message_ids_without_writing() {
+        let path = replay_test_path("invalid-ids");
+        let mut guard = super::ReplayGuard::open(path.clone()).unwrap();
+        for id in ["", "a b", "a\nb", "\0", "é"] {
+            assert!(guard.record_message_id_if_new(id).is_err(), "accepted {id:?}");
+        }
+        assert!(guard.record_message_id_if_new(&"a".repeat(129)).is_err());
+        assert!(guard.seen.is_empty());
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), 0);
+        let _ = std::fs::remove_file(path);
+    }
+    #[cfg(unix)]
+    #[test] fn replay_guard_creates_private_journal_and_rejects_symlink() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let path = replay_test_path("permissions");
+        let link = replay_test_path("symlink");
+        let guard = super::ReplayGuard::open(path.clone()).unwrap();
+        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        symlink(&path, &link).unwrap();
+        assert!(super::ReplayGuard::open(link.clone()).is_err());
+        drop(guard);
+        let _ = std::fs::remove_file(link);
         let _ = std::fs::remove_file(path);
     }
     #[test]
@@ -330,6 +566,45 @@ mod tests {
         let address: Multiaddr = "/ip4/127.0.0.1/tcp/4001".parse().unwrap();
         assert_eq!(peer_id_from_multiaddr(&address), None);
     }
+    #[test] fn circuit_bootstrap_identity_is_the_recipient_not_the_relay() {
+        let relay = PeerId::random();
+        let recipient = PeerId::random();
+        let address: Multiaddr = format!("/ip4/127.0.0.1/tcp/4001/p2p/{relay}/p2p-circuit/p2p/{recipient}").parse().unwrap();
+        assert_eq!(peer_id_from_multiaddr(&address), Some(recipient));
+    }
+    #[test] fn bootstrap_parser_preserves_recipient_identity_and_deduplicates() {
+        let relay = PeerId::random();
+        let recipient = PeerId::random();
+        let address = format!("/ip4/127.0.0.1/tcp/4001/p2p/{relay}/p2p-circuit/p2p/{recipient}");
+        let repeated = format!("{address},{address}");
+        let parsed = super::parse_bootstrap_peers(Some(&repeated)).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].0, recipient);
+        assert_eq!(parsed[0].1.to_string(), address);
+        assert!(super::parse_bootstrap_peers(Some("/ip4/127.0.0.1/tcp/4001")).is_err());
+    }
+    #[test] fn relay_reservation_endpoint_requires_explicit_host_port_and_identity() {
+        let peer = PeerId::random();
+        let address = format!("/ip4/127.0.0.1/tcp/4001/p2p/{peer}");
+        let (actual_peer, actual_address) = super::parse_relay_address(Some(&address)).unwrap().unwrap();
+        assert_eq!(actual_peer, peer);
+        assert_eq!(actual_address.to_string(), address);
+        assert!(super::parse_relay_address(None).unwrap().is_none());
+        for invalid in ["".to_owned(), "/ip4/127.0.0.1/tcp/4001".into(),
+            format!("/ip4/127.0.0.1/tcp/0/p2p/{peer}"),
+            format!("{address}/p2p-circuit"),
+            format!("{address}/p2p-circuit/p2p/{}", PeerId::random()),
+            format!("/ip4/127.0.0.1/udp/4001/p2p/{peer}")] {
+            assert!(super::parse_relay_address(Some(&invalid)).is_err(), "accepted {invalid}");
+        }
+    }
+    #[test] fn mdns_configuration_rejects_ambiguous_values() {
+        assert!(super::parse_mdns_enabled(None).unwrap());
+        assert!(super::parse_mdns_enabled(Some("1")).unwrap());
+        assert!(!super::parse_mdns_enabled(Some("0")).unwrap());
+        assert!(super::parse_mdns_enabled(Some("false")).is_err());
+        assert!(super::parse_mdns_enabled(Some("")).is_err());
+    }
 }
 
 #[derive(NetworkBehaviour)]
@@ -337,8 +612,10 @@ mod tests {
 struct Behaviour {
     gossipsub: gossipsub::Behaviour,
     kademlia: kad::Behaviour<MemoryStore>,
-    mdns: mdns::tokio::Behaviour,
+    mdns: Toggle<mdns::tokio::Behaviour>,
     identify: identify::Behaviour,
+    relay: relay::client::Behaviour,
+    connection_limits: connection_limits::Behaviour,
 }
 
 #[derive(Debug)]
@@ -347,6 +624,7 @@ enum BehaviourEvent {
     Kademlia(kad::Event),
     Mdns(mdns::Event),
     Identify(identify::Event),
+    Relay(relay::client::Event),
 }
 
 impl From<gossipsub::Event> for BehaviourEvent {
@@ -360,6 +638,13 @@ impl From<mdns::Event> for BehaviourEvent {
 }
 impl From<identify::Event> for BehaviourEvent {
     fn from(event: identify::Event) -> Self { Self::Identify(event) }
+}
+
+impl From<relay::client::Event> for BehaviourEvent {
+    fn from(event: relay::client::Event) -> Self { Self::Relay(event) }
+}
+impl From<std::convert::Infallible> for BehaviourEvent {
+    fn from(event: std::convert::Infallible) -> Self { match event {} }
 }
 
 fn write_node_identity(path: &PathBuf) -> Result<identity::Keypair, Box<dyn Error>> {
@@ -481,10 +766,10 @@ fn parse_interval_secs(raw: Option<&str>, default: u64, min: u64, max: u64) -> u
 }
 
 fn peer_id_from_multiaddr(address: &Multiaddr) -> Option<PeerId> {
-    address.iter().find_map(|protocol| match protocol {
+    address.iter().filter_map(|protocol| match protocol {
         libp2p::multiaddr::Protocol::P2p(peer_id) => Some(peer_id),
         _ => None,
-    })
+    }).last()
 }
 
 fn parse_external_addresses(raw: Option<&str>) -> Result<Vec<Multiaddr>, Box<dyn Error>> {
@@ -511,26 +796,45 @@ fn parse_external_addresses(raw: Option<&str>) -> Result<Vec<Multiaddr>, Box<dyn
     Ok(addresses)
 }
 
-fn parse_bootstrap_peers(
-    swarm: &mut Swarm<Behaviour>,
-) -> Result<Vec<(PeerId, Multiaddr)>, Box<dyn Error>> {
-    let Some(raw) = env::var_os("OSIRIS_BOOTSTRAP_PEERS") else {
-        return Ok(Vec::new());
+/// A reservation endpoint must identify the relay, not an application recipient.
+/// Circuit recipient addresses belong in OSIRIS_BOOTSTRAP_PEERS instead.
+fn parse_relay_address(raw: Option<&str>) -> Result<Option<(PeerId, Multiaddr)>, Box<dyn Error>> {
+    let Some(raw) = raw else { return Ok(None); };
+    let address: Multiaddr = raw.parse()?;
+    let protocols: Vec<_> = address.iter().collect();
+    let valid_host = matches!(protocols.first(), Some(libp2p::multiaddr::Protocol::Ip4(_))
+        | Some(libp2p::multiaddr::Protocol::Ip6(_)));
+    let valid_port = matches!(protocols.get(1), Some(libp2p::multiaddr::Protocol::Tcp(port)) if *port != 0);
+    if protocols.len() != 3 || !valid_host || !valid_port {
+        return Err("OSIRIS_RELAY_ADDRESS must be /ip4/<ip>/tcp/<port>/p2p/<relay-id> or /ip6/<ip>/tcp/<port>/p2p/<relay-id>".into());
+    }
+    let Some(libp2p::multiaddr::Protocol::P2p(peer)) = protocols.last() else {
+        return Err("OSIRIS_RELAY_ADDRESS must end in /p2p/<relay-id>".into());
     };
+    Ok(Some((*peer, address)))
+}
 
+fn parse_mdns_enabled(raw: Option<&str>) -> Result<bool, Box<dyn Error>> {
+    match raw {
+        None | Some("1") => Ok(true),
+        Some("0") => Ok(false),
+        _ => Err("OSIRIS_MDNS_ENABLED must be 0 or 1".into()),
+    }
+}
+
+fn parse_bootstrap_peers(raw: Option<&str>) -> Result<Vec<(PeerId, Multiaddr)>, Box<dyn Error>> {
+    let Some(raw) = raw else { return Ok(Vec::new()); };
     let mut peers = Vec::new();
-    for entry in raw.to_string_lossy().split(',').map(str::trim).filter(|s| !s.is_empty()) {
+    for entry in raw.split(',').map(str::trim).filter(|entry| !entry.is_empty()) {
         let address: Multiaddr = entry.parse()?;
-        let peer = peer_id_from_multiaddr(&address)
-            .ok_or("bootstrap multiaddr must include /p2p/<peer-id>")?;
-        swarm.behaviour_mut().kademlia.add_address(&peer, address.clone());
+        let peer = match address.iter().last() {
+            Some(libp2p::multiaddr::Protocol::P2p(peer)) => peer,
+            _ => return Err("bootstrap multiaddr must end with /p2p/<peer-id>".into()),
+        };
         if !peers.iter().any(|(known, _)| *known == peer) {
-            swarm.dial(address.clone())?;
+            if peers.len() >= 128 { return Err("at most 128 bootstrap peers are supported".into()); }
             peers.push((peer, address));
         }
-    }
-    if !peers.is_empty() {
-        let _ = swarm.behaviour_mut().kademlia.bootstrap();
     }
     Ok(peers)
 }
@@ -544,6 +848,8 @@ struct HealthSnapshot {
     connected_peers: usize,
     bootstrap_peers_connected: usize,
     bootstrap_peers_total: usize,
+    relay_configured: bool,
+    relay_reservation_active: bool,
 }
 
 fn build_health_snapshot(
@@ -551,6 +857,7 @@ fn build_health_snapshot(
     started_at: Instant,
     swarm: &Swarm<Behaviour>,
     bootstrap_peers: &[(PeerId, Multiaddr)],
+    relay_ready: Option<bool>,
 ) -> HealthSnapshot {
     let connected_peers = swarm.connected_peers().count();
     let bootstrap_peers_connected = bootstrap_peers
@@ -559,12 +866,15 @@ fn build_health_snapshot(
         .count();
     HealthSnapshot {
         status: "alive",
-        ready: bootstrap_peers.is_empty() || bootstrap_peers_connected == bootstrap_peers.len(),
+        ready: (bootstrap_peers.is_empty() || bootstrap_peers_connected == bootstrap_peers.len())
+            && relay_ready.unwrap_or(true),
         peer_id: peer_id.to_string(),
         uptime_seconds: started_at.elapsed().as_secs(),
         connected_peers,
         bootstrap_peers_connected,
         bootstrap_peers_total: bootstrap_peers.len(),
+        relay_configured: relay_ready.is_some(),
+        relay_reservation_active: relay_ready.unwrap_or(false),
     }
 }
 
@@ -616,6 +926,9 @@ async fn serve_health_endpoint(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    let max_observation_age = observation_policy::parse_max_age(
+        read_peer_setting("OSIRIS_MAX_OBSERVATION_AGE_SECS")?.as_deref(),
+    )?;
     let key = load_or_create_identity()?;
     let peer_id = PeerId::from(key.public());
     let e2ee_enabled = match env::var("OSIRIS_E2EE_ENABLED") {
@@ -650,12 +963,26 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let revocation_topic = gossipsub::IdentTopic::new(REVOCATION_TOPIC_NAME);
     let key_binding_topic = gossipsub::IdentTopic::new(KEY_BINDING_TOPIC_NAME);
     let encrypted_topic = gossipsub::IdentTopic::new(ENCRYPTED_TOPIC_NAME);
+    let mdns_enabled = parse_mdns_enabled(read_peer_setting("OSIRIS_MDNS_ENABLED")?.as_deref())?;
+    let (relay_transport, relay_behaviour) = relay::client::new(peer_id);
     let mut behaviour = Behaviour {
         gossipsub,
         kademlia: kad::Behaviour::new(peer_id, MemoryStore::new(peer_id)),
-        mdns: mdns::tokio::Behaviour::new(mdns::Config::default(), peer_id)?,
+        mdns: if mdns_enabled {
+            Some(mdns::tokio::Behaviour::new(mdns::Config::default(), peer_id)?)
+        } else { None }.into(),
         identify: identify::Behaviour::new(
             identify::Config::new(PROTOCOL_VERSION.to_owned(), key.public()),
+        ),
+        relay: relay_behaviour,
+        connection_limits: connection_limits::Behaviour::new(
+            connection_limits::ConnectionLimits::default()
+                .with_max_pending_incoming(Some(32))
+                .with_max_pending_outgoing(Some(32))
+                .with_max_established_incoming(Some(128))
+                .with_max_established_outgoing(Some(128))
+                .with_max_established_per_peer(Some(4))
+                .with_max_established(Some(256)),
         ),
     };
     behaviour.kademlia.set_mode(Some(kad::Mode::Server));
@@ -664,12 +991,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
     behaviour.gossipsub.subscribe(&key_binding_topic)?;
     behaviour.gossipsub.subscribe(&encrypted_topic)?;
 
-    let mut swarm = SwarmBuilder::with_existing_identity(key.clone())
-        .with_tokio()
-        .with_tcp(tcp::Config::default(), noise::Config::new, yamux::Config::default)?
-        .with_behaviour(|_| behaviour)?
-        .with_swarm_config(|config| config.with_idle_connection_timeout(Duration::from_secs(90)))
-        .build();
+    // Both direct and relayed circuits use the same authenticated transport and
+    // Behaviour. A relay never bypasses recipient E2EE or local peer policy.
+    let transport = OrTransport::new(
+        relay_transport, tcp::tokio::Transport::new(tcp::Config::default()),
+    )
+        .upgrade(upgrade::Version::V1)
+        .authenticate(noise::Config::new(&key)?)
+        .multiplex(yamux::Config::default())
+        .boxed();
+    let mut swarm = Swarm::new(transport, behaviour, peer_id,
+        SwarmConfig::with_tokio_executor()
+            .with_idle_connection_timeout(Duration::from_secs(90)));
 
     // Public nodes behind a known public IP or DNS name should set
     // OSIRIS_EXTERNAL_ADDRS to comma-separated reachable TCP multiaddresses.
@@ -685,11 +1018,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .parse()?;
     swarm.listen_on(listen)?;
 
-    let bootstrap_peers = parse_bootstrap_peers(&mut swarm)?;
-    let trusted_peers = parse_trusted_peers(env::var("OSIRIS_TRUSTED_PEERS").ok().as_deref())?;
-    let mut revoked_peer_set = parse_revoked_peers(env::var("OSIRIS_REVOKED_PEERS").ok().as_deref())?
+    let relay_address = parse_relay_address(read_peer_setting("OSIRIS_RELAY_ADDRESS")?.as_deref())?;
+    let mut relay_listener = None;
+    let mut relay_reservation_active = false;
+    let bootstrap_peers = parse_bootstrap_peers(read_peer_setting("OSIRIS_BOOTSTRAP_PEERS")?.as_deref())?;
+    let trusted_peers = parse_trusted_peers(read_peer_setting("OSIRIS_TRUSTED_PEERS")?.as_deref())?;
+    let mut revoked_peer_set = parse_revoked_peers(read_peer_setting("OSIRIS_REVOKED_PEERS")?.as_deref())?
         .unwrap_or_default();
-    let authority_key = env::var("OSIRIS_REVOCATION_AUTHORITY_PUBLIC_KEY").ok();
+    let authority_key = read_peer_setting("OSIRIS_REVOCATION_AUTHORITY_PUBLIC_KEY")?;
     let registry_path = env::var_os("OSIRIS_REVOCATION_REGISTRY")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(".osiris-revocations.json"));
@@ -720,6 +1056,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
             ).into());
         }
     }
+    if let Some((relay_peer, address)) = &relay_address {
+        if !is_peer_allowed(relay_peer, &trusted_peers, &revoked_peers) {
+            return Err("configured relay is not allowed by local trust/revocation policy".into());
+        }
+        swarm.dial(address.clone())?;
+        emit!("relay_configured peer={relay_peer} address={address}");
+    }
+    // Parse and admit every configured endpoint before any outbound dial.
+    for (bootstrap_peer, address) in &bootstrap_peers {
+        swarm.behaviour_mut().kademlia.add_address(bootstrap_peer, address.clone());
+        swarm.dial(address.clone())?;
+    }
+    if !bootstrap_peers.is_empty() { let _ = swarm.behaviour_mut().kademlia.bootstrap(); }
     if let Some(allowed) = &trusted_peers {
         emit!("peer_authentication=allowlist trusted_peers={}", allowed.len());
     } else {
@@ -756,7 +1105,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let health_address: SocketAddr = env::var("OSIRIS_HEALTH_HTTP_ADDR")
         .unwrap_or_else(|_| "127.0.0.1:9090".to_owned())
         .parse()?;
-    let initial_health = build_health_snapshot(&peer_id, started_at, &swarm, &bootstrap_peers);
+    let initial_health = build_health_snapshot(&peer_id, started_at, &swarm, &bootstrap_peers, relay_address.as_ref().map(|_| relay_reservation_active));
     let (health_tx, health_rx) = watch::channel(initial_health);
     tokio::spawn(async move {
         if let Err(error) = serve_health_endpoint(health_address, health_rx).await {
@@ -770,6 +1119,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     emit!("transport_key_epoch={transport_key_epoch} transport_key_file_configured=true");
     let binding_bytes = serde_json::to_vec(&local_key_binding)?;
     let _ = swarm.behaviour_mut().gossipsub.publish(key_binding_topic.clone(), binding_bytes);
+    emit!("mdns_enabled={mdns_enabled}");
+    emit!("connection_limits pending_incoming=32 pending_outgoing=32 established_total=256 established_per_peer=4");
     emit!("bootstrap_peers={}", bootstrap_peers.len());
     emit!("bootstrap_reconnect_interval_seconds={reconnect_interval_secs}");
     emit!("revocation_sync_interval_seconds={revocation_sync_interval_secs}");
@@ -801,13 +1152,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
             _ = health_tick.tick() => {
-                let snapshot = build_health_snapshot(&peer_id, started_at, &swarm, &bootstrap_peers);
+                let snapshot = build_health_snapshot(&peer_id, started_at, &swarm, &bootstrap_peers, relay_address.as_ref().map(|_| relay_reservation_active));
                 let connected_peers = snapshot.connected_peers;
                 let connected_bootstrap_peers = snapshot.bootstrap_peers_connected;
                 health_tx.send_replace(snapshot);
                 emit!(
                     "node_health status=alive ready={} peer_id={} uptime_seconds={} connected_peers={} bootstrap_peers_connected={}/{}",
-                    build_health_snapshot(&peer_id, started_at, &swarm, &bootstrap_peers).ready,
+                    build_health_snapshot(&peer_id, started_at, &swarm, &bootstrap_peers, relay_address.as_ref().map(|_| relay_reservation_active)).ready,
                     peer_id,
                     started_at.elapsed().as_secs(),
                     connected_peers,
@@ -825,8 +1176,24 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
             _ = reconnect_tick.tick() => {
+                if let Some((relay_peer, address)) = &relay_address {
+                    if is_peer_allowed(relay_peer, &trusted_peers, &revoked_peers)
+                        && !swarm.is_connected(relay_peer) {
+                        match swarm.dial(address.clone()) {
+                            Ok(()) => emit!("relay_reconnect_attempt peer={relay_peer}"),
+                            Err(error) => emit!("relay_reconnect_error peer={relay_peer} error={error}"),
+                        }
+                    } else if swarm.is_connected(relay_peer) && relay_listener.is_none()
+                        && is_peer_allowed(relay_peer, &trusted_peers, &revoked_peers) {
+                        match swarm.listen_on(address.clone().with(libp2p::multiaddr::Protocol::P2pCircuit)) {
+                            Ok(listener) => { relay_listener = Some(listener); emit!("relay_reservation_requested=true"); }
+                            Err(error) => emit!("relay_reservation_error={error}"),
+                        }
+                    }
+                }
                 for (bootstrap_peer, address) in &bootstrap_peers {
-                    if !swarm.is_connected(bootstrap_peer) {
+                    if is_peer_allowed(bootstrap_peer, &trusted_peers, &revoked_peers)
+                        && !swarm.is_connected(bootstrap_peer) {
                         match swarm.dial(address.clone()) {
                             Ok(()) => emit!("bootstrap_reconnect_attempt peer={bootstrap_peer}"),
                             Err(error) => emit!("bootstrap_reconnect_error peer={bootstrap_peer} error={error}"),
@@ -842,13 +1209,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
             event = swarm.select_next_some() => match event {
                 SwarmEvent::NewListenAddr { listener_id, address } => {
-                    emit!("listener_ready listener={listener_id:?} address={address}/p2p/{peer_id}");
+                    let address = local_listen_address(address, peer_id);
+                    emit!("listener_ready listener={listener_id:?} address={address}");
+                    if relay_listener == Some(listener_id) {
+                        emit!("relay_reserved_address={address}");
+                    }
                 }
                 SwarmEvent::ListenerError { listener_id, error } => {
                     emit!("listener_error listener={listener_id:?} error={error}");
                 }
                 SwarmEvent::ListenerClosed { listener_id, addresses, reason } => {
                     emit!("listener_closed listener={listener_id:?} addresses={addresses:?} reason={reason:?}");
+                    if relay_listener == Some(listener_id) {
+                        relay_listener = None;
+                        relay_reservation_active = false;
+                    }
                 }
                 SwarmEvent::Dialing { peer_id: target, connection_id } => {
                     emit!("outgoing_dial_started peer={target:?} connection={connection_id:?}");
@@ -867,9 +1242,22 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         continue;
                     }
                     emit!("peer_connected={peer_id}");
+                    emit!("peer_connection_path peer={peer_id} relayed={}", endpoint.is_relayed());
+                    if let Some((relay_peer, address)) = &relay_address {
+                        if *relay_peer == peer_id && relay_listener.is_none() {
+                            match swarm.listen_on(address.clone().with(libp2p::multiaddr::Protocol::P2pCircuit)) {
+                                Ok(listener) => { relay_listener = Some(listener); emit!("relay_reservation_requested=true"); }
+                                Err(error) => emit!("relay_reservation_error={error}"),
+                            }
+                        }
+                    }
                 }
                 SwarmEvent::ConnectionClosed { peer_id, cause, num_established, .. } => {
                     emit!("peer_disconnected={peer_id} cause={cause:?} remaining={num_established}");
+                    if num_established == 0 && relay_address.as_ref().is_some_and(|(relay_peer, _)| *relay_peer == peer_id) {
+                        relay_reservation_active = false;
+                        if let Some(listener) = relay_listener.take() { swarm.remove_listener(listener); }
+                    }
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Discovered(peers))) => {
                     for (peer, address) in peers {
@@ -983,24 +1371,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                         continue;
                                     }
                                 };
-                                match replay_guard.record_message_id_if_new(&format!("{}:{}", envelope.sender_peer_id, envelope.message_id)) {
-                                    Ok(true) => {}
-                                    Ok(false) => {
-                                        emit!("encrypted_message_rejected peer={authenticated_source} reason=replay_detected");
-                                        continue;
-                                    }
-                                    Err(error) => {
-                                        emit!("encrypted_message_rejected peer={authenticated_source} reason=replay_store_error error={error}");
-                                        continue;
-                                    }
-                                }
-                                match serde_json::from_slice::<ObservationEnvelope>(&plaintext) {
-                                    Ok(observation) if observation.validate().is_ok() => emit!(
+                                match admit_decrypted_observation(
+                                    &plaintext, &format!("{}:{}", envelope.sender_peer_id, envelope.message_id),
+                                    max_observation_age, &mut replay_guard,
+                                ) {
+                                    Ok(observation) => emit!(
                                         "encrypted_observation_received peer={} instrument={} provider={} observed_at={} payload_sha256={} payload_bytes={}",
                                         authenticated_source, observation.instrument, observation.provider,
                                         observation.observed_at, observation.payload_sha256, observation.payload.len()
                                     ),
-                                    _ => emit!("encrypted_message_rejected peer={authenticated_source} reason=invalid_plaintext_observation"),
+                                    Err(EncryptedObservationError::Invalid(reason)) => emit!("encrypted_message_rejected peer={authenticated_source} reason=invalid_plaintext_observation detail={reason}"),
+                                    Err(EncryptedObservationError::Replay) => emit!("encrypted_message_rejected peer={authenticated_source} reason=replay_detected"),
+                                    Err(EncryptedObservationError::Storage(error)) => emit!("encrypted_message_rejected peer={authenticated_source} reason=replay_store_error error={error}"),
                                 }
                             }
                             Ok(_) => emit!("encrypted_message_discarded reason=not_for_this_recipient_or_sender_mismatch"),
@@ -1122,8 +1504,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         }
                         continue;
                     }
-                    if !is_peer_allowed(&propagation_source, &trusted_peers, &revoked_peers) {
-                        emit!("message_rejected peer={propagation_source} reason=not_in_trusted_peer_allowlist");
+                    if !is_peer_allowed(&propagation_source, &trusted_peers, &revoked_peers)
+                        || !is_peer_allowed(&authenticated_source, &trusted_peers, &revoked_peers) {
+                        emit!("message_rejected peer={authenticated_source} reason=not_in_trusted_peer_allowlist");
                         continue;
                     }
                     if e2ee_enabled {
@@ -1131,7 +1514,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         continue;
                     }
                     match serde_json::from_slice::<ObservationEnvelope>(&message.data) {
-                        Ok(envelope) if envelope.validate().is_ok() => {
+                        Ok(envelope) if envelope.validate_for_network(max_observation_age).is_ok() => {
                             match replay_guard.record_if_new(&envelope) {
                                 Ok(true) => emit!(
                                     "observation_received peer={} instrument={} provider={} observed_at={} payload_sha256={} payload_bytes={}",
@@ -1148,6 +1531,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         _ => eprintln!("rejected_message peer={propagation_source} reason=invalid_envelope"),
                     }
                 }
+                SwarmEvent::Behaviour(BehaviourEvent::Relay(relay::client::Event::ReservationReqAccepted { relay_peer_id, renewal, .. })) => {
+                    if relay_address.as_ref().is_some_and(|(configured, _)| *configured == relay_peer_id)
+                        && is_peer_allowed(&relay_peer_id, &trusted_peers, &revoked_peers) {
+                        relay_reservation_active = true;
+                        emit!("relay_reservation_accepted=true relay_peer={relay_peer_id} renewal={renewal}");
+                    }
+                }
+                SwarmEvent::Behaviour(BehaviourEvent::Relay(event)) => {
+                    emit!("relay_client_event={event:?}");
+                }
                 SwarmEvent::Behaviour(BehaviourEvent::Kademlia(event)) => {
                     println!("dht_event={event:?}");
                 }
@@ -1158,11 +1551,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
             },
             line = lines.next_line(), if stdin_open => match line? {
                 Some(line) if !line.trim().is_empty() => {
-                    let envelope: ObservationEnvelope = serde_json::from_str(&line)?;
-                    if let Err(reason) = envelope.validate() {
-                        eprintln!("publish_rejected reason={reason}");
-                        continue;
-                    }
+                    let envelope = match parse_observation(line.as_bytes(), max_observation_age) {
+                        Ok(envelope) => envelope,
+                        Err(reason) => {
+                            eprintln!("publish_rejected reason={reason}");
+                            continue;
+                        }
+                    };
                     if e2ee_enabled {
                         let recipients_raw = if let Some(path) = env::var_os("OSIRIS_E2EE_RECIPIENTS_FILE") {
                             match fs::read_to_string(PathBuf::from(path)) {
