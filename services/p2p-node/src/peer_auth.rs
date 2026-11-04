@@ -23,6 +23,18 @@ pub fn parse_revoked_peers(raw: Option<&str>) -> Result<Option<HashSet<PeerId>>,
     parse_peer_set(raw, "OSIRIS_REVOKED_PEERS")
 }
 
+pub fn run_if_peer_allowed<T>(
+    peer: &PeerId,
+    trusted_peers: &Option<HashSet<PeerId>>,
+    revoked_peers: &Option<HashSet<PeerId>>,
+    action: impl FnOnce() -> T,
+) -> Result<T, ()> {
+    if !is_peer_allowed(peer, trusted_peers, revoked_peers) {
+        return Err(());
+    }
+    Ok(action())
+}
+
 pub fn is_peer_allowed(
     peer: &PeerId,
     trusted_peers: &Option<HashSet<PeerId>>,
@@ -34,7 +46,7 @@ pub fn is_peer_allowed(
 
 #[cfg(test)]
 mod tests {
-    use super::{is_peer_allowed, parse_revoked_peers, parse_trusted_peers};
+    use super::{is_peer_allowed, parse_revoked_peers, parse_trusted_peers, run_if_peer_allowed};
     use libp2p::PeerId;
 
     #[test]
@@ -76,6 +88,33 @@ mod tests {
         let trusted = Some([peer].into_iter().collect());
         let revoked = Some([peer].into_iter().collect());
         assert!(!is_peer_allowed(&peer, &trusted, &revoked));
+    }
+
+    #[test]
+    fn revoked_allowlisted_peer_never_enters_encrypted_message_processing() {
+        use std::cell::Cell;
+        let peer = PeerId::random();
+        let trusted = Some([peer].into_iter().collect());
+        let revoked = Some([peer].into_iter().collect());
+        let processing_started = Cell::new(false);
+
+        let result = run_if_peer_allowed(&peer, &trusted, &revoked, || {
+            processing_started.set(true);
+            // Production supplies envelope parsing here; key lookup, decryption,
+            // and replay handling are downstream of this authorization gate.
+            "parsed"
+        });
+
+        assert!(result.is_err());
+        assert!(!processing_started.get());
+    }
+
+    #[test]
+    fn allowed_peer_enters_encrypted_message_processing() {
+        let peer = PeerId::random();
+        let trusted = Some([peer].into_iter().collect());
+        let result = run_if_peer_allowed(&peer, &trusted, &None, || "parsed");
+        assert_eq!(result, Ok("parsed"));
     }
 
     #[test]
