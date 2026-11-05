@@ -130,3 +130,7 @@ The Rust node exchanges signed observations over authenticated libp2p connection
 The first release targets encrypted market-data research and paper trading. There is no automatic observation-to-paper-order adapter or live order routing. Public-node deployment, live peer count, cross-host E2EE acceptance and independent security assurance require their own evidence; implementation alone does not establish them.
 
 See the [release gates and validation commands](docs/P2P_RELEASE_GATES.md), [security model](docs/P2P_SECURITY_MODEL.md), [E2EE configuration](docs/P2P_LIVE_E2EE_ROLLOUT.md), [hardened receiver profile](docs/P2P_HARDENED_DEPLOYMENT.md) and [public-node setup](docs/P2P_PUBLIC_NODE_DEPLOYMENT.md). The deployment files are operator preparation; no service or public endpoint is started by this repository.
+
+## License
+
+OSIRIS EYE is free software licensed under the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0). You may use, study, modify and redistribute it under those terms; operators offering a modified version over a network must offer its source to users (Section 13).
