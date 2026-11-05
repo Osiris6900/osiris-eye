@@ -88,9 +88,13 @@ class FaultMesh:
         nd.log.append(message_id)
         return True
 
-    def broadcast(self, src: str, message_id: str) -> int:
+    def broadcast(self, src: str, message_id: int) -> int:
+        source = self.nodes[src]
+        if message_id not in source.dedup:
+            source.remember(message_id)
+            source.log.append(message_id)
         delivered = 0
-        for dst in sorted(self.nodes[src].connected):
+        for dst in sorted(source.connected):
             if self.deliver(src, dst, message_id):
                 delivered += 1
         return delivered
