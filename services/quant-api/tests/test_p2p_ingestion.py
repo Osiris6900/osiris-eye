@@ -34,8 +34,10 @@ def _observation(**overrides):
 
 
 @pytest.fixture
-def store():
-    return ResearchStore(":memory:")
+def store(tmp_path):
+    # ResearchStore opens a fresh SQLite connection per operation, so tests
+    # need a file-backed database rather than per-connection ":memory:".
+    return ResearchStore(str(tmp_path / "research.sqlite3"))
 
 
 @pytest.fixture
