@@ -712,7 +712,7 @@ struct Behaviour {
     relay_server: Toggle<relay::Behaviour>,
     autonat: autonat::Behaviour,
     // NAT-to-NAT direct connections via relayed signalling (DCUtR).
-    dcutr: dcutr::Behaviour,
+    dcutr: Toggle<dcutr::Behaviour>,
     // Ask the home router for a public port mapping so a laptop node becomes
     // reachable without any manual firewall rule.
     upnp: Toggle<upnp::tokio::Behaviour>,
@@ -1208,6 +1208,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // upgrades relayed connections to direct ones. All default on; set to 0
     // to disable.
     let upnp_enabled = parse_flag(read_peer_setting("OSIRIS_UPNP_ENABLED")?.as_deref(), "OSIRIS_UPNP_ENABLED", true)?;
+    let hole_punch_enabled = parse_flag(read_peer_setting("OSIRIS_HOLE_PUNCH_ENABLED")?.as_deref(), "OSIRIS_HOLE_PUNCH_ENABLED", true)?;
     // Opt-in: also serve as a relay for other nodes. With enough nodes opted
     // in, the mesh needs no dedicated relay server at all.
     let relay_server_enabled = parse_flag(read_peer_setting("OSIRIS_RELAY_SERVER")?.as_deref(), "OSIRIS_RELAY_SERVER", false)?;
@@ -1241,7 +1242,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
             Some(relay::Behaviour::new(peer_id, config))
         } else { None }.into(),
         autonat: autonat::Behaviour::new(peer_id, autonat::Config::default()),
-        dcutr: dcutr::Behaviour::new(peer_id),
+        dcutr: if hole_punch_enabled {
+            Some(dcutr::Behaviour::new(peer_id))
+        } else { None }.into(),
         upnp: if upnp_enabled {
             Some(upnp::tokio::Behaviour::default())
         } else { None }.into(),
@@ -1463,7 +1466,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let binding_bytes = serde_json::to_vec(&local_key_binding)?;
     let _ = swarm.behaviour_mut().gossipsub.publish(key_binding_topic.clone(), binding_bytes);
     emit!("mdns_enabled={mdns_enabled}");
-    emit!("upnp_enabled={upnp_enabled} autonat=enabled hole_punch=enabled");
+    emit!("upnp_enabled={upnp_enabled} autonat=enabled hole_punch={}", if hole_punch_enabled { "enabled" } else { "disabled" });
     emit!("relay_server={} auto_relay={auto_relay_enabled}", if relay_server_enabled { "enabled" } else { "disabled" });
     emit!("connection_limits pending_incoming=32 pending_outgoing=32 established_total=256 established_per_peer=4");
     emit!("bootstrap_peers={}", bootstrap_peers.len());
