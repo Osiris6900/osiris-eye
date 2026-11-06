@@ -3,6 +3,11 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
+  build: {
+    rollupOptions: {
+      input: ['index.html', 'admin.html'],
+    },
+  },
   server: {
     proxy: {
       '/api': {
