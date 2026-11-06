@@ -46,8 +46,10 @@ def serve_one_receipt(
     if type(timeout_seconds) not in (float, int) or not 0 < timeout_seconds <= 30:
         raise ValueError("invalid_receipt_socket_timeout")
     listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    bound = False
     try:
         listener.bind(socket_path)
+        bound = True
         os.chmod(socket_path, 0o600)
         listener.listen(1)
         listener.settimeout(timeout_seconds)
@@ -62,7 +64,7 @@ def serve_one_receipt(
         listener.close()
         # Only unlink the socket we created, not a preexisting path.
         try:
-            if path.is_socket():
+            if bound and path.is_socket():
                 path.unlink()
         except FileNotFoundError:
             pass
