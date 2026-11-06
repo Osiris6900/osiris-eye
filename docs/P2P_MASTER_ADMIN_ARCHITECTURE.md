@@ -2,6 +2,21 @@
 
 The existing `apps/web` is a trading dashboard, **not** an authenticated P2P administration console. Keep the P2P admin application separately deployable. Never connect a visual-only prototype to real node controls.
 
+## Preview the prototype
+
+From the repository root, serve the standalone page locally:
+
+```bash
+python -m http.server 8081 --bind 127.0.0.1 --directory apps/p2p-admin
+```
+
+Open `http://127.0.0.1:8081/`. The page makes no network API calls. Navigation
+reveals prototype modules; only Feature Manager and System Settings edit a
+draft kept in page memory. Those edits survive module navigation, but refresh
+restores the defaults. Export draft JSON downloads the current version, brand
+and feature flags; Reset draft restores defaults. Exported JSON is a design
+sample and is not an accepted node configuration or an authorization token.
+
 ## Modules and future changes
 
 Use a versioned module registry: `id`, `title`, `version`, `required_permission`, `feature_flag`, `read_only_by_default`. Initial modules: overview, owned-nodes, peer-health, cryptography-policy, releases, security-audit, feature-flags, billing, settings. New modules must be independently removable; version and validate all config changes. Reject unknown privileged operations by default.
