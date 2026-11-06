@@ -15,6 +15,8 @@ event caused the move. Live trading remains disabled.
 from __future__ import annotations
 
 import json
+import math
+from datetime import datetime, timezone
 from typing import Any, NamedTuple
 
 from .data_store import ResearchStore
@@ -26,6 +28,8 @@ MAX_ASSESSMENTS = 8
 MAX_RETURNS_POINTS = 512
 MAX_STORE_ROWS = 1000
 MAX_INSTRUMENT_LENGTH = 64
+MIN_ALIGNED_PRE_POINTS = 10
+SIGNIFICANCE_T = 2.0
 
 
 class ExposureRule(NamedTuple):
@@ -219,19 +223,17 @@ def assess_event_impact(
     }
 
 
-def market_returns_from_store(
+def _instrument_quotes_from_store(
     store: ResearchStore,
     instruments: list[str] | tuple[str, ...],
     *,
-    dataset: str = DATASET,
-    points: int = 64,
-) -> dict[str, list[float]]:
-    """Rebuild per-instrument return series from ingested observations.
+    dataset: str,
+    points: int,
+) -> dict[str, list[tuple[str, float]]]:
+    """Per-instrument (event_time, quote) series, oldest→newest.
 
-    Reads the immutable p2p_observations dataset newest-first, keeps rows
-    whose record_key belongs to a requested instrument, orders the values
-    oldest→newest by event_time and converts them to returns. Instruments
-    with fewer than two usable quotes are omitted (never zero-filled).
+    Shared by every impact view; rows that do not parse to a usable quote
+    are skipped, never invented.
     """
     if not 2 <= points <= MAX_RETURNS_POINTS:
         raise ValueError("invalid_points")
@@ -260,9 +262,30 @@ def market_returns_from_store(
         event_time = str(row.get("event_time", ""))
         quotes[instrument].append((event_time, value))
 
-    series_map: dict[str, list[float]] = {}
     for instrument in wanted:
-        observations = sorted(quotes[instrument], key=lambda item: item[0])[-points:]
+        quotes[instrument] = sorted(quotes[instrument], key=lambda item: item[0])[-points:]
+    return quotes
+
+
+def market_returns_from_store(
+    store: ResearchStore,
+    instruments: list[str] | tuple[str, ...],
+    *,
+    dataset: str = DATASET,
+    points: int = 64,
+) -> dict[str, list[float]]:
+    """Rebuild per-instrument return series from ingested observations.
+
+    Reads the immutable p2p_observations dataset newest-first, keeps rows
+    whose record_key belongs to a requested instrument, orders the values
+    oldest→newest by event_time and converts them to returns. Instruments
+    with fewer than two usable quotes are omitted (never zero-filled).
+    """
+    quotes = _instrument_quotes_from_store(
+        store, instruments, dataset=dataset, points=points,
+    )
+    series_map: dict[str, list[float]] = {}
+    for instrument, observations in quotes.items():
         values = [value for _, value in observations]
         if len(values) < 2:
             continue
@@ -273,3 +296,162 @@ def market_returns_from_store(
         if series:
             series_map[instrument] = series
     return series_map
+
+
+def timestamped_returns_from_store(
+    store: ResearchStore,
+    instruments: list[str] | tuple[str, ...],
+    *,
+    dataset: str = DATASET,
+    points: int = 64,
+) -> dict[str, list[tuple[str, float]]]:
+    """Per-instrument (event_time, return) series, oldest→newest.
+
+    Each return is stamped with the *later* quote's event_time, so the
+    series can be split precisely at an event's own time. Instruments with
+    fewer than two usable quotes are omitted (never zero-filled).
+    """
+    quotes = _instrument_quotes_from_store(
+        store, instruments, dataset=dataset, points=points,
+    )
+    series_map: dict[str, list[tuple[str, float]]] = {}
+    for instrument, observations in quotes.items():
+        values = [value for _, value in observations]
+        if len(values) < 2:
+            continue
+        try:
+            series = returns_series(values)
+        except ValueError:
+            continue
+        if not series:
+            continue
+        series_map[instrument] = [
+            (observations[index + 1][0], series[index]) for index in range(len(series))
+        ]
+    return series_map
+
+
+def _parse_event_time(value: Any) -> datetime:
+    text = str(value if value is not None else "").strip()
+    if not text:
+        raise ValueError("aligned_event_time_missing")
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("aligned_event_time_missing") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("aligned_event_time_missing")
+    return parsed.astimezone(timezone.utc)
+
+
+def _mean_std(values: list[float]) -> tuple[float, float]:
+    mean = sum(values) / len(values)
+    if len(values) < 2:
+        return mean, 0.0
+    variance = sum((value - mean) ** 2 for value in values) / (len(values) - 1)
+    return mean, math.sqrt(variance)
+
+
+def aligned_event_impact(
+    store: ResearchStore,
+    event: Any,
+    *,
+    rules: tuple[ExposureRule, ...] = DEFAULT_EXPOSURE_RULES,
+    dataset: str = DATASET,
+    pre_points: int = 40,
+    post_points: int = 10,
+    min_post_points: int = 3,
+) -> dict[str, Any]:
+    """Event-time aligned impact hypothesis with a significance check.
+
+    Unlike :func:`assess_event_impact` (which looks at the *latest* move),
+    this splits each exposed instrument's return series at the event's own
+    ``event_time``: returns before the event are the baseline, returns
+    at/after it are the reaction window. Per instrument it reports the
+    post-event mean and cumulative return and a Welch t-statistic against
+    the pre-event baseline (normal approximation, ``|t| >= 2`` flagged as
+    significant). This is a stricter research lead, not proof: causality
+    is never established.
+    """
+    if not MIN_ALIGNED_PRE_POINTS <= pre_points <= 400:
+        raise ValueError("invalid_pre_points")
+    if not 2 <= post_points <= 100 or not 2 <= min_post_points <= post_points:
+        raise ValueError("invalid_post_points")
+    payload = _event_payload(event)
+    event_dt = _parse_event_time(payload.get("event_time"))
+    exposed = match_event_exposure(payload, rules=rules)
+    series_map = timestamped_returns_from_store(
+        store, exposed, dataset=dataset,
+        points=min(pre_points + post_points + 8, MAX_RETURNS_POINTS),
+    )
+
+    assessments: list[dict[str, Any]] = []
+    for instrument in exposed[:MAX_ASSESSMENTS]:
+        series = series_map.get(instrument)
+        if not series:
+            assessments.append({"instrument": instrument, "status": "no_market_data"})
+            continue
+        pre = [value for stamp, value in series
+               if _parse_event_time(stamp) < event_dt][-pre_points:]
+        post = [value for stamp, value in series
+                if _parse_event_time(stamp) >= event_dt][:post_points]
+        if len(pre) < MIN_ALIGNED_PRE_POINTS or len(post) < min_post_points:
+            assessments.append({
+                "instrument": instrument,
+                "status": "insufficient_aligned_data",
+                "pre_points": len(pre),
+                "post_points": len(post),
+                "required_pre": MIN_ALIGNED_PRE_POINTS,
+                "required_post": min_post_points,
+            })
+            continue
+        pre_mean, pre_std = _mean_std(pre)
+        post_mean, post_std = _mean_std(post)
+        cumulative = 1.0
+        for value in post:
+            cumulative *= 1.0 + value
+        cumulative -= 1.0
+        denominator = math.sqrt(
+            (pre_std ** 2) / len(pre) + (post_std ** 2) / len(post)
+        )
+        welch_t = (post_mean - pre_mean) / denominator if denominator > 0 else 0.0
+        assessments.append({
+            "instrument": instrument,
+            "status": "assessed",
+            "pre_points": len(pre),
+            "post_points": len(post),
+            "post_mean_return": round(post_mean, 8),
+            "post_cumulative_return": round(cumulative, 8),
+            "direction": "up" if cumulative > 0 else "down" if cumulative < 0 else "flat",
+            "welch_t": round(welch_t, 4),
+            "significant": abs(welch_t) >= SIGNIFICANCE_T,
+        })
+
+    assessed = [item for item in assessments if item.get("status") == "assessed"]
+    significant = [item for item in assessed if item.get("significant")]
+    if not exposed:
+        verdict = "no_known_exposure"
+    elif significant:
+        verdict = "significant_reaction"
+    elif assessed:
+        verdict = "no_significant_reaction"
+    else:
+        verdict = "insufficient_aligned_data"
+
+    return {
+        "event_kind": str(payload.get("kind", "")),
+        "event_summary": _event_summary(payload),
+        "event_time": event_dt.isoformat(),
+        "matched_instruments": exposed,
+        "alignment": "event_time_split",
+        "assessments": assessments,
+        "verdict": verdict,
+        "significance_note": (
+            "Welch t vs the instrument's own pre-event baseline, normal "
+            "approximation, |t| >= 2 flagged; a significant reaction near "
+            "an event is a research lead, never proof of cause"
+        ),
+        "hypothesis": True,
+        "causality": "not_established",
+        "live_execution": False,
+    }
