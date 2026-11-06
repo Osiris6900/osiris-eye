@@ -56,7 +56,7 @@ def test_security_and_workflow_gates():
 
 
 def test_phase8_routes_and_registry():
-    assert client.get("/platform/modules").json()["count"] == 97
+    assert client.get("/platform/modules").json()["count"] == 107
     row = {"record_id": "r1", "source": "feed", "license_status": "authorized",
            "event_time": "2026-01-01T10:00:00Z", "available_at": "2026-01-01T10:00:01Z"}
     assert client.post("/platform/data/lineage-audit", json={"records": [row]}).status_code == 200

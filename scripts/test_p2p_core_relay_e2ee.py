@@ -2,8 +2,8 @@
 """Exercise recipient E2EE through Circuit Relay v2 using the real core node.
 
 Topology: sender core node -> relay server -> recipient core node.  The sender
-bootstraps only the recipient's circuit address and mDNS is disabled on both
-nodes.  The test asserts that the observed sender/recipient connection is
+bootstraps only the recipient's circuit address and mDNS and automatic hole
+punching are disabled on both nodes. The test asserts that the observed sender/recipient connection is
 relayed, signed encryption-key bindings are accepted durably, and the recipient
 reports the exact decrypted observation digest.  It uses fresh state and
 ephemeral localhost ports; it does not establish cross-host/NAT reachability.
@@ -157,6 +157,9 @@ def core_environment(base: dict[str, str], tmp: Path, name: str) -> dict[str, st
         "OSIRIS_HEALTH_HTTP_ADDR": "127.0.0.1:0",
         "OSIRIS_LISTEN_ADDR": "/ip4/127.0.0.1/tcp/0",
         "OSIRIS_MDNS_ENABLED": "0",
+        # DCUtR otherwise races publication by upgrading the local circuit to
+        # a direct connection, invalidating relay-only delivery evidence.
+        "OSIRIS_HOLE_PUNCH_ENABLED": "0",
         "OSIRIS_E2EE_ENABLED": "1",
     }
 
@@ -209,6 +212,11 @@ def run(binary_dir: Path | None, timeout: float, evidence: dict) -> None:
                              })
             processes.append(sender)
             sender_peer = sender.prefix("peer_id=", timeout).split("=", 1)[1]
+            for process in (sender, receiver):
+                process.wait_for(
+                    lambda line: line.startswith("upnp_enabled=") and "hole_punch=disabled" in line,
+                    timeout, "disabled automatic hole punching",
+                )
             evidence.update({
                 "relay_peer_id": relay_peer,
                 "sender_peer_id": sender_peer,
@@ -269,6 +277,7 @@ def run(binary_dir: Path | None, timeout: float, evidence: dict) -> None:
                     "recipient_exact_digest": True,
                     "no_plaintext_payload_in_logs": True,
                     "mdns_disabled": True,
+                    "hole_punch_disabled": True,
                 },
             })
         finally:

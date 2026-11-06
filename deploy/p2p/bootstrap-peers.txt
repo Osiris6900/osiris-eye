@@ -1,0 +1,12 @@
+# OSIRIS EYE community bootstrap seeds.
+#
+# One multiaddress per line, every entry must end in /p2p/<peer-id>.
+# Lines starting with # are comments; invalid lines are skipped by nodes,
+# so a partially corrupt file can never block a node from starting.
+#
+# Nodes fetch this file over HTTPS (no redirects, 64 KiB cap) when they have
+# no other entry point. Add only long-lived, publicly reachable peers whose
+# operators have agreed to act as entry points.
+#
+# Example:
+# /ip4/203.0.113.10/tcp/4001/p2p/12D3KooWExamplePeerIdReplaceMe123456789
