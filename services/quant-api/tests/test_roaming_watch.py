@@ -6,12 +6,12 @@ hammering, ranks doors by measured round-trip, and never crashes its own
 loop. No disguise, no block-evasion — public roads only.
 """
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
 from osiris_api.data_store import ResearchStore
-from osiris_api.global_market_watch import PROVIDER_BYBIT, PROVIDER_OKX
+from osiris_api.global_market_watch import PROVIDER_BYBIT, PROVIDER_OKX, PROVIDER_STOOQ
 from osiris_api.p2p_ingestion import ENABLE_ENV
 from osiris_api.roaming_watch import (
     EQUIVALENT_HOSTS,
@@ -21,7 +21,7 @@ from osiris_api.roaming_watch import (
     run_roaming_watch,
 )
 
-NOW = datetime(2026, 11, 6, 12, 0, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 11, 6, 12, 0, 0, tzinfo=UTC)
 
 
 class Clock:
@@ -359,3 +359,121 @@ def test_run_roaming_watch_kill_switch_off_still_roams(store, monkeypatch):
     assert result["cycles_run"] == 2
     assert result["total_fetched"] == 4
     assert result["total_ingested"] == 0  # gates still closed; the spirit keeps walking
+
+
+def test_total_transport_outage_stops_with_source_evidence(store, enabled):
+    clock = Clock()
+    sleeps = []
+
+    def unavailable(url, timeout):
+        raise RuntimeError("watch_source_unavailable")
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        clock.advance(seconds)
+
+    result = run_roaming_watch(
+        store, cycles=10, watchlist=WATCHLIST, transport=unavailable,
+        max_consecutive_errors=2, clock=clock, sleep=sleep,
+    )
+    assert result["cycles_run"] == 2
+    assert result["stop_reason"] == "consecutive_errors"
+    assert result["consecutive_errors_at_stop"] == 2
+    assert result["total_fetched"] == 0
+    assert sleeps == [60.0]  # no wait after stopping
+    assert result["cycle_errors"] == [
+        {"cycle": "0", "error": "watch_no_observations"},
+        {"cycle": "1", "error": "watch_no_observations"},
+    ]
+    assert result["latest_coverage"]["missing_instruments"] == ["BTCUSDT"]
+    assert result["latest_coverage"]["failed_sources"] == sorted(PROVIDERS)
+    assert all(report["status"] == "no_observations" for report in result["cycle_reports"])
+    assert all(len(report["source_errors"]) == 2 for report in result["cycle_reports"])
+
+
+def test_silent_sources_count_toward_outage_threshold(store, enabled):
+    result = run_roaming_watch(
+        store, cycles=5, watchlist={PROVIDER_OKX: ("BTCUSDT",)},
+        transport=lambda url, timeout: b'{"code":"0","data":[]}',
+        max_consecutive_errors=1, sleep=lambda seconds: None,
+    )
+    assert result["stop_reason"] == "consecutive_errors"
+    assert result["cycles_run"] == 1
+    assert result["latest_coverage"]["silent_sources"] == [PROVIDER_OKX]
+    assert result["cycle_reports"][0]["source_errors"] == []
+
+
+def test_useful_partial_coverage_resets_outage_streak(store, enabled):
+    clock = Clock()
+    state = {"cycle": 0}
+
+    def transport(url, timeout):
+        if state["cycle"] == 1 and "okx.com" in url:
+            return OKX_TICKERS
+        raise RuntimeError("watch_source_unavailable")
+
+    def sleep(seconds):
+        state["cycle"] += 1
+        clock.advance(seconds)
+
+    result = run_roaming_watch(
+        store, cycles=3, watchlist=WATCHLIST, transport=transport,
+        max_consecutive_errors=2, clock=clock, sleep=sleep,
+    )
+    assert result["stop_reason"] == "cycles_completed"
+    assert result["consecutive_errors_at_stop"] == 1
+    assert result["total_fetched"] == 1
+    assert result["total_ingested"] == 1
+    reports = result["cycle_reports"]
+    assert [report["status"] for report in reports] == [
+        "no_observations", "degraded", "no_observations",
+    ]
+    assert reports[1]["coverage"]["single_source_instruments"] == ["BTCUSDT"]
+    assert reports[1]["coverage"]["failed_sources"] == [PROVIDER_BYBIT]
+
+
+def test_cycle_evidence_retains_only_latest_fifty_reports(store):
+    result = run_roaming_watch(
+        store, cycles=55, watchlist={PROVIDER_OKX: ("BTCUSDT",)},
+        transport=lambda url, timeout: b'{"code":"0","data":[]}',
+        max_consecutive_errors=100, sleep=lambda seconds: None,
+    )
+    assert result["cycles_run"] == 55
+    assert result["consecutive_errors_at_stop"] == 55
+    assert len(result["cycle_errors"]) == len(result["cycle_reports"]) == 50
+    assert result["cycle_errors"][0]["cycle"] == "5"
+    assert result["cycle_reports"][0]["cycle"] == 5
+    assert result["cycle_reports"][-1]["cycle"] == 54
+
+
+def test_explicit_empty_watchlist_is_idle_without_network_requests(store):
+    def unexpected_request(url, timeout):
+        pytest.fail("empty watchlist must not fetch default sources")
+
+    result = run_roaming_watch(
+        store, cycles=2, watchlist={}, transport=unexpected_request,
+        max_consecutive_errors=1, sleep=lambda seconds: None,
+    )
+    assert result["stop_reason"] == "cycles_completed"
+    assert result["consecutive_errors_at_stop"] == 0
+    assert result["total_fetched"] == 0
+    assert result["latest_coverage"]["sources_watched"] == 0
+    assert [report["status"] for report in result["cycle_reports"]] == ["idle", "idle"]
+
+
+def test_unrequested_quotes_cannot_reset_total_coverage_outage(store):
+    # A source may ignore its requested symbols and return unrelated quotes.
+    body = (
+        b"Symbol,Date,Time,Open,High,Low,Close,Volume\n"
+        b"^NDQ,2026-11-06,12:00:00,100,110,90,105,0\n"
+    )
+    result = run_roaming_watch(
+        store, cycles=2, watchlist={PROVIDER_STOOQ: ("^spx",)},
+        transport=lambda url, timeout: body,
+        max_consecutive_errors=1, sleep=lambda seconds: None,
+    )
+    assert result["stop_reason"] == "consecutive_errors"
+    assert result["cycles_run"] == 1
+    assert result["cycle_reports"][0]["status"] == "no_observations"
+    assert result["latest_coverage"]["instruments_covered"] == 0
+    assert result["latest_coverage"]["missing_instruments"] == ["^SPX"]

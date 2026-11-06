@@ -16,8 +16,9 @@ from __future__ import annotations
 import json
 import os
 import time
+from collections.abc import Callable
 from datetime import datetime
-from typing import Any, Callable
+from typing import Any
 
 from .data_store import ResearchStore
 from .global_market_watch import (
@@ -27,6 +28,7 @@ from .global_market_watch import (
     collect_market_observations,
 )
 from .p2p_ingestion import IngestionRejection, ingest_p2p_observation
+from .roaming_watch import RoamingTransport
 
 ENABLE_ENV = "OSIRIS_MARKET_WATCH_BROADCAST"
 MIN_INTERVAL_SECONDS = 15
@@ -58,8 +60,9 @@ def broadcast_cycle(
     if store is None:
         raise BridgeRefused("validated_store_required")
 
+    roaming = transport if isinstance(transport, RoamingTransport) else RoamingTransport(transport)
     collected = collect_market_observations(
-        watchlist=watchlist, transport=transport,
+        watchlist=watchlist, transport=roaming,
         timeout_seconds=timeout_seconds, now=now,
     )
     broadcast = 0
@@ -86,6 +89,8 @@ def broadcast_cycle(
     return {
         "broadcast": broadcast,
         "source_errors": collected["errors"],
+        "coverage": collected["coverage"],
+        "endpoint_stats": roaming.stats(),
         "ingested_local": ingested,
         "duplicates_skipped": duplicates,
         "rejected_local": rejected,
@@ -116,11 +121,14 @@ def run_bridge(
     if not 1 <= max_cycles <= MAX_CYCLES:
         raise BridgeRefused("max_cycles_out_of_bounds")
 
+    # Keep endpoint measurements and cooldowns across cycles; rebuilding the
+    # wrapper per cycle would repeatedly send traffic to a known-failed host.
+    roaming = transport if isinstance(transport, RoamingTransport) else RoamingTransport(transport)
     summaries = []
     for _ in range(max_cycles):
         summaries.append(broadcast_cycle(
             write_line,
-            store=store, watchlist=watchlist, transport=transport,
+            store=store, watchlist=watchlist, transport=roaming,
             timeout_seconds=timeout_seconds,
         ))
         sleep(interval_seconds)
@@ -128,5 +136,6 @@ def run_bridge(
         "cycles": len(summaries),
         "interval_seconds": interval_seconds,
         "summaries": summaries,
+        "endpoint_stats": roaming.stats(),
         "live_execution": False,
     }

@@ -70,6 +70,10 @@ same fail-closed gates as any P2P observation** (kill switch, provider
 allowlist, payload hash, freshness). Identical quotes between cycles are
 counted as `duplicates_skipped`, not stored twice.
 
+Collection and ingestion summaries include `coverage`, reporting failed and
+silent sources, independent sources per instrument, and expected instruments
+with no returned quote. An explicit empty watchlist makes no requests.
+
 ## Failure semantics
 
 - A source that is down or returns garbage is recorded in `source_errors`;
@@ -86,10 +90,10 @@ counted as `duplicates_skipped`, not stored twice.
   are delayed; only crypto tickers are near-real-time.
 - This is research observation, not a licensed consolidated feed and not
   trading-grade market data. Live trading remains disabled.
-- Wiring the watcher into the Rust node loop (auto-broadcast of each
-  observation to the mesh) is follow-up work; today an operator runs the
-  cycle and the mesh distributes observations through the existing P2P
-  paths.
+- The [autonomous P2P bridge](P2P_MARKET_WATCH_BRIDGE.md) writes observations
+  to an already running node after successful local ingestion. It now retains
+  roaming failover and endpoint measurements across cycles. Running this
+  bridge does not establish remote delivery or independent-host acceptance.
 
 ## Tests
 
