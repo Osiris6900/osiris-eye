@@ -61,7 +61,7 @@ class RecipientReceiptLedger:
     def acknowledge_verified(self, message_id: str, recipient: str, digest: str, *,
                              verified: bool, now: int | None = None) -> bool:
         """Caller must authenticate signature, signer, sender, freshness and policy."""
-        if not verified:
+        if verified is not True:
             raise ValueError("verified_receipt_required")
         with self._connect() as db:
             cursor = db.execute(
