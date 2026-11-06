@@ -6,7 +6,7 @@ OSIRIS EYE is a research-first, multi-asset quantitative trading platform scaffo
 
 ## Architecture
 
-- `services/quant-api`: FastAPI service, shared SQLite point-in-time observation store, 97-module registry, research endpoints, risk checks, and tests.
+- `services/quant-api`: FastAPI service, shared SQLite point-in-time observation store, 107-module registry, research endpoints, risk checks, and tests.
 - `crates/risk-kernel`: Rust pre-trade risk primitives.
 - `apps/web`: TypeScript + Vite dashboard foundation.
 - `docs`: architecture, data contracts, shared API integration guide, module catalog, advanced intelligence specification, master engineering blueprint, and phased roadmap.
@@ -14,7 +14,13 @@ OSIRIS EYE is a research-first, multi-asset quantitative trading platform scaffo
 
 ## Platform module catalog
 
-The platform now registers 97 research and infrastructure capability foundations; registry status indicates implementation maturity, not production readiness. Deterministic Python primitives now cover alternative-event validation, order-flow imbalance, baseline portfolio weights, historical VaR/ES, model drift, strategy diagnostics, execution-cost estimation, macro regime labels, component health, and approval-gated AI task contracts. These are not complete services or validated trading signals.
+The platform now registers 107 research and infrastructure capability foundations; registry status indicates implementation maturity, not production readiness. Deterministic Python primitives now cover alternative-event validation, order-flow imbalance, baseline portfolio weights, historical VaR/ES, model drift, strategy diagnostics, execution-cost estimation, macro regime labels, component health, and approval-gated AI task contracts. These are not complete services or validated trading signals.
+
+## Market Mechanics research lab
+
+Ten additional diagnostics cover dealer Gamma Exposure (GEX), options expiry and Max Pain, liquidity vacuums, aggressor order-flow imbalance, dark-pool activity, crypto funding and liquidation scenarios, Treasury liquidity and repo spreads, index rebalancing, volatility-control fund flows, and cross-asset lead–lag. The dashboard's Market Mechanics panel loads editable synthetic examples from `/research/market-mechanics/catalog` and runs the selected calculation through the API.
+
+Each module exposes its evidence strength, assumptions and limitations. Strong mechanical support does not establish a profitable prediction: GEX needs explicit signed dealer positions, Max Pain has weak predictive support, dark-pool volume does not reveal institutional direction, and lead–lag relationships can be unstable. These calculations use caller-supplied data and add no vendor feeds or order routing. See [Market Mechanics documentation](docs/MARKET_MECHANICS.md) for endpoints, formulas, units and usage.
 
 ## Phase 7 institutional alpha & market intelligence
 
@@ -130,3 +136,7 @@ The Rust node exchanges signed observations over authenticated libp2p connection
 The first release targets encrypted market-data research and paper trading. There is no automatic observation-to-paper-order adapter or live order routing. Public-node deployment, live peer count, cross-host E2EE acceptance and independent security assurance require their own evidence; implementation alone does not establish them.
 
 See the [release gates and validation commands](docs/P2P_RELEASE_GATES.md), [security model](docs/P2P_SECURITY_MODEL.md), [E2EE configuration](docs/P2P_LIVE_E2EE_ROLLOUT.md), [hardened receiver profile](docs/P2P_HARDENED_DEPLOYMENT.md) and [public-node setup](docs/P2P_PUBLIC_NODE_DEPLOYMENT.md). The deployment files are operator preparation; no service or public endpoint is started by this repository.
+
+## License
+
+OSIRIS EYE is free software licensed under the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0). You may use, study, modify and redistribute it under those terms; operators offering a modified version over a network must offer its source to users (Section 13).

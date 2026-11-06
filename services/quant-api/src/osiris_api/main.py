@@ -794,6 +794,10 @@ app.include_router(instrument_master_router)
 from .calendar_routes import router as exchange_calendar_router
 app.include_router(exchange_calendar_router)
 
+from .market_mechanics_routes import router as market_mechanics_router
+
+app.include_router(market_mechanics_router)
+
 
 from .paper_workflow import evaluate_paper_workflow
 

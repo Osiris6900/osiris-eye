@@ -59,6 +59,13 @@ python scripts/test_p2p_global_revocation_sync.py
 python scripts/test_p2p_live_swarm_revocation.py
 ```
 
+The core relay harness sets `OSIRIS_HOLE_PUNCH_ENABLED=0` on both peers and
+checks their startup logs before publishing. This disables automatic DCUtR
+upgrades so its relay-only assertions measure the intended topology rather than
+racing a successful direct connection. The setting accepts only `0` or `1` and
+defaults to `1` for normal node operation. The test still requires exclusively
+relayed connections, durable signed bindings and the exact decrypted digest.
+
 Historical research mode leaves freshness unconfigured while still validating
 UTC timestamp syntax. Set `OSIRIS_MAX_OBSERVATION_AGE_SECS` to `1..86400` for
 live observation admission; the hardened receiver example uses `300` seconds
