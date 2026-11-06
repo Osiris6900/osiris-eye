@@ -38,7 +38,7 @@ def test_rollout_and_kill_switch():
     assert evaluate_kill_switch({"feed":False},0,False)["action"] == "BLOCK_NEW_RISK"
 
 def test_phase11_routes_and_registry():
-    assert client.get("/platform/modules").json()["count"] == 97
+    assert client.get("/platform/modules").json()["count"] == 107
     cases = [
         ("/portfolio/ledger/reconcile", {"positions":[],"broker_positions":[],"cash":0,"broker_cash":0}),
         ("/execution/orders/lifecycle-audit", {"order":{"quantity":1}}),
