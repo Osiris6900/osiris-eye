@@ -5,7 +5,11 @@ on:
     paths:
       - "scripts/test_p2p_unified_bridge_three_process.py"
       - "services/quant-api/src/osiris_api/unified_observation_bridge.py"
-      - ".github/workflows/unified-bridge-node-e2e.yml"
+      - "services/quant-api/src/osiris_api/observation_outbox.py"
+      - "services/quant-api/src/osiris_api/p2p_ingestion.py"
+      - "services/quant-api/tests/test_observation_outbox.py"
+      - "services/quant-api/tests/test_unified_outbox_policy.py"
+      - ".github/workflows/unified-bridge-three-node-e2e.yml"
   workflow_dispatch:
 
 permissions:
