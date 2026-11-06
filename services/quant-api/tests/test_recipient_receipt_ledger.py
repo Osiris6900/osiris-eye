@@ -64,3 +64,29 @@ def test_outstanding_rejects_invalid_limits(tmp_path, limit):
     ledger = RecipientReceiptLedger(str(tmp_path / "receipt.sqlite3"))
     with pytest.raises(ValueError, match="invalid_receipt_limit"):
         ledger.outstanding(limit=limit)
+
+
+def test_status_requires_exact_correlation_and_survives_restart(tmp_path):
+    path = str(tmp_path / "receipt.sqlite3")
+    ledger = RecipientReceiptLedger(path)
+    assert ledger.status("msg", "peer", DIGEST) is None
+    assert ledger.register("msg", "peer", DIGEST)
+    assert ledger.status("msg", "peer", DIGEST) == "pending"
+    assert ledger.status("msg", "peer", "b" * 64) is None
+    assert ledger.status("msg", "other", DIGEST) is None
+    assert ledger.mark_unconfirmed("msg", "peer")
+    assert RecipientReceiptLedger(path).status("msg", "peer", DIGEST) == "unconfirmed"
+    assert ledger.acknowledge_verified("msg", "peer", DIGEST, verified=True)
+    assert RecipientReceiptLedger(path).status("msg", "peer", DIGEST) == "acknowledged"
+
+
+@pytest.mark.parametrize("message_id,recipient,digest", [
+    ("", "peer", DIGEST),
+    ("msg", "", DIGEST),
+    ("msg", "peer", "invalid"),
+    ("msg", "peer", "A" * 64),
+])
+def test_status_rejects_invalid_references(tmp_path, message_id, recipient, digest):
+    ledger = RecipientReceiptLedger(str(tmp_path / "receipt.sqlite3"))
+    with pytest.raises(ValueError, match="invalid_receipt_reference"):
+        ledger.status(message_id, recipient, digest)
