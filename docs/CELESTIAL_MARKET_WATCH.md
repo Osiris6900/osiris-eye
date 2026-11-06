@@ -25,15 +25,15 @@ mechanism for market impact.
 
 ## 2. `astro-computed` — the network computes the sky itself
 
-No network, no ephemeris download — pure deterministic astronomy from
-standard low-precision math (Meeus Sun/Moon, JPL Keplerian elements
-1800–2050):
+No network, no ephemeris download — pure deterministic astronomy (Moon
+via Meeus chapter 47 periodic terms, Sun low-precision, planets via JPL
+Keplerian elements 1800–2050):
 
 | Topic | Computes |
 |---|---|
 | `lunar` | Moon elongation, illumination, **tithi (1–30)**, **amavasya** (tithi 30), **poornima** (tithi 15), shukla/krishna paksha, sidereal **rashi** (Mesha…Meena), **nakshatra** (Ashwini…Revati + pada), Moon distance + perigee (Earth के सबसे पास) |
 | `planets` | All 7 planets (Mercury…Neptune): geocentric longitude, Earth distance (AU), elongation — flags **opposition** (>170°), **conjunction** (<10°), **close approach to Earth** (nearest 15% of possible range) |
-| `eclipse` | Approximate **solar/lunar eclipse windows** (syzygy + ecliptic-latitude limits) |
+| `eclipse` | Approximate **solar/lunar eclipse windows** (syzygy + ecliptic-latitude + Sun–node distance limits, with nutation) |
 
 `market_channel: "behavioral_research"` — these are astronomical facts;
 any market link is correlation research only.
@@ -47,8 +47,11 @@ any market link is correlation research only.
   predictions of market moves. Amavasya/poornima exposure is a behavioural
   research hypothesis, nothing more.
 - **Precision limits are stated in every payload** (`precision_note`):
-  Moon longitude ~0.3°, eclipse flags are approximate *windows* (not exact
-  eclipse predictions), planetary flags are windows (not exact ephemeris
+  Moon longitude ~0.01° (Meeus ch.47 periodic terms — verified against
+  real sky events: the 2000-01-06 new moon lands within 0.01° of exact
+  conjunction), eclipse flags combine syzygy + Moon latitude + Sun–node
+  distance limits and remain approximate *windows* (not exact eclipse
+  predictions), planetary flags are windows (not exact ephemeris
   moments). Ritual-grade timing needs a full ephemeris — out of scope.
 - Nothing is fabricated: malformed NOAA responses are recorded as errors.
 
@@ -97,5 +100,5 @@ allowlist, freshness bounds, immutable dedup.
 - No market-move predictions from planets, nakshatras or eclipses
 - No causality claims, ever (`causality: "not_established"`)
 - No live trading (`live_execution: false` — permanently disabled)
-- No ritual-grade timing (low-precision math, bounds documented)
+- No ritual-grade timing (~0.01° Moon is research-grade, bounds documented)
 - No API keys, accounts or paid feeds
