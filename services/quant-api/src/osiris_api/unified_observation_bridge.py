@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 from .data_store import ResearchStore
+from .observation_outbox import ObservationOutbox
 from .global_market_watch import (
     DEFAULT_PROVIDERS as MARKET_PROVIDERS,
     collect_market_observations,
@@ -44,6 +45,7 @@ def broadcast_unified_cycle(
     store: ResearchStore,
     collectors: dict[str, tuple[Callable[..., dict[str, Any]], frozenset[str]]] | None = None,
     now: datetime | None = None,
+    outbox: ObservationOutbox | None = None,
 ) -> dict[str, Any]:
     """Collect independently and broadcast only successfully ingested records.
 
@@ -69,6 +71,8 @@ def broadcast_unified_cycle(
         authorized = set(providers) & set(COLLECTORS[source][1])
         if not authorized:
             raise UnifiedBridgeRefused("no_authorized_providers:" + source)
+    if outbox is not None:
+        result["broadcast"] += outbox.drain(write_line)
     for source, (collect, providers) in active.items():
         authorized = set(providers) & set(COLLECTORS[source][1])
         try:
@@ -91,6 +95,10 @@ def broadcast_unified_cycle(
                     result["rejected"] += 1
                 continue
             result["ingested"] += 1
-            write_line(json.dumps(observation, separators=(",", ":"), sort_keys=True))
-            result["broadcast"] += 1
+            if outbox is not None:
+                outbox.enqueue(observation)
+                result["broadcast"] += outbox.drain(write_line)
+            else:
+                write_line(json.dumps(observation, separators=(",", ":"), sort_keys=True))
+                result["broadcast"] += 1
     return result
