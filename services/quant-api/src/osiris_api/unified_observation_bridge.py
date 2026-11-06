@@ -62,12 +62,15 @@ def broadcast_unified_cycle(
         "rejected": 0, "source_errors": [], "live_execution": False,
         "broker_order_submitted": False,
     }
-    for source, (collect, providers) in active.items():
+    # Validate the entire configuration before publishing the first line.
+    for source, (_, providers) in active.items():
         if source not in COLLECTORS:
             raise UnifiedBridgeRefused("unknown_source:" + source)
         authorized = set(providers) & set(COLLECTORS[source][1])
         if not authorized:
             raise UnifiedBridgeRefused("no_authorized_providers:" + source)
+    for source, (collect, providers) in active.items():
+        authorized = set(providers) & set(COLLECTORS[source][1])
         try:
             batch = collect(now=current)
         except (ValueError, RuntimeError) as exc:
