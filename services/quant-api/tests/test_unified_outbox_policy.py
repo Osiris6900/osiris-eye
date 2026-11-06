@@ -49,7 +49,7 @@ def pending_retry(monkeypatch, tmp_path):
     monkeypatch.setenv(ENABLE_ENV, "1")
     monkeypatch.setenv(INGEST_ENV, "1")
     store_path = str(tmp_path / "research.sqlite3")
-    outbox_path = str(tmp_path / "outbox.sqlite3")
+    outbox_path = store_path
     store = ResearchStore(store_path)
     outbox = ObservationOutbox(outbox_path)
 
@@ -148,9 +148,8 @@ def test_mid_drain_disable_retains_remaining_rows_and_reports_delivered_count(
     store, outbox = pending_retry
     second = observation("ETHUSDT")
     ingest_p2p_observation(
-        store, second, allowed_providers={"binance-public"}, now=NOW,
+        store, second, allowed_providers={"binance-public"}, now=NOW, outbox=outbox,
     )
-    assert outbox.enqueue(second)
     assert outbox.pending_count() == 2
     lines = []
 

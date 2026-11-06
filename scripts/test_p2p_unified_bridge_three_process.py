@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Launch two independent OSIRIS P2P node processes and verify GossipSub delivery."""
+"""Launch three OSIRIS node processes and verify atomic unified-bridge delivery."""
 import json
 import hashlib
 import os
 import queue
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -72,7 +73,7 @@ try:
         # The node emits structured listener diagnostics. Keep the complete
         # /p2p/<peer-id> suffix so node B can dial the exact authenticated peer.
         listen_line = wait_for(
-            lambda n, l: n == "node-a" and l.startswith("listener_ready ") and " address=" in l,
+            lambda name, line: name == "node-a" and line.startswith("listener_ready ") and " address=" in line,
             15,
             "node A listener",
         )
@@ -83,14 +84,16 @@ try:
         # A's subscription event confirms that the remote B peer has joined
         # the observation topic. GossipSub does not guarantee a symmetric
         # subscription event is emitted to both processes at the same time.
-        wait_for(lambda n, l: n == "node-a" and l.startswith("gossipsub_subscribed peer="), 30, "GossipSub subscription from node B")
-        wait_for(lambda n, l: n == "node-c" and "peer_connected=" in l, 30, "node C connection")
+        wait_for(lambda name, line: name == "node-a" and line.startswith("gossipsub_subscribed peer="), 30, "GossipSub subscription from node B")
+        wait_for(lambda name, line: name == "node-c" and "peer_connected=" in line, 30, "node C connection")
         # Allow a heartbeat for the mesh to settle before publishing.
         time.sleep(2.0)
         # Feed a real P2P node through the validated unified Python bridge.
         # No live market API is called; this is a deterministic network test.
         sys.path.insert(0, str(ROOT / "services" / "quant-api" / "src"))
         from osiris_api.data_store import ResearchStore
+        from osiris_api.observation_outbox import ObservationOutbox
+        from osiris_api.p2p_ingestion import DATASET
         from osiris_api.unified_observation_bridge import broadcast_unified_cycle
 
         os.environ["OSIRIS_UNIFIED_MESH_BROADCAST"] = "1"
@@ -128,14 +131,35 @@ try:
             frozenset({"astro-computed"}),
         )
         store = ResearchStore(str(tmp / "unified.sqlite3"))
+        outbox = ObservationOutbox(store.database_path)
         def write_validated(line):
+            observation = json.loads(line)
+            # Both records must be committed and visible to independent readers
+            # before the first byte is handed to the real local node.
+            assert any(
+                row["record_key"] == (
+                    f"{observation['instrument']}:{observation['payload_sha256'][:32]}"
+                )
+                and row["payload"]["provider"] == observation["provider"]
+                and row["payload"]["payload_sha256"] == observation["payload_sha256"]
+                for row in store.list(DATASET)
+            ), "research observation was not committed before publication"
+            with sqlite3.connect(store.database_path) as reader:
+                assert reader.execute(
+                    "SELECT 1 FROM pending_observations WHERE observation_json=? "
+                    "AND delivered=0 AND rejected_reason IS NULL", (line,),
+                ).fetchone(), "pending delivery was not committed before publication"
             node_a.stdin.write(line + "\n")
             node_a.stdin.flush()
         result = broadcast_unified_cycle(
-            write_validated, store=store, collectors=collectors, now=now
+            write_validated, store=store, collectors=collectors, now=now, outbox=outbox,
         )
         assert result["broadcast"] == 3, result
+        assert result["ingested"] == 3, result
         assert result["rejected"] == 1, result
+        assert result["outbox_rejected"] == 0, result
+        assert outbox.pending_count() == 0
+        assert outbox.rejected_count() == 0
         # One queue consumer collects every receipt, avoiding lost events when
         # multiple nodes and sources deliver concurrently.
         expected = {
@@ -161,7 +185,7 @@ try:
             if any(p.poll() is not None for p in processes):
                 raise RuntimeError("node exited before all observations arrived")
         assert received == expected, f"missing receipts: {expected - received}"
-        print("PASS: all three validated sources reached both real peer nodes; tampered data blocked.", flush=True)
+        print("PASS: all three atomically queued sources reached both real peer nodes; tampered data blocked.", flush=True)
 finally:
     for proc in processes:
         if proc.poll() is None:

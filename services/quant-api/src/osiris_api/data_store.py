@@ -8,6 +8,8 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -36,6 +38,24 @@ class ResearchStore:
         connection = sqlite3.connect(self.database_path, timeout=10)
         connection.row_factory = sqlite3.Row
         return connection
+
+    @contextmanager
+    def transaction(self) -> Iterator[sqlite3.Connection]:
+        """Own one write transaction, including rollback and connection cleanup.
+
+        Callers may insert related records using this connection before the
+        context commits. Helpers receiving the connection must not commit it.
+        """
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            yield connection
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
 
     def _initialize(self) -> None:
         with self._connect() as connection:
@@ -73,6 +93,17 @@ class ResearchStore:
 
     def put(self, *, dataset: str, record_key: str, source: str,
             event_time: str, available_at: str, payload: dict[str, Any]) -> dict[str, Any]:
+        with self.transaction() as connection:
+            return self._put_in_transaction(
+                connection, dataset=dataset, record_key=record_key, source=source,
+                event_time=event_time, available_at=available_at, payload=payload,
+            )
+
+    def _put_in_transaction(
+        self, connection: sqlite3.Connection, *, dataset: str, record_key: str,
+        source: str, event_time: str, available_at: str, payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Validate and insert using a caller-owned transaction without committing."""
         dataset, record_key, source = dataset.strip(), record_key.strip(), source.strip()
         if not all((dataset, record_key, source)):
             raise ValueError("dataset, record_key and source must be non-empty")
@@ -85,22 +116,21 @@ class ResearchStore:
         if not isinstance(payload, dict):
             raise ValueError("payload must be a JSON object")
         encoded = json.dumps(payload, allow_nan=False, separators=(",", ":"))
-        with self._connect() as connection:
-            try:
-                connection.execute("""
-                    INSERT INTO observations
-                        (dataset, record_key, source, event_time, available_at, payload_json)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, (dataset, record_key, source, event_time, available_at, encoded))
-            except sqlite3.IntegrityError as exc:
-                raise ValueError(
-                    "duplicate observation key; records are immutable, use a new record_key for a correction"
-                ) from exc
-            row = connection.execute("""
-                SELECT id, dataset, record_key, source, event_time, available_at,
-                       ingested_at, payload_json
-                FROM observations WHERE dataset=? AND source=? AND record_key=?
-            """, (dataset, source, record_key)).fetchone()
+        try:
+            connection.execute("""
+                INSERT INTO observations
+                    (dataset, record_key, source, event_time, available_at, payload_json)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (dataset, record_key, source, event_time, available_at, encoded))
+        except sqlite3.IntegrityError as exc:
+            raise ValueError(
+                "duplicate observation key; records are immutable, use a new record_key for a correction"
+            ) from exc
+        row = connection.execute("""
+            SELECT id, dataset, record_key, source, event_time, available_at,
+                   ingested_at, payload_json
+            FROM observations WHERE dataset=? AND source=? AND record_key=?
+        """, (dataset, source, record_key)).fetchone()
         return self._serialize(row)
 
     @staticmethod

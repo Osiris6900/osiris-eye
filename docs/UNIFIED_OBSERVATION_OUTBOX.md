@@ -2,8 +2,9 @@
 
 `broadcast_unified_cycle` collects market, world-event and celestial observations,
 passes them through local ingestion, and writes accepted records to a node
-adapter. Its optional `ObservationOutbox` stores pending delivery in a file-backed
-SQLite database so a failed writer can be retried after reopening the outbox.
+adapter. Its optional `ObservationOutbox` stores pending delivery in the same
+file-backed SQLite database as the research store. Initial ingestion and enqueue
+commit together, so a failed writer can be retried after reopening the outbox.
 
 ## Setup
 
@@ -22,15 +23,59 @@ from osiris_api.observation_outbox import ObservationOutbox
 from osiris_api.unified_observation_bridge import broadcast_unified_cycle
 
 store = ResearchStore("data/research.sqlite3")
-outbox = ObservationOutbox("data/observation-outbox.sqlite3")
+outbox = ObservationOutbox(store.database_path)
 summary = broadcast_unified_cycle(write_line, store=store, outbox=outbox)
 ```
+
+The store and outbox must resolve to the same file-backed database path. A
+relative path or symlink resolving to that path is accepted. Separate database
+files and memory databases are refused. The bridge checks this configuration
+before collecting, draining pending rows or invoking the writer.
 
 The caller supplies `write_line`: it receives one JSON string and must append a
 newline, write and flush it to the local node's stdin, and raise on failure. The
 bridge does not launch a node. It retries pending rows before collection, then
 queues and drains newly ingested records. Omitting `outbox` retains immediate
 delivery without durable retries. `:memory:` is refused for an outbox.
+
+## Atomic ingestion
+
+With an outbox configured, the bridge uses one SQLite connection and an explicit
+`BEGIN IMMEDIATE` transaction to append the research observation and enqueue its
+delivery. It commits before invoking the node writer. An enqueue failure rolls
+back the observation too; a process crash before commit leaves neither new row.
+A crash after commit and before writing leaves both the stored observation and
+its pending delivery available after restart.
+
+An existing outbox-key conflict also rolls back the fresh research insert,
+including collisions in legacy colon-joined keys. Pending, delivered and
+quarantined queue entries are never overwritten or reset to resolve a conflict.
+
+Direct ingestion callers can use the same transaction boundary:
+
+```python
+from osiris_api.p2p_ingestion import ingest_p2p_observation
+
+result = ingest_p2p_observation(
+    store, observation, allowed_providers={"binance-public"}, outbox=outbox,
+)
+```
+
+This call validates and commits; it does not invoke the node writer. Omitting
+`outbox` preserves research-only ingestion. Calling `store.put` and
+`outbox.enqueue` separately does not make those writes atomic.
+
+### Existing separate-file setups
+
+Previously configured separate research and outbox files now fail explicitly
+instead of using separate commits. Existing files are not copied, deleted or
+automatically linked. Stop collectors and drainers and take coordinated backups
+before an operator-reviewed transfer into one database. Preserve observations,
+pending entries, delivered entries, quarantine reasons and deduplication state;
+do not reset queue status to make the configuration pass. Then configure both
+objects with the shared database path and verify the retained state before
+resuming. Existing observations missing queue entries are not automatically
+backfilled by the new transaction boundary.
 
 ## Retry admission and quarantine
 
@@ -78,10 +123,9 @@ can cause another local write on restart, so retries have at-least-once behavior
 A successful write acknowledges only the local stdin adapter; it does not prove
 node acceptance, GossipSub publication, remote receipt or exactly-once delivery.
 
-Research-store ingestion and outbox enqueue are separate commits. A crash between
-them can leave a stored observation with no queued delivery; duplicate ingestion
-on the next cycle does not repair that gap. The outbox provides retry persistence
-once enqueue succeeds, not an atomic ingestion-and-publication transaction.
+Atomic persistence closes the initial ingestion-to-enqueue crash gap for the
+shared-database path. It does not make SQLite commit and network publication one
+transaction or establish remote delivery acknowledgement.
 
 ## Local regression checks
 
@@ -90,8 +134,13 @@ pip install -e 'services/quant-api[dev]'
 pytest -q services/quant-api/tests/test_p2p_ingestion.py \
   services/quant-api/tests/test_observation_outbox.py \
   services/quant-api/tests/test_unified_observation_bridge.py \
-  services/quant-api/tests/test_unified_outbox_policy.py
+  services/quant-api/tests/test_unified_outbox_policy.py \
+  services/quant-api/tests/test_atomic_observation_outbox.py \
+  services/quant-api/tests/test_research_store_transactions.py
 ```
 
-These synthetic local tests cover retry policy and persistence. Independent-host
-delivery and public rollout retain the separate [P2P release gates](P2P_RELEASE_GATES.md).
+These synthetic local tests cover atomic persistence, crash recovery and retry
+policy. The two-node and three-node E2E CI harnesses use the shared outbox and
+check that both rows are committed before writing to node stdin, then verify
+delivery through real local node processes. Independent-host delivery and public
+rollout retain the separate [P2P release gates](P2P_RELEASE_GATES.md).

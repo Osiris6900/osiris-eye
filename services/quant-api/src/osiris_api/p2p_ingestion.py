@@ -17,10 +17,13 @@ import hashlib
 import os
 import re
 from datetime import datetime, timezone
-from typing import Any, Iterable
+from typing import TYPE_CHECKING, Any, Iterable
 
 from .data_store import ResearchStore
 from .risk import RiskLimits, check_order
+
+if TYPE_CHECKING:
+    from .observation_outbox import ObservationOutbox
 
 OBSERVATION_SCHEMA = "osiris.observation.v1"
 DATASET = "p2p_observations"
@@ -147,11 +150,13 @@ def ingest_p2p_observation(
     max_age_seconds: float = DEFAULT_MAX_AGE_SECONDS,
     max_future_skew_seconds: float = DEFAULT_MAX_FUTURE_SKEW_SECONDS,
     now: datetime | None = None,
+    outbox: ObservationOutbox | None = None,
 ) -> dict[str, Any]:
     """Validate one P2P observation and append it to the research store.
 
     Every gate fails closed: the kill switch, provenance allowlist, freshness
     bound and contract validation must all pass before anything is stored.
+    With an outbox, both rows commit together in the same file-backed database.
     """
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     normalized = validate_p2p_observation(
@@ -159,23 +164,38 @@ def ingest_p2p_observation(
         max_age_seconds=max_age_seconds,
         max_future_skew_seconds=max_future_skew_seconds, now=current,
     )
+    if outbox is not None:
+        try:
+            outbox.require_shared_database(store.database_path)
+        except ValueError as exc:
+            raise IngestionRejection(str(exc)) from exc
 
     # available_at may not precede event_time in the store; clamp minor clock skew.
     available_at = max(current, normalized["observed_at"])
+    fields = {
+        "dataset": DATASET,
+        "record_key": f"{normalized['instrument']}:{normalized['payload_sha256'][:32]}",
+        "source": f"p2p:{normalized['provider']}",
+        "event_time": normalized["observed_at"].isoformat(),
+        "available_at": available_at.isoformat(),
+        "payload": {
+            "schema": normalized["schema"],
+            "provider": normalized["provider"],
+            "payload": normalized["payload"],
+            "payload_sha256": normalized["payload_sha256"],
+        },
+    }
     try:
-        record = store.put(
-            dataset=DATASET,
-            record_key=f"{normalized['instrument']}:{normalized['payload_sha256'][:32]}",
-            source=f"p2p:{normalized['provider']}",
-            event_time=normalized["observed_at"].isoformat(),
-            available_at=available_at.isoformat(),
-            payload={
-                "schema": normalized["schema"],
-                "provider": normalized["provider"],
-                "payload": normalized["payload"],
-                "payload_sha256": normalized["payload_sha256"],
-            },
-        )
+        if outbox is None:
+            record = store.put(**fields)
+        else:
+            with store.transaction() as connection:
+                record = store._put_in_transaction(connection, **fields)
+                if not outbox._enqueue_in_transaction(connection, observation):
+                    # A legacy key collision must not commit an unqueued observation.
+                    raise IngestionRejection("outbox_observation_conflict")
+    except IngestionRejection:
+        raise
     except ValueError as exc:
         raise IngestionRejection(f"store_rejected:{exc}") from exc
 
