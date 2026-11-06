@@ -112,7 +112,7 @@ def test_run_bridge_bounds_fail_closed(bridge_on, store):
     with pytest.raises(BridgeRefused, match="interval_out_of_bounds"):
         run_bridge(lambda line: None, store=store, interval_seconds=MIN_INTERVAL_SECONDS - 1)
     with pytest.raises(BridgeRefused, match="interval_out_of_bounds"):
-        run_bridge(lambda line: None, interval_seconds=MAX_INTERVAL_SECONDS + 1)
+        run_bridge(lambda line: None, store=store, interval_seconds=MAX_INTERVAL_SECONDS + 1)
     with pytest.raises(BridgeRefused, match="max_cycles_out_of_bounds"):
         run_bridge(lambda line: None, store=store, max_cycles=0)
 
