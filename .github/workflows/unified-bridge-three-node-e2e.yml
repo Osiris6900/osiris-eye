@@ -1,0 +1,29 @@
+name: Unified bridge three-node E2E
+
+on:
+  pull_request:
+    paths:
+      - "scripts/test_p2p_unified_bridge_three_process.py"
+      - "services/quant-api/src/osiris_api/unified_observation_bridge.py"
+      - ".github/workflows/unified-bridge-node-e2e.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validated-gossip:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Python bridge
+        run: python -m pip install -e services/quant-api
+      - name: Build P2P node
+        run: cargo build --release --manifest-path services/p2p-node/Cargo.toml
+      - name: Verify three sources across three real P2P nodes
+        run: python scripts/test_p2p_unified_bridge_three_process.py
