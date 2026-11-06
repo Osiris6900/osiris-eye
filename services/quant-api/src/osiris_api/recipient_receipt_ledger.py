@@ -112,3 +112,21 @@ class RecipientReceiptLedger:
             }
             for message_id, recipient, digest, state, created_at in rows
         ]
+
+    def status(self, message_id: str, recipient: str, digest: str) -> str | None:
+        """Return persisted correlation state only for an exact envelope digest.
+
+        A missing or mismatched correlation returns None; it must not be
+        interpreted as successful remote delivery or permission to retry.
+        """
+        if not message_id or not recipient or len(digest) != 64 or any(
+            c not in "0123456789abcdef" for c in digest
+        ):
+            raise ValueError("invalid_receipt_reference")
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT state FROM recipient_receipts "
+                "WHERE message_id=? AND recipient_peer_id=? AND envelope_sha256=?",
+                (message_id, recipient, digest),
+            ).fetchone()
+        return None if row is None else row[0]
