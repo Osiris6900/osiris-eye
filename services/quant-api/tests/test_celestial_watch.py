@@ -23,6 +23,8 @@ SOLAR_ECLIPSE = datetime(1999, 8, 11, 11, 4, 0, tzinfo=timezone.utc)  # total ec
 LUNAR_ECLIPSE = datetime(2000, 1, 21, 4, 40, 0, tzinfo=timezone.utc)  # total eclipse
 MARS_OPPOSITION = datetime(2003, 8, 27, 10, 0, 0, tzinfo=timezone.utc)  # great opposition
 PLANETS_QUIET = datetime(2025, 7, 10, 12, 0, 0, tzinfo=timezone.utc)   # no flags
+PARTIAL_SOLAR = datetime(2000, 2, 5, 13, 3, 0, tzinfo=timezone.utc)   # real partial eclipse
+NO_ECLIPSE_NEW_MOON = datetime(2000, 3, 6, 5, 18, 0, tzinfo=timezone.utc)  # node ~44 deg away
 
 KP_JSON = json.dumps([
     ["time_tag", "Kp", "a_running", "station_count"],
@@ -294,6 +296,73 @@ def test_planets_nominal_on_quiet_date():
     assert payload["events"] == []
     assert payload["title"] == "Planetary geometry nominal"
     assert len(payload["planets"]) == 7  # Mercury..Neptune
+
+
+# --- high-precision astronomy (Meeus ch.47) ---------------------------------
+
+def test_moon_precision_at_known_new_moon():
+    """Real new moon 2000-01-06 18:14 UTC: elongation must sit within
+    0.05 deg of exact conjunction (the old single-term math allowed 0.3)."""
+    result = collect_celestial_observations(
+        watchlist={PROVIDER_ASTRO: ("lunar",)}, transport=fake_transport, now=AMAVASYA,
+    )
+    payload = _payloads(result, "ASTRO:LUNAR")[0]
+    near_new = min(payload["elongation_deg"], 360.0 - payload["elongation_deg"])
+    assert near_new <= 0.05
+    assert payload["source"] == "astro_computed_meeus_ch47"
+
+
+def test_moon_precision_at_known_full_moon():
+    """Total lunar eclipse 2000-01-21 04:40 UTC: within 0.05 deg of exact
+    opposition — precision test against a real sky event."""
+    result = collect_celestial_observations(
+        watchlist={PROVIDER_ASTRO: ("lunar",)}, transport=fake_transport, now=LUNAR_ECLIPSE,
+    )
+    payload = _payloads(result, "ASTRO:LUNAR")[0]
+    assert abs(payload["elongation_deg"] - 180.0) <= 0.05
+
+
+def test_moon_distance_realistic_range():
+    result = collect_celestial_observations(
+        watchlist={PROVIDER_ASTRO: ("lunar",)}, transport=fake_transport, now=NOW,
+    )
+    payload = _payloads(result, "ASTRO:LUNAR")[0]
+    assert 356_000 <= payload["moon_distance_km"] <= 407_000
+
+
+def test_eclipse_reports_node_distance():
+    result = collect_celestial_observations(
+        watchlist={PROVIDER_ASTRO: ("eclipse",)}, transport=fake_transport,
+        now=SOLAR_ECLIPSE,
+    )
+    payload = _payloads(result, "ASTRO:ECLIPSE")[0]
+    assert payload["solar_window"] is True
+    assert payload["node_distance_deg"] < 8.0  # Sun was ~5.7 deg from the node
+
+
+def test_partial_solar_eclipse_flagged():
+    """2000-02-05 partial solar eclipse: node ~12.8 deg — inside the major
+    ecliptic limit, so the window must fire even at the edge."""
+    result = collect_celestial_observations(
+        watchlist={PROVIDER_ASTRO: ("eclipse",)}, transport=fake_transport,
+        now=PARTIAL_SOLAR,
+    )
+    payload = _payloads(result, "ASTRO:ECLIPSE")[0]
+    assert payload["solar_window"] is True
+    assert payload["node_distance_deg"] < 18.5
+
+
+def test_new_moon_far_from_node_no_window():
+    """Exact new moon 2000-03-06 05:18 UTC with the Sun ~44 deg from the
+    node: no eclipse happened and no window must fire."""
+    result = collect_celestial_observations(
+        watchlist={PROVIDER_ASTRO: ("eclipse",)}, transport=fake_transport,
+        now=NO_ECLIPSE_NEW_MOON,
+    )
+    payload = _payloads(result, "ASTRO:ECLIPSE")[0]
+    assert payload["solar_window"] is False
+    assert payload["lunar_window"] is False
+    assert payload["node_distance_deg"] > 30.0
 
 
 # --- exposure-map wiring ----------------------------------------------------
