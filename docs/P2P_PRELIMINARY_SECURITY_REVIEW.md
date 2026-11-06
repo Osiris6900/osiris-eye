@@ -1,7 +1,10 @@
 # Preliminary P2P Security Review
 
-Reviewed baseline: 245c75f3ec6040911d580ea2339f1654582811b6
-Date: 2026-11-04
+Original reviewed baseline: `245c75f3ec6040911d580ea2339f1654582811b6` (2026-11-04).
+
+Source findings rechecked against `4e18c70ee85c3457af7eb251501ee3c06d3ddd80`
+on 2026-11-06. The status below describes that revision; later changes require
+their own verification.
 
 This is a preliminary source-level engineering review, not an independent cryptographic audit, penetration test, or production certification.
 
@@ -9,20 +12,52 @@ This is a preliminary source-level engineering review, not an independent crypto
 
 Severity: Medium (availability).
 
-The replay cache loads every persisted identifier into memory. Encrypted-message identifiers are appended permanently, and new encrypted messages are rejected when the cache reaches 64 MiB. The encrypted envelope lifetime is capped at 24 hours, but old replay entries are not pruned after their acceptance window ends. The cache therefore grows monotonically and can eventually cause the node to reject all new encrypted messages.
+Status: open, with additional fail-closed storage hardening implemented.
+
+[`ReplayGuard`](../services/p2p-node/src/main.rs) loads every persisted replay
+identifier into a `HashSet`. Encrypted messages and plaintext observations share
+an append-only journal with a 64 MiB on-disk limit. Records contain an acceptance
+timestamp and a digest, rather than an envelope expiry. New identifiers are
+rejected at capacity; existing duplicate identifiers remain rejected. The
+encrypted envelope lifetime is capped at 24 hours, but expired entries are not
+pruned. A sustained sequence of otherwise admissible new messages can therefore
+exhaust capacity and block new message acceptance. The disk limit also does not
+mean the `HashSet` uses at most 64 MiB of memory.
+
+The current implementation checks file size before loading, bounds record
+parsing, restricts journal file permissions, rejects symlinks, detects external
+truncation/replacement, and persists identifiers before acceptance. These controls
+reduce corruption and allocation risks; they do not reclaim expired entries.
 
 Required remediation:
-1. Persist each encrypted message's expiry alongside its replay identifier.
+1. Persist each encrypted message's expiry alongside its replay identifier, with an explicit migration policy for existing records.
 2. Prune only entries whose replay window has definitively ended, including clock-skew allowance.
 3. Compact crash-safely using an atomic replacement, file fsync, and parent-directory fsync.
 4. Keep strict disk and memory bounds; if compaction fails, fail closed without discarding live replay identifiers.
 5. Add tests for expiry pruning, duplicate rejection across restart, interrupted compaction, corrupt cache, and capacity pressure.
 
+Existing `ReplayGuard` tests cover restart persistence, corrupt/oversized records,
+external journal changes, private-file creation and fail-closed capacity pressure.
+Expiry pruning and compaction are still missing. A retention design must also
+distinguish encrypted envelopes from plaintext observations: historical research
+mode can admit old observations, so their replay identifiers cannot simply be
+evicted using the encrypted envelope's 24-hour lifetime.
+
 ## Finding P2P-OPS-002: health endpoint exposure
 
 Severity: Low / configuration risk.
 
-The health listener can be bound through OSIRIS_HEALTH_HTTP_ADDR. The default is loopback, but a non-loopback bind exposes node identity, uptime, and peer/bootstrap connectivity metadata without authentication.
+Status: partially mitigated by the optional hardened deployment profile; open
+for directly configured node processes.
+
+The health listener can be bound through `OSIRIS_HEALTH_HTTP_ADDR`. The default
+is `127.0.0.1:9090`, but a non-loopback bind exposes node identity, uptime, and
+peer/bootstrap connectivity metadata through `/health` and `/ready` without
+authentication. The Rust listener does not reject or warn about non-loopback
+binds. The optional [deployment preflight](../deploy/p2p/preflight.py) rejects
+them, and the [hardened deployment guide](P2P_HARDENED_DEPLOYMENT.md) documents
+loopback binding. Processes launched outside that profile do not inherit its
+guard.
 
 Required remediation: warn on non-loopback binds, document loopback-only default, and require an authenticated network boundary for remote health access.
 
@@ -34,13 +69,14 @@ Required remediation: warn on non-loopback binds, document loopback-only default
 - All-zero X25519 shared secrets are rejected.
 - Durable peer-key storage and signed revocation synchronization exist.
 - Encrypted-message replay identifiers are persisted before plaintext acceptance.
-- The three-host harness checks intended-recipient delivery and non-recipient discard before decryption.
+- The three-host harness contains intended-recipient delivery and non-recipient discard checks; its presence does not establish a successful independent-host run.
 
 These are source observations, not proof of production security.
 
 ## Remaining review work
 
-- Remediate P2P-AVAIL-001 and add fault-injection regression tests.
+- Implement expiry-aware replay retention/compaction for P2P-AVAIL-001 and add its missing regression tests without weakening existing fail-closed behavior.
+- Close the direct-process configuration gap in P2P-OPS-002; the optional deployment profile alone does not enforce every launch path.
 - Review key rotation, stale bindings, revocation races, replay, and clock skew.
 - Fuzz key-binding and encrypted-envelope parsing.
 - Test malformed/oversized GossipSub messages and peer resource exhaustion.
