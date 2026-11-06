@@ -135,6 +135,8 @@ The Rust node exchanges signed observations over authenticated libp2p connection
 
 The first release targets encrypted market-data research and paper trading. There is no automatic observation-to-paper-order adapter or live order routing. Public-node deployment, live peer count, cross-host E2EE acceptance and independent security assurance require their own evidence; implementation alone does not establish them.
 
+The unified market, world-event and celestial bridge supports an optional durable SQLite outbox. Retries recheck the ingestion kill switch, current provider authorization, freshness and payload contract before local-node delivery; invalid queued records are quarantined. See [outbox setup, counters and delivery limits](docs/UNIFIED_OBSERVATION_OUTBOX.md).
+
 See the [release gates and validation commands](docs/P2P_RELEASE_GATES.md), [security model](docs/P2P_SECURITY_MODEL.md), [E2EE configuration](docs/P2P_LIVE_E2EE_ROLLOUT.md), [hardened receiver profile](docs/P2P_HARDENED_DEPLOYMENT.md) and [public-node setup](docs/P2P_PUBLIC_NODE_DEPLOYMENT.md). The deployment files are operator preparation; no service or public endpoint is started by this repository.
 
 ## License

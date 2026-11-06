@@ -61,18 +61,34 @@ def broadcast_unified_cycle(
     active = COLLECTORS if collectors is None else collectors
     result: dict[str, Any] = {
         "broadcast": 0, "ingested": 0, "duplicates_skipped": 0,
-        "rejected": 0, "source_errors": [], "live_execution": False,
+        "rejected": 0, "outbox_rejected": 0, "source_errors": [], "live_execution": False,
         "broker_order_submitted": False,
     }
     # Validate the entire configuration before publishing the first line.
+    retry_providers: set[str] = set()
     for source, (_, providers) in active.items():
         if source not in COLLECTORS:
             raise UnifiedBridgeRefused("unknown_source:" + source)
         authorized = set(providers) & set(COLLECTORS[source][1])
         if not authorized:
             raise UnifiedBridgeRefused("no_authorized_providers:" + source)
-    if outbox is not None:
-        result["broadcast"] += outbox.drain(write_line)
+        retry_providers.update(authorized)
+
+    def drain_pending() -> None:
+        if outbox is None or not retry_providers:
+            return
+        rejected_before = outbox.rejected_count()
+        try:
+            result["broadcast"] += outbox.drain(
+                write_line, allowed_providers=retry_providers, now=now,
+            )
+        except IngestionRejection as exc:
+            # A disabled switch pauses the queue; it must not discard retries.
+            if str(exc) != "ingestion_disabled_kill_switch":
+                raise
+        result["outbox_rejected"] += outbox.rejected_count() - rejected_before
+
+    drain_pending()
     for source, (collect, providers) in active.items():
         authorized = set(providers) & set(COLLECTORS[source][1])
         try:
@@ -97,7 +113,7 @@ def broadcast_unified_cycle(
             result["ingested"] += 1
             if outbox is not None:
                 outbox.enqueue(observation)
-                result["broadcast"] += outbox.drain(write_line)
+                drain_pending()
             else:
                 write_line(json.dumps(observation, separators=(",", ":"), sort_keys=True))
                 result["broadcast"] += 1

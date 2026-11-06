@@ -77,7 +77,10 @@ def validate_observation_contract(observation: Any) -> dict[str, Any]:
     payload = observation.get("payload")
     if not isinstance(payload, str) or not payload:
         raise IngestionRejection("invalid_payload")
-    payload_bytes = payload.encode("utf-8")
+    try:
+        payload_bytes = payload.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise IngestionRejection("invalid_payload_encoding") from exc
     if len(payload_bytes) > MAX_PAYLOAD_BYTES:
         raise IngestionRejection("payload_too_large")
 
@@ -98,8 +101,7 @@ def validate_observation_contract(observation: Any) -> dict[str, Any]:
     }
 
 
-def ingest_p2p_observation(
-    store: ResearchStore,
+def validate_p2p_observation(
     observation: Any,
     *,
     allowed_providers: Iterable[str],
@@ -107,10 +109,11 @@ def ingest_p2p_observation(
     max_future_skew_seconds: float = DEFAULT_MAX_FUTURE_SKEW_SECONDS,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Validate one P2P observation and append it to the research store.
+    """Validate current admission policy without writing to the research store.
 
-    Every gate fails closed: the kill switch, provenance allowlist, freshness
-    bound and contract validation must all pass before anything is stored.
+    Initial ingestion and durable retries share the same kill switch,
+    provenance, freshness and contract checks. A previous successful ingestion
+    does not authorize later delivery under a changed policy.
     """
     if os.getenv(ENABLE_ENV) != "1":
         raise IngestionRejection("ingestion_disabled_kill_switch")
@@ -132,6 +135,30 @@ def ingest_p2p_observation(
         raise IngestionRejection("observation_stale")
     if age < -max_future_skew_seconds:
         raise IngestionRejection("observation_future_dated")
+
+    return normalized
+
+
+def ingest_p2p_observation(
+    store: ResearchStore,
+    observation: Any,
+    *,
+    allowed_providers: Iterable[str],
+    max_age_seconds: float = DEFAULT_MAX_AGE_SECONDS,
+    max_future_skew_seconds: float = DEFAULT_MAX_FUTURE_SKEW_SECONDS,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Validate one P2P observation and append it to the research store.
+
+    Every gate fails closed: the kill switch, provenance allowlist, freshness
+    bound and contract validation must all pass before anything is stored.
+    """
+    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    normalized = validate_p2p_observation(
+        observation, allowed_providers=allowed_providers,
+        max_age_seconds=max_age_seconds,
+        max_future_skew_seconds=max_future_skew_seconds, now=current,
+    )
 
     # available_at may not precede event_time in the store; clamp minor clock skew.
     available_at = max(current, normalized["observed_at"])
