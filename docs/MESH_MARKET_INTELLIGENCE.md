@@ -29,6 +29,21 @@ honest quorum still forms. Disagreement or missing quorum **fails closed**.
 Every output carries `causality: "not_established"` — these are pattern
 hypotheses for research, never claims about *why* the market moved.
 
+## 3. Source latency view
+
+`source_latency_report(store)` reads the `fetch_roundtrip_ms` stamps the
+global market watch writes into every stored quote payload and ranks each
+provider nearest-first: sample count, min/median/last round-trip, newest
+sample time, plus a `nearest_sources` top-3.
+
+This is the mesh's answer to "which exchange is closest to us": each node
+measures its true HTTP round-trip from wherever it really runs, gossiped
+observations carry their *fetching* node's measurement, and the report
+aggregates both. As more nodes join from more locations, every exchange
+gains a network-near observer. The report is explicitly honest about the
+boundary: `co_location: false` — network proximity is measured, physical
+exchange co-location is neither claimed nor possible for this software.
+
 ## What this is and is not
 
 - The network's view no longer depends on any single provider surviving or
@@ -43,5 +58,6 @@ hypotheses for research, never claims about *why* the market moved.
 
 ## Tests
 
-`services/quant-api/tests/test_mesh_market_intelligence.py` — 14 cases,
-no network access, runs in the standard CI Python job.
+`services/quant-api/tests/test_mesh_market_intelligence.py` — 14 cases —
+plus `test_exchange_latency_coverage.py` for the latency report; no network
+access, runs in the standard CI Python job.

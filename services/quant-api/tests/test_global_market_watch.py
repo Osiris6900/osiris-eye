@@ -9,10 +9,12 @@ from osiris_api.global_market_watch import (
     DEFAULT_WATCHLIST,
     PROVIDER_BINANCE,
     PROVIDER_BITSTAMP,
+    PROVIDER_BYBIT,
     PROVIDER_COINBASE,
     PROVIDER_ERAPI,
     PROVIDER_FRANKFURTER,
     PROVIDER_KRAKEN,
+    PROVIDER_OKX,
     PROVIDER_STOOQ,
     collect_market_observations,
     watch_and_ingest,
@@ -165,6 +167,7 @@ def test_default_watchlist_shape():
     assert set(DEFAULT_WATCHLIST) == {
         PROVIDER_BINANCE, PROVIDER_FRANKFURTER, PROVIDER_STOOQ,
         PROVIDER_COINBASE, PROVIDER_KRAKEN, PROVIDER_BITSTAMP, PROVIDER_ERAPI,
+        PROVIDER_OKX, PROVIDER_BYBIT,
     }
     for symbols in DEFAULT_WATCHLIST.values():
         assert symbols and all(isinstance(symbol, str) for symbol in symbols)
