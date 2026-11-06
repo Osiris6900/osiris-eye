@@ -92,13 +92,13 @@ try:
         os.environ["OSIRIS_UNIFIED_MESH_BROADCAST"] = "1"
         os.environ["OSIRIS_P2P_INGEST_ENABLED"] = "1"
         from datetime import datetime, timezone
-        now = datetime.now(timezone.utc)
+        now = datetime.now(timezone.utc).replace(microsecond=0)
         def make_observation(provider, instrument):
             payload = "OSIRIS unified bridge end-to-end probe"
             return {
                 "schema": "osiris.observation.v1",
                 "instrument": instrument,
-                "observed_at": now.isoformat(),
+                "observed_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "provider": provider,
                 "payload": payload,
                 "payload_sha256": hashlib.sha256(payload.encode()).hexdigest(),
