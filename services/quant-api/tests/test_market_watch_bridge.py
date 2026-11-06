@@ -52,6 +52,7 @@ WATCHLIST = {
 @pytest.fixture
 def bridge_on(monkeypatch):
     monkeypatch.setenv(BRIDGE_ENV, "1")
+    monkeypatch.setenv(INGEST_ENV, "1")
 
 
 @pytest.fixture
@@ -59,10 +60,10 @@ def store(tmp_path):
     return ResearchStore(str(tmp_path / "bridge.sqlite3"))
 
 
-def test_cycle_broadcasts_every_observation(bridge_on):
+def test_cycle_broadcasts_every_observation(bridge_on, store):
     lines: list[str] = []
     summary = broadcast_cycle(
-        lines.append, watchlist=WATCHLIST, transport=fake_transport
+        lines.append, store=store, watchlist=WATCHLIST, transport=fake_transport
     )
     assert summary["broadcast"] == 3
     assert summary["source_errors"] == []
@@ -93,7 +94,7 @@ def test_cycle_mirrors_into_store_through_gates(bridge_on, store, monkeypatch):
     assert second["duplicates_skipped"] == 3
 
 
-def test_source_failure_isolated_others_broadcast(bridge_on):
+def test_source_failure_isolated_others_broadcast(bridge_on, store):
     def broken(url: str, timeout: float) -> bytes:
         if "stooq.com" in url:
             raise RuntimeError("watch_source_unavailable")
@@ -101,29 +102,60 @@ def test_source_failure_isolated_others_broadcast(bridge_on):
 
     lines: list[str] = []
     summary = broadcast_cycle(
-        lines.append, watchlist=WATCHLIST, transport=broken
+        lines.append, store=store, watchlist=WATCHLIST, transport=broken
     )
     assert summary["broadcast"] == 2
     assert [e["source"] for e in summary["source_errors"]] == [PROVIDER_STOOQ]
 
 
-def test_run_bridge_bounds_fail_closed(bridge_on):
+def test_run_bridge_bounds_fail_closed(bridge_on, store):
     with pytest.raises(BridgeRefused, match="interval_out_of_bounds"):
-        run_bridge(lambda line: None, interval_seconds=MIN_INTERVAL_SECONDS - 1)
+        run_bridge(lambda line: None, store=store, interval_seconds=MIN_INTERVAL_SECONDS - 1)
     with pytest.raises(BridgeRefused, match="interval_out_of_bounds"):
         run_bridge(lambda line: None, interval_seconds=MAX_INTERVAL_SECONDS + 1)
     with pytest.raises(BridgeRefused, match="max_cycles_out_of_bounds"):
-        run_bridge(lambda line: None, max_cycles=0)
+        run_bridge(lambda line: None, store=store, max_cycles=0)
 
 
-def test_run_bridge_cycles_and_sleep(bridge_on):
+def test_run_bridge_cycles_and_sleep(bridge_on, store):
     lines: list[str] = []
     sleeps: list[float] = []
     result = run_bridge(
-        lines.append, watchlist=WATCHLIST, transport=fake_transport,
+        lines.append, store=store, watchlist=WATCHLIST, transport=fake_transport,
         interval_seconds=MIN_INTERVAL_SECONDS, max_cycles=3, sleep=sleeps.append,
     )
     assert result["cycles"] == 3
-    assert len(lines) == 9
+    assert len(lines) == 3
     assert sleeps == [MIN_INTERVAL_SECONDS] * 3
-    assert all(s["broadcast"] == 3 for s in result["summaries"])
+    assert [s["broadcast"] for s in result["summaries"]] == [3, 0, 0]
+
+def test_broadcast_refuses_missing_store(bridge_on):
+    lines = []
+    with pytest.raises(BridgeRefused, match="validated_store_required"):
+        broadcast_cycle(lines.append, watchlist=WATCHLIST, transport=fake_transport)
+    assert lines == []
+
+
+def test_ingestion_kill_switch_prevents_broadcast(bridge_on, store, monkeypatch):
+    monkeypatch.delenv(INGEST_ENV, raising=False)
+    lines = []
+    result = broadcast_cycle(
+        lines.append, store=store, watchlist=WATCHLIST, transport=fake_transport
+    )
+    assert result["broadcast"] == 0
+    assert result["rejected_local"] == 3
+    assert lines == []
+
+
+def test_duplicate_observations_never_rebroadcast(bridge_on, store):
+    lines = []
+    first = broadcast_cycle(
+        lines.append, store=store, watchlist=WATCHLIST, transport=fake_transport
+    )
+    second = broadcast_cycle(
+        lines.append, store=store, watchlist=WATCHLIST, transport=fake_transport
+    )
+    assert first["broadcast"] == 3
+    assert second["broadcast"] == 0
+    assert second["duplicates_skipped"] == 3
+    assert len(lines) == 3
