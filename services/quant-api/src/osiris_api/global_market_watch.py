@@ -29,15 +29,47 @@ from .p2p_ingestion import IngestionRejection, ingest_p2p_observation
 PROVIDER_BINANCE = "binance-public"
 PROVIDER_FRANKFURTER = "frankfurter-ecb"
 PROVIDER_STOOQ = "stooq-public"
+PROVIDER_COINBASE = "coinbase-public"
+PROVIDER_KRAKEN = "kraken-public"
+PROVIDER_BITSTAMP = "bitstamp-public"
+PROVIDER_ERAPI = "erapi-public"
 
-DEFAULT_PROVIDERS = frozenset({PROVIDER_BINANCE, PROVIDER_FRANKFURTER, PROVIDER_STOOQ})
+DEFAULT_PROVIDERS = frozenset({
+    PROVIDER_BINANCE, PROVIDER_FRANKFURTER, PROVIDER_STOOQ,
+    PROVIDER_COINBASE, PROVIDER_KRAKEN, PROVIDER_BITSTAMP, PROVIDER_ERAPI,
+})
 
 #: Keyless default watchlist. Operators can extend it; every source here
 #: needs no account, key or payment.
+#:
+#: Crypto instruments are canonical USD-quoted symbols ("BTC", "ETH",
+#: "SOL", "XRP") shared across Coinbase, Kraken and Bitstamp — so the
+#: mesh consensus (#115) gets genuinely independent sources per
+#: instrument. Binance reports its own USDT pairs (BTCUSDT …) which stay
+#: separate instruments; every payload records the actual pair honestly.
 DEFAULT_WATCHLIST: dict[str, tuple[str, ...]] = {
     PROVIDER_BINANCE: ("BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"),
     PROVIDER_FRANKFURTER: ("EUR", "GBP", "JPY", "INR", "CNY", "AUD", "CAD", "CHF"),
     PROVIDER_STOOQ: ("^spx", "^ndq", "^dji", "^nkx"),
+    PROVIDER_COINBASE: ("BTC", "ETH", "SOL", "XRP"),
+    PROVIDER_KRAKEN: ("BTC", "ETH", "SOL", "XRP"),
+    PROVIDER_BITSTAMP: ("BTC", "ETH", "SOL", "XRP"),
+    PROVIDER_ERAPI: ("EUR", "GBP", "JPY", "INR", "CNY", "AUD", "CAD", "CHF"),
+}
+
+#: Canonical crypto symbols supported by the USD-quoted exchanges.
+CANONICAL_CRYPTO = frozenset({"BTC", "ETH", "SOL", "XRP"})
+
+#: Kraken result-key candidates per canonical symbol (Kraken decorates
+#: pair names, e.g. BTC -> XXBTZUSD).
+_KRAKEN_RESULT_KEYS: dict[str, tuple[str, ...]] = {
+    "BTC": ("XXBTZUSD", "XBTUSD"),
+    "ETH": ("XETHZUSD", "ETHUSD"),
+    "SOL": ("SOLUSD",),
+    "XRP": ("XXRPZUSD", "XRPUSD"),
+}
+_KRAKEN_REQUEST_PAIRS: dict[str, str] = {
+    "BTC": "XBTUSD", "ETH": "ETHUSD", "SOL": "SOLUSD", "XRP": "XRPUSD",
 }
 
 MAX_SYMBOL_LENGTH = 32
@@ -187,10 +219,137 @@ def _fetch_stooq(symbols: tuple[str, ...], transport: Transport, timeout: float,
         raise ValueError("invalid_stooq_quote_csv") from exc
 
 
+def _canonical_crypto(symbol: str) -> str:
+    product = symbol.strip().upper()
+    if product not in CANONICAL_CRYPTO:
+        raise ValueError("invalid_canonical_crypto_symbol")
+    return product
+
+
+def _fetch_coinbase(symbols: tuple[str, ...], transport: Transport, timeout: float,
+                    now: datetime) -> list[dict[str, Any]]:
+    observations = []
+    for symbol in symbols:
+        product = _canonical_crypto(symbol)
+        body = transport(
+            f"https://api.exchange.coinbase.com/products/{product}-USD/ticker", timeout
+        )
+        try:
+            data = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("invalid_coinbase_ticker_response") from exc
+        if not isinstance(data, dict) or "price" not in data:
+            raise ValueError("invalid_coinbase_ticker_response")
+        quote = {
+            "last": _finite(data["price"]),
+            "pair": f"{product}-USD",
+            "quote_time": str(data.get("time", ""))[:40],
+            "source": "coinbase_exchange_ticker",
+        }
+        observations.append(_observation(product, PROVIDER_COINBASE, quote, now))
+        if len(observations) > MAX_QUOTES_PER_SOURCE:
+            raise ValueError("too_many_quotes")
+    return observations
+
+
+def _fetch_kraken(symbols: tuple[str, ...], transport: Transport, timeout: float,
+                  now: datetime) -> list[dict[str, Any]]:
+    products = [_canonical_crypto(symbol) for symbol in symbols]
+    pairs = [_KRAKEN_REQUEST_PAIRS[product] for product in products]
+    body = transport(
+        "https://api.kraken.com/0/public/Ticker?pair=" + ",".join(pairs), timeout
+    )
+    try:
+        data = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("invalid_kraken_ticker_response") from exc
+    if not isinstance(data, dict) or not isinstance(data.get("result"), dict):
+        raise ValueError("invalid_kraken_ticker_response")
+    if data.get("error"):
+        raise ValueError("invalid_kraken_ticker_response")
+    result = data["result"]
+    observations = []
+    for product, request_pair in zip(products, pairs):
+        entry = None
+        for candidate in _KRAKEN_RESULT_KEYS[product] + (request_pair,):
+            if candidate in result:
+                entry = result[candidate]
+                break
+        if not isinstance(entry, dict):
+            continue  # source did not return this pair; skip, never invent
+        close = entry.get("c")
+        if not isinstance(close, list) or not close:
+            continue
+        quote = {
+            "last": _finite(close[0]),
+            "pair": request_pair,
+            "source": "kraken_public_ticker",
+        }
+        observations.append(_observation(product, PROVIDER_KRAKEN, quote, now))
+        if len(observations) > MAX_QUOTES_PER_SOURCE:
+            raise ValueError("too_many_quotes")
+    return observations
+
+
+def _fetch_bitstamp(symbols: tuple[str, ...], transport: Transport, timeout: float,
+                    now: datetime) -> list[dict[str, Any]]:
+    observations = []
+    for symbol in symbols:
+        product = _canonical_crypto(symbol)
+        pair = f"{product.lower()}usd"
+        body = transport(f"https://www.bitstamp.net/api/v2/ticker/{pair}/", timeout)
+        try:
+            data = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("invalid_bitstamp_ticker_response") from exc
+        if not isinstance(data, dict) or "last" not in data:
+            raise ValueError("invalid_bitstamp_ticker_response")
+        quote = {
+            "last": _finite(data["last"]),
+            "pair": pair,
+            "source": "bitstamp_v2_ticker",
+        }
+        observations.append(_observation(product, PROVIDER_BITSTAMP, quote, now))
+        if len(observations) > MAX_QUOTES_PER_SOURCE:
+            raise ValueError("too_many_quotes")
+    return observations
+
+
+def _fetch_erapi(symbols: tuple[str, ...], transport: Transport, timeout: float,
+                 now: datetime) -> list[dict[str, Any]]:
+    currencies = sorted({symbol.strip().upper() for symbol in symbols})
+    if not currencies or any(_FX_SYMBOL.fullmatch(code) is None for code in currencies):
+        raise ValueError("invalid_fx_symbol")
+    body = transport("https://open.er-api.com/v6/latest/USD", timeout)
+    try:
+        data = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("invalid_erapi_response") from exc
+    rates = data.get("rates") if isinstance(data, dict) else None
+    if not isinstance(rates, dict) or not rates or data.get("result") != "success":
+        raise ValueError("invalid_erapi_response")
+    observations = []
+    for code in currencies:
+        if code not in rates:
+            continue  # source may not cover every currency; skip, never invent
+        quote = {
+            "rate_per_usd": _finite(rates[code]),
+            "source": "open_er_api_latest",
+        }
+        observations.append(_observation(f"USD-{code}", PROVIDER_ERAPI, quote, now))
+        if len(observations) > MAX_QUOTES_PER_SOURCE:
+            raise ValueError("too_many_quotes")
+    return observations
+
+
 _SOURCE_FETCHERS = {
     PROVIDER_BINANCE: _fetch_binance,
     PROVIDER_FRANKFURTER: _fetch_frankfurter,
     PROVIDER_STOOQ: _fetch_stooq,
+    PROVIDER_COINBASE: _fetch_coinbase,
+    PROVIDER_KRAKEN: _fetch_kraken,
+    PROVIDER_BITSTAMP: _fetch_bitstamp,
+    PROVIDER_ERAPI: _fetch_erapi,
 }
 
 
