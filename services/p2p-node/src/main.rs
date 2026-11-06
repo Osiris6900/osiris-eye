@@ -4,12 +4,14 @@ mod e2ee;
 mod peer_key_store;
 mod peer_cache;
 mod observation_policy;
+mod delivery_receipt;
 
 use revocation::{RevocationRegistry, RevocationSyncMessage};
 use e2ee::{create_key_binding, decrypt_for_recipient, encrypt_for_recipient, verify_key_binding, EncryptedEnvelope, KeyBindingRecord, TransportKeyPair};
 use peer_auth::{is_peer_allowed, parse_revoked_peers, parse_trusted_peers, read_peer_setting, run_if_peer_allowed};
 use peer_cache::{CachedPeer, PeerCache};
 use peer_key_store::PeerKeyStore;
+use delivery_receipt::{create_receipt, DeliveryReceipt, PendingReceipts, MAX_RECEIPT_BYTES, RECEIPT_TOPIC};
 use std::{collections::{HashMap, HashSet}, env, error::Error, fs::{self, OpenOptions}, io::{BufRead, BufReader as StdBufReader, Write}, net::SocketAddr, path::PathBuf, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
 
 macro_rules! emit {
@@ -1177,6 +1179,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
         Err(env::VarError::NotPresent) => false,
         Err(error) => return Err(error.into()),
     };
+    let delivery_receipts_enabled = parse_flag(
+        read_peer_setting("OSIRIS_DELIVERY_RECEIPTS")?.as_deref(),
+        "OSIRIS_DELIVERY_RECEIPTS", false,
+    )?;
+    if delivery_receipts_enabled && !e2ee_enabled {
+        return Err("OSIRIS_DELIVERY_RECEIPTS requires OSIRIS_E2EE_ENABLED=1".into());
+    }
     let transport_key = load_or_create_transport_key()?;
     let transport_key_epoch = match env::var("OSIRIS_TRANSPORT_KEY_EPOCH") {
         Ok(value) => value.parse::<u64>()?,
@@ -1202,6 +1211,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let revocation_topic = gossipsub::IdentTopic::new(REVOCATION_TOPIC_NAME);
     let key_binding_topic = gossipsub::IdentTopic::new(KEY_BINDING_TOPIC_NAME);
     let encrypted_topic = gossipsub::IdentTopic::new(ENCRYPTED_TOPIC_NAME);
+    let receipt_topic = gossipsub::IdentTopic::new(RECEIPT_TOPIC);
     let mdns_enabled = parse_mdns_enabled(read_peer_setting("OSIRIS_MDNS_ENABLED")?.as_deref())?;
     // Home-router port mapping (UPnP) makes a laptop node publicly reachable
     // with no manual firewall work. AutoNAT observes the result. DCUtR
@@ -1263,6 +1273,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     behaviour.gossipsub.subscribe(&revocation_topic)?;
     behaviour.gossipsub.subscribe(&key_binding_topic)?;
     behaviour.gossipsub.subscribe(&encrypted_topic)?;
+    if delivery_receipts_enabled {
+        behaviour.gossipsub.subscribe(&receipt_topic)?;
+    }
 
     // Both direct and relayed circuits use the same authenticated transport and
     // Behaviour. A relay never bypasses recipient E2EE or local peer policy.
@@ -1482,12 +1495,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // EOF is normal for daemonized nodes (stdin is often /dev/null).
     // Disable only the stdin branch; keep polling the swarm for incoming peers.
     let mut stdin_open = true;
+    let mut pending_receipts = PendingReceipts::new();
+    let mut receipt_tick = tokio::time::interval(Duration::from_secs(5));
+    receipt_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    emit!("delivery_receipts_enabled={delivery_receipts_enabled} receipt_topic={RECEIPT_TOPIC}");
 
     loop {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
                 emit!("shutdown_signal=ctrl_c");
                 break;
+            }
+            _ = receipt_tick.tick(), if delivery_receipts_enabled => {
+                for (recipient, message_id) in pending_receipts.expire(Instant::now()) {
+                    emit!("observation_delivery_unconfirmed recipient={recipient} message_id={message_id} reason=receipt_timeout");
+                }
             }
             _ = key_binding_tick.tick() => {
                 let issued_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
@@ -1721,6 +1743,53 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 })) => {
                     let authenticated_source = message.source.unwrap_or(propagation_source);
 
+                    if message.topic.as_str() == RECEIPT_TOPIC {
+                        if !delivery_receipts_enabled {
+                            continue;
+                        }
+                        // Never infer the receipt signer from the forwarding peer.
+                        if message.source.is_none()
+                            || !is_peer_allowed(&authenticated_source, &trusted_peers, &revoked_peers)
+                            || !is_peer_allowed(&propagation_source, &trusted_peers, &revoked_peers) {
+                            emit!("delivery_receipt_rejected peer={authenticated_source} reason=publisher_not_allowed");
+                            continue;
+                        }
+                        if message.data.len() > MAX_RECEIPT_BYTES {
+                            emit!("delivery_receipt_rejected peer={authenticated_source} reason=receipt_too_large");
+                            continue;
+                        }
+                        let receipt: DeliveryReceipt = match serde_json::from_slice(&message.data) {
+                            Ok(receipt) => receipt,
+                            Err(_) => {
+                                emit!("delivery_receipt_rejected peer={authenticated_source} reason=invalid_receipt_json");
+                                continue;
+                            }
+                        };
+                        let Some(binding_record) = peer_key_store.get(&authenticated_source.to_string())? else {
+                            emit!("delivery_receipt_rejected peer={authenticated_source} reason=recipient_key_binding_missing");
+                            continue;
+                        };
+                        let receipt_now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+                        let binding = match verify_key_binding(&binding_record, receipt_now, binding_record.key_epoch) {
+                            Ok(binding) if binding.peer_id == authenticated_source => binding,
+                            _ => {
+                                emit!("delivery_receipt_rejected peer={authenticated_source} reason=recipient_key_binding_invalid");
+                                continue;
+                            }
+                        };
+                        match pending_receipts.accept(
+                            &receipt, &authenticated_source, &peer_id,
+                            &binding.identity_public_key, receipt_now, Instant::now(),
+                        ) {
+                            Ok(()) => emit!(
+                                "observation_delivery_acknowledged recipient={} message_id={} envelope_sha256={} admission=validated_decrypted_replay_recorded",
+                                receipt.recipient_peer_id, receipt.message_id, receipt.envelope_sha256,
+                            ),
+                            Err(reason) => emit!("delivery_receipt_rejected peer={authenticated_source} reason={reason}"),
+                        }
+                        continue;
+                    }
+
                     if message.topic.as_str() == KEY_BINDING_TOPIC_NAME {
                         if !is_peer_allowed(&authenticated_source, &trusted_peers, &revoked_peers) {
                             emit!("key_binding_rejected peer={authenticated_source} reason=peer_not_allowed");
@@ -1795,11 +1864,35 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                     &plaintext, &format!("{}:{}", envelope.sender_peer_id, envelope.message_id),
                                     max_observation_age, &mut replay_guard,
                                 ) {
-                                    Ok(observation) => emit!(
-                                        "encrypted_observation_received peer={} instrument={} provider={} observed_at={} payload_sha256={} payload_bytes={}",
-                                        authenticated_source, observation.instrument, observation.provider,
-                                        observation.observed_at, observation.payload_sha256, observation.payload.len()
-                                    ),
+                                    Ok(observation) => {
+                                        emit!(
+                                            "encrypted_observation_received peer={} instrument={} provider={} observed_at={} payload_sha256={} payload_bytes={}",
+                                            authenticated_source, observation.instrument, observation.provider,
+                                            observation.observed_at, observation.payload_sha256, observation.payload.len()
+                                        );
+                                        if delivery_receipts_enabled {
+                                            // Admit and sync the replay journal before attesting reception.
+                                            // Only ciphertext metadata is put on the receipt topic.
+                                            let envelope_sha256 = format!("{:x}", Sha256::digest(&message.data));
+                                            let accepted_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+                                            match create_receipt(
+                                                &key, &authenticated_source, &envelope.message_id,
+                                                &envelope_sha256, accepted_at,
+                                            ) {
+                                                Ok(receipt) => {
+                                                    let bytes = serde_json::to_vec(&receipt)?;
+                                                    match swarm.behaviour_mut().gossipsub.publish(receipt_topic.clone(), bytes) {
+                                                        Ok(_) => emit!(
+                                                            "delivery_receipt_published sender={authenticated_source} recipient={peer_id} message_id={} envelope_sha256={envelope_sha256}",
+                                                            envelope.message_id,
+                                                        ),
+                                                        Err(error) => emit!("delivery_receipt_deferred sender={authenticated_source} reason=publish_failed error={error}"),
+                                                    }
+                                                }
+                                                Err(reason) => emit!("delivery_receipt_deferred sender={authenticated_source} reason={reason}"),
+                                            }
+                                        }
+                                    }
                                     Err(EncryptedObservationError::Invalid(reason)) => emit!("encrypted_message_rejected peer={authenticated_source} reason=invalid_plaintext_observation detail={reason}"),
                                     Err(EncryptedObservationError::Replay) => emit!("encrypted_message_rejected peer={authenticated_source} reason=replay_detected"),
                                     Err(EncryptedObservationError::Storage(error)) => emit!("encrypted_message_rejected peer={authenticated_source} reason=replay_store_error error={error}"),
@@ -2100,6 +2193,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 emit!("publish_rejected recipient={recipient_peer} reason=recipient_not_allowed");
                                 continue;
                             }
+                            if delivery_receipts_enabled && !pending_receipts.has_capacity() {
+                                emit!("publish_deferred recipient={recipient_peer} reason=receipt_tracking_capacity");
+                                continue;
+                            }
                             let Some(binding_record) = peer_key_store.get(&recipient_peer.to_string())? else {
                                 emit!("publish_deferred recipient={recipient_peer} reason=recipient_key_binding_missing");
                                 continue;
@@ -2134,8 +2231,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
                             };
                             let message_id = encrypted.message_id.clone();
                             let bytes = serde_json::to_vec(&encrypted)?;
+                            let envelope_sha256 = format!("{:x}", Sha256::digest(&bytes));
                             match swarm.behaviour_mut().gossipsub.publish(encrypted_topic.clone(), bytes) {
-                                Ok(_) => emit!("encrypted_observation_published recipient={recipient_peer} message_id={message_id}"),
+                                Ok(_) => {
+                                    if delivery_receipts_enabled {
+                                        match pending_receipts.track(
+                                            recipient_peer, message_id.clone(), envelope_sha256.clone(), Instant::now(),
+                                        ) {
+                                            Ok(()) => emit!("encrypted_observation_published recipient={recipient_peer} message_id={message_id} envelope_sha256={envelope_sha256} receipts_tracked=true"),
+                                            Err(reason) => emit!("observation_delivery_unconfirmed recipient={recipient_peer} message_id={message_id} reason={reason}"),
+                                        }
+                                    } else {
+                                        emit!("encrypted_observation_published recipient={recipient_peer} message_id={message_id}");
+                                    }
+                                }
                                 Err(error) => emit!("encrypted_observation_deferred recipient={recipient_peer} error={error}"),
                             }
                         }
