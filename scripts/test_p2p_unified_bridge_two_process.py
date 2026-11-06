@@ -115,7 +115,7 @@ try:
         }
         store = ResearchStore(str(tmp / "unified.sqlite3"))
         def write_validated(line):
-            node_a.stdin.write(line + "\\n")
+            node_a.stdin.write(line + "\n")
             node_a.stdin.flush()
         result = broadcast_unified_cycle(
             write_validated, store=store, collectors=collectors, now=now
