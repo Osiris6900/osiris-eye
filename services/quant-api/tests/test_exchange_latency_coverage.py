@@ -21,7 +21,7 @@ from osiris_api.global_market_watch import (
     watch_and_ingest,
 )
 from osiris_api.mesh_market_intelligence import source_latency_report
-from osiris_api.p2p_ingestion import ENABLE_ENV, IngestionRejection, ingest_p2p_observation
+from osiris_api.p2p_ingestion import ENABLE_ENV, ingest_p2p_observation
 
 NOW = datetime(2026, 11, 6, 12, 0, 0, tzinfo=timezone.utc)
 
