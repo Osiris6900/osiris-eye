@@ -90,3 +90,37 @@ def test_status_rejects_invalid_references(tmp_path, message_id, recipient, dige
     ledger = RecipientReceiptLedger(str(tmp_path / "receipt.sqlite3"))
     with pytest.raises(ValueError, match="invalid_receipt_reference"):
         ledger.status(message_id, recipient, digest)
+
+
+def test_concurrent_same_reference_registers_once(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    path = str(tmp_path / "receipt.sqlite3")
+    ledger = RecipientReceiptLedger(path)
+
+    def register(_):
+        return RecipientReceiptLedger(path).register("shared", "peer", DIGEST)
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        results = list(executor.map(register, range(16)))
+    assert results.count(True) == 1
+    assert results.count(False) == 15
+    assert ledger.counts()["pending"] == 1
+
+
+def test_concurrent_conflicting_digest_never_overwrites(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    path = str(tmp_path / "receipt.sqlite3")
+
+    def register(digest):
+        try:
+            return RecipientReceiptLedger(path).register("shared", "peer", digest)
+        except ValueError as exc:
+            return str(exc)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(register, [DIGEST, "b" * 64]))
+    assert results.count(True) == 1
+    assert results.count("receipt_reference_conflict") == 1
+    assert sum(RecipientReceiptLedger(path).counts().values()) == 1
