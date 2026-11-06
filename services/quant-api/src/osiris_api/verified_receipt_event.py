@@ -1,44 +1,45 @@
-"""Fail-closed verification of authenticated Rust receipt event envelopes.
+"""Structural checks for a verified receipt event envelope.
 
-This module is a *transport-independent* verifier. It does not create an
-authenticated transport or accept untrusted stdout as proof of Rust verification.
-Only a trusted adapter with independently authenticated Rust process identity
-may invoke validate_trusted_event.
+Parsing an envelope does not authenticate the Rust process and does not
+acknowledge delivery. Only the Unix adapter, after a kernel peer-credential
+check, may pass the resulting fields to the durable consumer.
 """
 from __future__ import annotations
 
 import re
 from collections.abc import Mapping
 
-_SCHEMA = "osiris.p2p.verified-receipt-event.v1"
+VERIFIED_EVENT_SCHEMA = "osiris.p2p.verified-receipt-event.v1"
+VERIFIED_EVENT_PROVENANCE = "rust.delivery_receipt.accept.v1"
+ACK_SCHEMA = "osiris.p2p.verified-receipt-ack.v1"
+APPLIED = "applied"
+DUPLICATE = "duplicate"
 _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 _REQUIRED = frozenset({
     "schema", "event_id", "sender_peer_id", "recipient_peer_id",
-    "message_id", "envelope_sha256", "accepted_at",
+    "message_id", "envelope_sha256", "accepted_at", "provenance",
 })
 
 
-def validate_trusted_event(
+def parse_event_envelope(
     event: Mapping[str, object],
     *,
-    authenticated_rust_peer: bool,
     expected_sender_peer_id: str,
     now: int,
     max_age_seconds: int = 120,
     max_future_skew_seconds: int = 30,
 ) -> tuple[str, str, str, str]:
-    """Return (event_id, message_id, recipient, digest) or reject.
+    """Return (event_id, message_id, recipient, digest) or reject the shape.
 
-    authenticated_rust_peer must be supplied by a separately authenticated
-    transport, never copied from event data or a caller-provided HTTP body.
+    A client-supplied ``verified`` flag is an unexpected field and is rejected.
     This function does not validate a receipt signature.
     """
-    if authenticated_rust_peer is not True:
-        raise ValueError("unauthenticated_receipt_event")
     if not isinstance(event, Mapping) or set(event) != _REQUIRED:
         raise ValueError("invalid_receipt_event_fields")
-    if event["schema"] != _SCHEMA:
+    if event["schema"] != VERIFIED_EVENT_SCHEMA:
         raise ValueError("invalid_receipt_event_schema")
+    if event["provenance"] != VERIFIED_EVENT_PROVENANCE:
+        raise ValueError("invalid_receipt_provenance")
     if (not isinstance(expected_sender_peer_id, str) or
             not 1 <= len(expected_sender_peer_id) <= 256 or
             any(ord(char) < 33 or ord(char) > 126 for char in expected_sender_peer_id)):
