@@ -5,6 +5,7 @@ mod peer_key_store;
 mod peer_cache;
 mod observation_policy;
 mod delivery_receipt;
+mod verified_receipt_event;
 
 use revocation::{RevocationRegistry, RevocationSyncMessage};
 use e2ee::{create_key_binding, decrypt_for_recipient, encrypt_for_recipient, verify_key_binding, EncryptedEnvelope, KeyBindingRecord, TransportKeyPair};
@@ -1781,10 +1782,24 @@ async fn main() -> Result<(), Box<dyn Error>> {
                             &receipt, &authenticated_source, &peer_id,
                             &binding.identity_public_key, receipt_now, Instant::now(),
                         ) {
-                            Ok(()) => emit!(
-                                "observation_delivery_acknowledged recipient={} message_id={} envelope_sha256={} admission=validated_decrypted_replay_recorded",
-                                receipt.recipient_peer_id, receipt.message_id, receipt.envelope_sha256,
-                            ),
+                            Ok(()) => {
+                                emit!(
+                                    "observation_delivery_acknowledged recipient={} message_id={} envelope_sha256={} admission=validated_decrypted_replay_recorded",
+                                    receipt.recipient_peer_id, receipt.message_id, receipt.envelope_sha256,
+                                );
+                                // Opt-in, local supervisor-owned IPC only. Socket write
+                                // does NOT prove the Python ledger committed the event.
+                                if let Ok(socket_path) = env::var("OSIRIS_VERIFIED_RECEIPT_SOCKET") {
+                                    #[cfg(unix)]
+                                    if let Err(error) = verified_receipt_event::send_to_socket(
+                                        std::path::Path::new(&socket_path), &receipt,
+                                    ) {
+                                        emit!("verified_receipt_event_unconfirmed reason=ipc_write_failed detail={error}");
+                                    }
+                                    #[cfg(not(unix))]
+                                    emit!("verified_receipt_event_unconfirmed reason=unix_ipc_unavailable");
+                                }
+                            },
                             Err(reason) => emit!("delivery_receipt_rejected peer={authenticated_source} reason={reason}"),
                         }
                         continue;
