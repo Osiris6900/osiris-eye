@@ -20,9 +20,13 @@ Honesty notes baked into every payload:
   geometry. ``market_channel`` labels each: ``infrastructure`` vs
   ``behavioral_research``. Any market link for the latter is correlation
   research only — causality is never established (see event_market_impact).
-- Astronomy is low-precision (~0.3° for the Moon); eclipse flags are
-  approximate windows, not exact eclipse predictions; ritual-grade timing
-  needs a full ephemeris. Bounds are documented in the payload.
+- Astronomy precision: Moon via Meeus chapter 47 periodic terms
+  (~0.01° in longitude), Sun low-precision (~0.01°), planets via JPL
+  Keplerian elements (arcminute-level for flag windows). Eclipse flags
+  combine the syzygy window with Moon latitude and Sun-node distance
+  limits; they are still approximate windows, not exact eclipse
+  predictions — ritual-grade timing needs a full ephemeris. Bounds are
+  documented in the payload.
 
 Fail-closed: malformed sources are recorded as errors; nothing is
 fabricated. Live trading remains disabled.
@@ -105,6 +109,83 @@ SOLAR_ECLIPSE_ELONG_DEG = 12.0
 SOLAR_ECLIPSE_LAT_DEG = 1.6
 LUNAR_ECLIPSE_ELONG_DEG = 12.0
 LUNAR_ECLIPSE_LAT_DEG = 1.1
+#: Ecliptic limits: an eclipse is only possible when the Sun is within
+#: this angular distance of a Moon node at syzygy (major limits 18°31′
+#: solar / 12°15′ lunar; minor limits are far tighter, so these remain
+#: *windows*, not predictions).
+SOLAR_NODE_LIMIT_DEG = 18.5
+LUNAR_NODE_LIMIT_DEG = 12.25
+
+#: Meeus "Astronomical Algorithms" chapter 47 periodic terms for the Moon
+#: (D, M, M′, F multiples; longitude coefficients in 1e-6 deg, distance
+#: coefficients in 1e-3 km). The 32 largest longitude/distance terms and
+#: 30 largest latitude terms keep the truncation error around ~0.01°.
+_MOON_LR_TERMS: tuple[tuple[int, int, int, int, int, int], ...] = (
+    (0, 0, 1, 0, 6288774, -20905355),
+    (2, 0, -1, 0, 1274027, -3699111),
+    (2, 0, 0, 0, 658314, -2955968),
+    (0, 0, 2, 0, 213618, -569925),
+    (0, 1, 0, 0, -185116, 48888),
+    (0, 0, 0, 2, -114332, -3149),
+    (2, 0, -2, 0, 58793, 246158),
+    (2, -1, -1, 0, 57066, -152138),
+    (2, 0, 1, 0, 53322, -170733),
+    (2, -1, 0, 0, 45758, -204586),
+    (0, 1, -1, 0, -40923, -129620),
+    (1, 0, 0, 0, -34720, 108743),
+    (0, 1, 1, 0, -30383, 104755),
+    (2, 0, 0, -2, 15327, 10321),
+    (0, 0, 1, 2, -12528, 0),
+    (0, 0, 1, -2, 10980, 79661),
+    (4, 0, -1, 0, 10675, -34782),
+    (0, 0, 3, 0, 10034, -23210),
+    (4, 0, -2, 0, 8548, -21636),
+    (2, 1, -1, 0, -7888, 24208),
+    (2, 1, 0, 0, -6766, 30824),
+    (1, 0, -1, 0, -5163, -8379),
+    (1, 1, 0, 0, 4987, -16675),
+    (2, -1, 1, 0, 4036, -12831),
+    (2, 0, 2, 0, 3994, -10445),
+    (4, 0, 0, 0, 3861, -11650),
+    (2, 0, -3, 0, 3665, 14403),
+    (0, 1, -2, 0, -2689, -7003),
+    (2, 0, -1, 2, -2602, 0),
+    (2, -1, -2, 0, 2390, 10056),
+    (1, 0, 1, 0, -2348, 6322),
+    (2, -2, 0, 0, 2236, -9884),
+)
+_MOON_B_TERMS: tuple[tuple[int, int, int, int, int], ...] = (
+    (0, 0, 0, 1, 5128122),
+    (0, 0, 1, 1, 280602),
+    (0, 0, 1, -1, 277693),
+    (2, 0, 0, -1, 173237),
+    (2, 0, -1, 1, 55413),
+    (2, 0, -1, -1, 46271),
+    (2, 0, 0, 1, 32573),
+    (0, 0, 2, 1, 17198),
+    (2, 0, 1, -1, 9266),
+    (0, 0, 2, -1, 8822),
+    (2, -1, 0, -1, 8216),
+    (2, 0, -2, -1, 4324),
+    (2, 0, 1, 1, 4200),
+    (2, 1, 0, -1, -3359),
+    (2, -1, -1, 1, 2463),
+    (2, -1, 0, 1, 2211),
+    (2, -1, -1, -1, 2065),
+    (0, 1, -1, -1, -1870),
+    (4, 0, -1, -1, 1828),
+    (0, 1, 0, 1, -1794),
+    (0, 0, 0, 3, -1749),
+    (0, 1, -1, 1, -1565),
+    (1, 0, 0, 1, -1491),
+    (0, 1, 1, 1, -1475),
+    (0, 1, 1, -1, -1410),
+    (0, 1, 0, -1, -1344),
+    (1, 0, 0, -1, -1335),
+    (0, 0, 3, 1, 1107),
+    (4, 0, 0, -1, 1021),
+    (4, 0, -1, 1, 833),
+)
 
 Transport = Callable[[str, float], bytes]
 
@@ -350,15 +431,70 @@ def _sun_longitude(d: float) -> float:
 
 
 def _moon_position(d: float) -> tuple[float, float, float]:
-    """(ecliptic longitude deg, ecliptic latitude deg, distance km) — Meeus
-    low precision (~0.3° in longitude)."""
-    mean_longitude = (218.316 + 13.176396 * d) % 360.0
-    mean_anomaly = math.radians((134.963 + 13.064993 * d) % 360.0)
-    argument_latitude = math.radians((93.272 + 13.229350 * d) % 360.0)
-    longitude = (mean_longitude + 6.289 * math.sin(mean_anomaly)) % 360.0
-    latitude = 5.128 * math.sin(argument_latitude)
-    distance_km = 385_001.0 - 20_905.0 * math.cos(mean_anomaly)
+    """(ecliptic longitude deg, ecliptic latitude deg, distance km) —
+    Meeus chapter 47 periodic terms (~0.01° in longitude, ~0.005° in
+    latitude, ~25 km in distance; was: single-term ~0.3°)."""
+    centuries = d / 36525.0
+    t2 = centuries * centuries
+    mean_longitude = (218.3164477 + 481267.88123421 * centuries
+                      - 0.0015786 * t2 + centuries * t2 / 538841.0
+                      - t2 * t2 / 65194000.0)
+    mean_elongation = (297.8501921 + 445267.1114034 * centuries
+                       - 0.0018819 * t2 + centuries * t2 / 545868.0
+                       - t2 * t2 / 113065000.0)
+    sun_mean_anomaly = (357.5291092 + 35999.0502909 * centuries
+                        - 0.0001536 * t2 + centuries * t2 / 24490000.0)
+    moon_mean_anomaly = (134.9633964 + 477198.8675055 * centuries
+                         + 0.0087414 * t2 + centuries * t2 / 69699.0
+                         - t2 * t2 / 14712000.0)
+    argument_latitude = (93.2720950 + 483202.0175233 * centuries
+                         - 0.0036539 * t2 - centuries * t2 / 3526000.0
+                         + t2 * t2 / 863310000.0)
+    eccentricity_factor = 1.0 - 0.002516 * centuries - 0.0000074 * t2
+
+    sigma_longitude = 0.0
+    sigma_distance = 0.0
+    for dm, dms, dmp, df, coef_l, coef_r in _MOON_LR_TERMS:
+        angle = math.radians(dm * mean_elongation + dms * sun_mean_anomaly
+                             + dmp * moon_mean_anomaly + df * argument_latitude)
+        factor = eccentricity_factor ** abs(dms)
+        sigma_longitude += coef_l * factor * math.sin(angle)
+        sigma_distance += coef_r * factor * math.cos(angle)
+    # Venus/Jupiter-driven additive terms (Meeus 47.8–47.10).
+    a1 = math.radians(119.75 + 131.849 * centuries)
+    a2 = math.radians(53.09 + 479264.290 * centuries)
+    sigma_longitude += (3958.0 * math.sin(a1)
+                        + 1962.0 * math.sin(math.radians(mean_longitude - argument_latitude))
+                        + 318.0 * math.sin(a2))
+
+    sigma_latitude = 0.0
+    for dm, dms, dmp, df, coef_b in _MOON_B_TERMS:
+        angle = math.radians(dm * mean_elongation + dms * sun_mean_anomaly
+                             + dmp * moon_mean_anomaly + df * argument_latitude)
+        sigma_latitude += coef_b * (eccentricity_factor ** abs(dms)) * math.sin(angle)
+
+    longitude = (mean_longitude + sigma_longitude / 1_000_000.0) % 360.0
+    latitude = sigma_latitude / 1_000_000.0
+    distance_km = 385_000.56 + sigma_distance / 1_000.0
     return longitude, latitude, distance_km
+
+
+def _moon_node_longitude(d: float) -> float:
+    """Longitude of the Moon's mean ascending node (Meeus, deg)."""
+    centuries = d / 36525.0
+    return (125.04452 - 1934.136261 * centuries
+            + 0.0020708 * centuries * centuries
+            + centuries * centuries * centuries / 450000.0) % 360.0
+
+
+def _nutation_arcsec(d: float) -> float:
+    """Nutation in longitude, principal terms (Meeus ch. 22, arcsec)."""
+    centuries = d / 36525.0
+    omega = math.radians(_moon_node_longitude(d))
+    sun_mean = math.radians((280.4665 + 36000.7698 * centuries) % 360.0)
+    moon_mean = math.radians((218.3165 + 481267.8813 * centuries) % 360.0)
+    return (-17.20 * math.sin(omega) - 1.32 * math.sin(2.0 * sun_mean)
+            - 0.23 * math.sin(2.0 * moon_mean) + 0.21 * math.sin(2.0 * omega))
 
 
 def _ayanamsa_lahiri(d: float) -> float:
@@ -442,8 +578,9 @@ def _lunar_event(now: datetime) -> dict[str, Any]:
         "event_time": now.isoformat(),
         "title": _text(title),
         "market_channel": "behavioral_research",
-        "source": "astro_computed_meeus_low_precision",
-        "precision_note": "moon longitude ~0.3 deg; ritual-grade timing needs full ephemeris",
+        "source": "astro_computed_meeus_ch47",
+        "precision_note": "moon longitude ~0.01 deg (Meeus ch.47 periodic terms); "
+                          "ritual-grade timing still needs a full ephemeris",
     }
 
 
@@ -500,14 +637,25 @@ def _planets_event(now: datetime) -> dict[str, Any]:
 
 def _eclipse_event(now: datetime) -> dict[str, Any]:
     d = _days_since_j2000(now)
-    sun_lon = _sun_longitude(d)
+    nutation_deg = _nutation_arcsec(d) / 3600.0
+    sun_lon = (_sun_longitude(d) + nutation_deg) % 360.0
     moon_lon, moon_lat, _ = _moon_position(d)
+    moon_lon = (moon_lon + nutation_deg) % 360.0
+    node_lon = _moon_node_longitude(d)
+    node_distance = min(
+        abs((sun_lon - node_lon + 180.0) % 360.0 - 180.0),
+        abs((sun_lon - node_lon - 180.0 + 180.0) % 360.0 - 180.0),
+    )
     elongation = (moon_lon - sun_lon) % 360.0
     near_new = min(elongation, 360.0 - elongation)
     near_full = abs(elongation - 180.0)
     abs_lat = abs(moon_lat)
-    solar_window = near_new < SOLAR_ECLIPSE_ELONG_DEG and abs_lat < SOLAR_ECLIPSE_LAT_DEG
-    lunar_window = near_full < LUNAR_ECLIPSE_ELONG_DEG and abs_lat < LUNAR_ECLIPSE_LAT_DEG
+    solar_window = (near_new < SOLAR_ECLIPSE_ELONG_DEG
+                    and abs_lat < SOLAR_ECLIPSE_LAT_DEG
+                    and node_distance < SOLAR_NODE_LIMIT_DEG)
+    lunar_window = (near_full < LUNAR_ECLIPSE_ELONG_DEG
+                    and abs_lat < LUNAR_ECLIPSE_LAT_DEG
+                    and node_distance < LUNAR_NODE_LIMIT_DEG)
     if solar_window:
         title = "Solar eclipse window near new moon (approximate)"
     elif lunar_window:
@@ -520,13 +668,15 @@ def _eclipse_event(now: datetime) -> dict[str, Any]:
         "lunar_window": lunar_window,
         "elongation_deg": round(elongation, 2),
         "moon_latitude_deg": round(moon_lat, 3),
+        "node_distance_deg": round(node_distance, 2),
         "approximate_window": True,
         "event_time": now.isoformat(),
         "title": title,
         "market_channel": "behavioral_research",
         "source": "astro_computed_eclipse_limits",
-        "precision_note": "eclipse season window from elongation + latitude limits; "
-                          "not an exact eclipse prediction",
+        "precision_note": "eclipse season window from elongation + Moon latitude + "
+                          "Sun-node distance limits (with nutation); not an exact "
+                          "eclipse prediction",
     }
 
 
