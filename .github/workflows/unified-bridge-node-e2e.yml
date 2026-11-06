@@ -7,8 +7,11 @@ on:
       - "services/quant-api/src/osiris_api/unified_observation_bridge.py"
       - "services/quant-api/src/osiris_api/observation_outbox.py"
       - "services/quant-api/src/osiris_api/p2p_ingestion.py"
+      - "services/quant-api/src/osiris_api/data_store.py"
       - "services/quant-api/tests/test_observation_outbox.py"
       - "services/quant-api/tests/test_unified_outbox_policy.py"
+      - "services/quant-api/tests/test_atomic_observation_outbox.py"
+      - "services/quant-api/tests/test_research_store_transactions.py"
       - ".github/workflows/unified-bridge-node-e2e.yml"
   workflow_dispatch:
 

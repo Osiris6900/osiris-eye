@@ -56,6 +56,11 @@ def broadcast_unified_cycle(
         raise UnifiedBridgeRefused("unified_broadcast_disabled")
     if store is None:
         raise UnifiedBridgeRefused("validated_store_required")
+    if outbox is not None:
+        try:
+            outbox.require_shared_database(store.database_path)
+        except ValueError as exc:
+            raise UnifiedBridgeRefused(str(exc)) from exc
 
     current = now or datetime.now(timezone.utc)
     active = COLLECTORS if collectors is None else collectors
@@ -102,7 +107,8 @@ def broadcast_unified_cycle(
         for observation in batch["observations"]:
             try:
                 ingest_p2p_observation(
-                    store, observation, allowed_providers=authorized, now=current
+                    store, observation, allowed_providers=authorized, now=current,
+                    outbox=outbox,
                 )
             except IngestionRejection as exc:
                 if str(exc).startswith("store_rejected:duplicate"):
@@ -112,7 +118,6 @@ def broadcast_unified_cycle(
                 continue
             result["ingested"] += 1
             if outbox is not None:
-                outbox.enqueue(observation)
                 drain_pending()
             else:
                 write_line(json.dumps(observation, separators=(",", ":"), sort_keys=True))

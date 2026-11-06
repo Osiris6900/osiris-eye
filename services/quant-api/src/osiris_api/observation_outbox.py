@@ -18,7 +18,7 @@ from .p2p_ingestion import ENABLE_ENV, IngestionRejection, validate_p2p_observat
 
 class ObservationOutbox:
     def __init__(self, path: str):
-        if path == ":memory:":
+        if not str(path) or str(path) == ":memory:":
             raise ValueError("durable_file_path_required")
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.path = path
@@ -36,19 +36,32 @@ class ObservationOutbox:
     def _connect(self):
         return sqlite3.connect(self.path, timeout=10)
 
+    def require_shared_database(self, database_path: str) -> None:
+        """Refuse cross-file transactions; aliases must resolve to one path."""
+        if (not str(database_path) or str(database_path) == ":memory:"
+                or Path(self.path).resolve() != Path(database_path).resolve()):
+            raise ValueError("outbox_store_database_mismatch")
+
     def enqueue(self, observation: dict[str, Any]) -> bool:
+        with self._connect() as db:
+            return self._enqueue_in_transaction(db, observation)
+
+    def _enqueue_in_transaction(
+        self, connection: sqlite3.Connection, observation: dict[str, Any],
+    ) -> bool:
+        """Insert using the caller's transaction without committing it."""
         from .p2p_ingestion import validate_observation_contract
         valid = validate_observation_contract(observation)
         key = ":".join((valid["provider"], valid["instrument"],
                         valid["payload_sha256"]))
         encoded = json.dumps(observation, separators=(",", ":"), sort_keys=True)
-        with self._connect() as db:
-            cursor = db.execute(
-                "INSERT OR IGNORE INTO pending_observations "
-                "(observation_key, observation_json) VALUES (?, ?)",
-                (key, encoded),
-            )
-            return cursor.rowcount == 1
+        cursor = connection.execute(
+            "INSERT INTO pending_observations "
+            "(observation_key, observation_json) VALUES (?, ?) "
+            "ON CONFLICT(observation_key) DO NOTHING",
+            (key, encoded),
+        )
+        return cursor.rowcount == 1
 
     def drain(
         self,
