@@ -38,6 +38,9 @@ class RecipientReceiptLedger:
         ):
             raise ValueError("invalid_receipt_reference")
         with self._connect() as db:
+            # Acquire the write lock before checking correlation to avoid a
+            # SELECT/INSERT race across independent worker processes.
+            db.execute("BEGIN IMMEDIATE")
             row = db.execute(
                 "SELECT envelope_sha256 FROM recipient_receipts "
                 "WHERE message_id=? AND recipient_peer_id=?",
