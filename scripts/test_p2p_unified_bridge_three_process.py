@@ -48,6 +48,8 @@ def wait_for(predicate, timeout, description):
 def start_node(name, key_path, listen=None, bootstrap=None):
     env = os.environ.copy()
     env["OSIRIS_NODE_KEY"] = str(key_path)
+    env["OSIRIS_REPLAY_CACHE"] = str(key_path.with_suffix(".replay-cache"))
+    env["OSIRIS_TRANSPORT_KEY"] = str(key_path.with_suffix(".transport"))
     env["OSIRIS_PEER_KEY_STORE"] = str(key_path.with_suffix(".peer-keys.sqlite3"))
     if listen:
         env["OSIRIS_LISTEN_ADDR"] = listen
