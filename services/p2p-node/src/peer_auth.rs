@@ -1,11 +1,36 @@
-use std::{collections::HashSet, error::Error};
+use std::{collections::HashSet, error::Error, ffi::OsString};
 use libp2p::PeerId;
+
+const MAX_CONFIGURED_PEERS: usize = 16_384;
+const MAX_PEER_ID_BYTES: usize = 128;
+const MAX_PEER_CONFIG_BYTES: usize = MAX_CONFIGURED_PEERS * (MAX_PEER_ID_BYTES + 1);
+
+fn validate_peer_setting(value: Option<OsString>, setting: &str) -> Result<Option<String>, Box<dyn Error>> {
+    value.map(|value| value.into_string()
+        .map_err(|_| format!("{setting} must contain valid UTF-8 peer IDs").into()))
+        .transpose()
+}
+
+/// Invalid configured bytes must fail closed, never become an absent allowlist.
+/// Error messages intentionally omit the configuration value.
+pub fn read_peer_setting(setting: &str) -> Result<Option<String>, Box<dyn Error>> {
+    validate_peer_setting(std::env::var_os(setting), setting)
+}
 
 fn parse_peer_set(raw: Option<&str>, setting: &str) -> Result<Option<HashSet<PeerId>>, Box<dyn Error>> {
     let Some(raw) = raw else { return Ok(None); };
+    if raw.len() > MAX_PEER_CONFIG_BYTES {
+        return Err(format!("{setting} exceeds maximum peer configuration size").into());
+    }
     let mut peers = HashSet::new();
     for entry in raw.split(',').map(str::trim).filter(|entry| !entry.is_empty()) {
+        if entry.len() > MAX_PEER_ID_BYTES {
+            return Err(format!("{setting} contains an oversized peer ID").into());
+        }
         peers.insert(entry.parse::<PeerId>()?);
+        if peers.len() > MAX_CONFIGURED_PEERS {
+            return Err(format!("{setting} exceeds maximum peer count").into());
+        }
     }
     if peers.is_empty() {
         return Err(format!("{setting} was set but contained no peer IDs").into());
@@ -23,6 +48,18 @@ pub fn parse_revoked_peers(raw: Option<&str>) -> Result<Option<HashSet<PeerId>>,
     parse_peer_set(raw, "OSIRIS_REVOKED_PEERS")
 }
 
+pub fn run_if_peer_allowed<T>(
+    peer: &PeerId,
+    trusted_peers: &Option<HashSet<PeerId>>,
+    revoked_peers: &Option<HashSet<PeerId>>,
+    action: impl FnOnce() -> T,
+) -> Result<T, ()> {
+    if !is_peer_allowed(peer, trusted_peers, revoked_peers) {
+        return Err(());
+    }
+    Ok(action())
+}
+
 pub fn is_peer_allowed(
     peer: &PeerId,
     trusted_peers: &Option<HashSet<PeerId>>,
@@ -34,7 +71,7 @@ pub fn is_peer_allowed(
 
 #[cfg(test)]
 mod tests {
-    use super::{is_peer_allowed, parse_revoked_peers, parse_trusted_peers};
+    use super::{is_peer_allowed, parse_revoked_peers, parse_trusted_peers, run_if_peer_allowed};
     use libp2p::PeerId;
 
     #[test]
@@ -79,6 +116,33 @@ mod tests {
     }
 
     #[test]
+    fn revoked_allowlisted_peer_never_enters_encrypted_message_processing() {
+        use std::cell::Cell;
+        let peer = PeerId::random();
+        let trusted = Some([peer].into_iter().collect());
+        let revoked = Some([peer].into_iter().collect());
+        let processing_started = Cell::new(false);
+
+        let result = run_if_peer_allowed(&peer, &trusted, &revoked, || {
+            processing_started.set(true);
+            // Production supplies envelope parsing here; key lookup, decryption,
+            // and replay handling are downstream of this authorization gate.
+            "parsed"
+        });
+
+        assert!(result.is_err());
+        assert!(!processing_started.get());
+    }
+
+    #[test]
+    fn allowed_peer_enters_encrypted_message_processing() {
+        let peer = PeerId::random();
+        let trusted = Some([peer].into_iter().collect());
+        let result = run_if_peer_allowed(&peer, &trusted, &None, || "parsed");
+        assert_eq!(result, Ok("parsed"));
+    }
+
+    #[test]
     fn parses_and_deduplicates_revoked_peer_ids() {
         let peer = PeerId::random();
         let raw = format!("{peer}, {peer}");
@@ -90,5 +154,31 @@ mod tests {
     #[test]
     fn rejects_empty_configured_revocation_list() {
         assert!(parse_revoked_peers(Some(" , ")).is_err());
+    }
+
+    #[test]
+    fn absent_or_valid_utf8_settings_preserve_their_meaning() {
+        assert!(super::validate_peer_setting(None, "OSIRIS_TRUSTED_PEERS").unwrap().is_none());
+        assert_eq!(super::validate_peer_setting(Some("".into()), "OSIRIS_TRUSTED_PEERS").unwrap(), Some(String::new()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn invalid_utf8_peer_configuration_fails_closed_without_exposing_value() {
+        use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+        for setting in ["OSIRIS_TRUSTED_PEERS", "OSIRIS_REVOKED_PEERS"] {
+            let value = OsString::from_vec(b"private-config-\xff".to_vec());
+            let error = super::validate_peer_setting(Some(value), setting).unwrap_err().to_string();
+            assert!(error.contains(setting));
+            assert!(!error.contains("private-config"));
+        }
+    }
+
+    #[test]
+    fn rejects_oversized_peer_configuration_before_parsing() {
+        let oversized_id = "1".repeat(super::MAX_PEER_ID_BYTES + 1);
+        assert!(parse_trusted_peers(Some(&oversized_id)).unwrap_err().to_string().contains("oversized"));
+        let oversized_config = " ".repeat(super::MAX_PEER_CONFIG_BYTES + 1);
+        assert!(parse_revoked_peers(Some(&oversized_config)).unwrap_err().to_string().contains("configuration size"));
     }
 }

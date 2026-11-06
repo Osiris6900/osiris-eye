@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import MarketMechanics from './MarketMechanics';
 import './style.css';
 
 const tickers = [
@@ -73,6 +74,7 @@ function App(){
    <div className="demo-banner"><span>● SIMULATION ENVIRONMENT</span><span>Illustrative market values · Not live prices · No orders can be placed</span></div>
    <section className="ticker-strip">{tickers.map(t=><button className="ticker" key={t[0]} onClick={()=>setSymbol(t[0])}><b>{t[0]}</b><strong>{t[1]}</strong><small className={t[4]}>{t[2]} ({t[3]})</small><Spark down={t[4]==='down'}/></button>)}</section>
    <div className="section-heading"><div><small>MARKET OVERVIEW / INDIA + GLOBAL</small><h1>{active==='Dashboard'?'Trading Intelligence Dashboard':active}</h1></div><span className="market-open">● RESEARCH MODE</span></div>
+   <MarketMechanics/>
    <section className="top-grid">
     <article className="panel chart-panel"><div className="panel-head"><div><h2>⌁ {symbol}</h2><small>NSE · INDEX · <span className="up">+0.47%</span></small></div><div className="tabs">{['1m','5m','15m','1h','4h','1D'].map(t=><button className={time===t?'on':''} onClick={()=>setTime(t)} key={t}>{t}</button>)}</div></div><div className="chart-legend"><span>O 24,195.10</span><span>H 24,201.45</span><span>L 24,190.20</span><span>C 24,198.60</span><span className="up">+3.50 (+0.01%)</span></div><Chart/><div className="volume-bars">{Array.from({length:48},(_,i)=><i key={i} style={{height:(9+(i*17)%28)+'px'}}/>)}</div></article>
     <article className="panel options-panel"><div className="panel-head"><div><h2>Options Chain · NIFTY</h2><small>Expiry: {period} 2026 · SIMULATED</small></div><button className="dots">···</button></div><div className="expiry-tabs">{['28 Nov','05 Dec','12 Dec','19 Dec','26 Dec'].map(x=><button key={x} onClick={()=>setPeriod(x)} className={period===x?'on':''}>{x}</button>)}</div><div className="option-head"><span>CALLS</span><span>STRIKE</span><span>PUTS</span></div><div className="option-table">{optionRows.map((r,i)=><div className={i===6?'atm':''} key={r[0]}><span>{r[1]}</span><span>{r[2]}</span><span>{r[3]}</span><span>{r[4]}</span><b>{r[0]}</b><span>{r[5]}</span><span>{r[6]}</span><span>{r[7]}</span><span>{r[8]}</span></div>)}</div></article>

@@ -11,6 +11,7 @@ import hashlib
 import json
 import secrets
 import sqlite3
+import threading
 import time
 from pathlib import Path
 from collections import OrderedDict
@@ -33,6 +34,7 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 ENVELOPE_VERSION = "osiris-eye:p2p:e2ee:v1"
 MAX_PLAINTEXT_BYTES = 1_048_576
 MAX_CLOCK_SKEW_SECONDS = 300
+MAX_CIPHERTEXT_ENCODED_LENGTH = ((MAX_PLAINTEXT_BYTES + 16 + 2) // 3) * 4
 
 
 def _b64e(raw: bytes) -> str:
@@ -66,8 +68,19 @@ def _raw_public(key: Any) -> bytes:
 
 def _canonical(value: dict[str, Any]) -> bytes:
     return json.dumps(
-        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
     ).encode("utf-8")
+
+
+def _valid_node_id(value: Any) -> bool:
+    return isinstance(value, str) and len(value) == 64 and all(
+        character in "0123456789abcdef" for character in value
+    )
+
+
+def _validate_capacity(capacity: int) -> None:
+    if type(capacity) is not int or capacity < 1:
+        raise ValueError("capacity_must_be_positive_integer")
 
 
 def generate_transport_identity() -> dict[str, str]:
@@ -98,6 +111,8 @@ def encrypt_for_peer(
     """Encrypt bytes for one recipient and sign the complete envelope."""
     if not isinstance(plaintext, bytes) or len(plaintext) > MAX_PLAINTEXT_BYTES:
         raise ValueError("plaintext_must_be_bytes_under_1MiB")
+    if not _valid_node_id(sender_node_id) or not _valid_node_id(recipient_node_id):
+        raise ValueError("invalid_node_id")
     signing_public = _b64d(sender_signing_public_key, max_length=128)
     signing_private = Ed25519PrivateKey.from_private_bytes(
         _b64d(sender_signing_private_key, max_length=128)
@@ -138,21 +153,24 @@ def encrypt_for_peer(
 
 
 class ReplayGuard:
-    """Bounded process-local replay cache; use shared durable storage in production."""
+    """Bounded, fail-closed process cache; use durable storage across restarts."""
 
     def __init__(self, capacity: int = 100_000):
-        if capacity < 1:
-            raise ValueError("capacity_must_be_positive")
+        _validate_capacity(capacity)
         self.capacity = capacity
         self._seen: OrderedDict[str, None] = OrderedDict()
+        self._lock = threading.Lock()
 
-    def check_and_record(self, message_id: str) -> bool:
-        if message_id in self._seen:
-            return False
-        self._seen[message_id] = None
-        if len(self._seen) > self.capacity:
-            self._seen.popitem(last=False)
-        return True
+    def check_and_record(self, message_id: str, *, legacy_message_id: str | None = None) -> bool:
+        if not isinstance(message_id, str) or not message_id or len(message_id) > 128:
+            raise ValueError("invalid_message_id")
+        with self._lock:
+            if message_id in self._seen or (legacy_message_id is not None and legacy_message_id in self._seen):
+                return False
+            if len(self._seen) >= self.capacity:
+                raise RuntimeError("replay_store_capacity_exceeded")
+            self._seen[message_id] = None
+            return True
 
 
 class SQLiteReplayGuard:
@@ -165,8 +183,7 @@ class SQLiteReplayGuard:
     """
 
     def __init__(self, database_path: str | Path, capacity: int = 100_000):
-        if capacity < 1:
-            raise ValueError("capacity_must_be_positive")
+        _validate_capacity(capacity)
         self.database_path = str(database_path)
         if self.database_path == ":memory:":
             raise ValueError("durable_replay_store_requires_file_path")
@@ -196,12 +213,17 @@ class SQLiteReplayGuard:
         connection.execute("PRAGMA synchronous=FULL")
         return connection
 
-    def check_and_record(self, message_id: str) -> bool:
+    def check_and_record(self, message_id: str, *, legacy_message_id: str | None = None) -> bool:
         if not isinstance(message_id, str) or not message_id or len(message_id) > 128:
             raise ValueError("invalid_message_id")
         connection = self._connect()
         try:
             connection.execute("BEGIN IMMEDIATE")
+            if legacy_message_id is not None and connection.execute(
+                "SELECT 1 FROM replay_messages WHERE message_id=?", (legacy_message_id,)
+            ).fetchone() is not None:
+                connection.execute("COMMIT")
+                return False
             inserted = connection.execute(
                 "INSERT OR IGNORE INTO replay_messages(message_id, first_seen) "
                 "VALUES (?, ?)",
@@ -246,6 +268,19 @@ def decrypt_from_peer(
     }
     if set(envelope) != required:
         raise ValueError("invalid_envelope_fields")
+    if not _valid_node_id(expected_sender_node_id) or not _valid_node_id(recipient_node_id):
+        raise ValueError("invalid_node_id")
+    # Bound every untrusted field before canonicalizing/signature verification.
+    # A signed sender is still not trusted to allocate arbitrarily large buffers.
+    field_limits = {
+        "version": 64, "sender_node_id": 64, "recipient_node_id": 64,
+        "sender_signing_public_key": 128, "ephemeral_public_key": 128,
+        "salt": 128, "nonce": 64, "message_id": 64, "cipher": 32,
+        "kdf": 32, "ciphertext": MAX_CIPHERTEXT_ENCODED_LENGTH, "signature": 128,
+    }
+    if any(not isinstance(envelope[field], str) or not envelope[field]
+           or len(envelope[field]) > limit for field, limit in field_limits.items()):
+        raise ValueError("invalid_envelope_field_size")
     if envelope["version"] != ENVELOPE_VERSION or envelope["cipher"] != "ChaCha20-Poly1305" or envelope["kdf"] != "HKDF-SHA256":
         raise ValueError("unsupported_envelope_algorithm")
     if envelope["sender_node_id"] != expected_sender_node_id or envelope["recipient_node_id"] != recipient_node_id:
@@ -257,9 +292,11 @@ def decrypt_from_peer(
         raise ValueError("sender_node_identity_mismatch")
 
     issued_at = envelope["issued_at"]
-    if not isinstance(issued_at, int):
+    if type(issued_at) is not int or issued_at < 0:
         raise ValueError("invalid_message_timestamp")
     current = int(time.time()) if now is None else now
+    if type(current) is not int or current < 0:
+        raise ValueError("invalid_current_timestamp")
     if abs(current - issued_at) > MAX_CLOCK_SKEW_SECONDS:
         raise ValueError("message_expired_or_clock_skew")
     message_id = envelope["message_id"]
@@ -284,19 +321,22 @@ def decrypt_from_peer(
     recipient_private_raw = _b64d(recipient_transport_private_key, max_length=128)
     if len(recipient_private_raw) != 32:
         raise ValueError("invalid_recipient_transport_key")
-    if not replay_guard.check_and_record(message_id):
-        raise ValueError("replayed_message")
-
-    shared = X25519PrivateKey.from_private_bytes(recipient_private_raw).exchange(
-        X25519PublicKey.from_public_bytes(ephemeral_raw)
-    )
-    key = _derive_key(shared, salt, expected_sender_node_id, recipient_node_id)
     try:
+        shared = X25519PrivateKey.from_private_bytes(recipient_private_raw).exchange(
+            X25519PublicKey.from_public_bytes(ephemeral_raw)
+        )
+        key = _derive_key(shared, salt, expected_sender_node_id, recipient_node_id)
         plaintext = ChaCha20Poly1305(key).decrypt(
-            nonce, _b64d(envelope["ciphertext"]), _canonical(header)
+            nonce, _b64d(envelope["ciphertext"], max_length=MAX_CIPHERTEXT_ENCODED_LENGTH), _canonical(header)
         )
     except (InvalidTag, ValueError) as exc:
         raise ValueError("message_authentication_failed") from exc
     if len(plaintext) > MAX_PLAINTEXT_BYTES:
         raise ValueError("plaintext_too_large")
+    # Authentication must succeed before consuming capacity. Scope IDs by sender
+    # so one enrolled publisher cannot reserve another publisher's message ID.
+    if not replay_guard.check_and_record(
+        f"{expected_sender_node_id}:{message_id}", legacy_message_id=message_id
+    ):
+        raise ValueError("replayed_message")
     return plaintext

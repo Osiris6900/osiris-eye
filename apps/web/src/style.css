@@ -63,3 +63,36 @@
 .live-feed-quotes em{font:8px 'DM Mono';font-style:normal;color:#91a8c1}
 .feed-disclaimer{display:block;margin-top:7px}
 @media(max-width:760px){.live-feed-quotes{grid-template-columns:repeat(2,minmax(0,1fr))}.live-feed-head{font-size:8px}}
+
+.mechanics-panel{margin:10px 0 12px;padding:16px;scroll-margin-top:20px}
+.mechanics-panel .panel-head h2{font-size:15px}
+.mechanics-intro,.mechanics-description{font-size:12px;line-height:1.65;color:#b9cce2;margin:8px 0 12px}
+.mechanics-picker{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.mechanics-picker label,.mechanics-input>label,.mechanics-auth label{font-size:11px;font-weight:700;color:#e0edff}
+.mechanics-panel select,.mechanics-panel textarea,.mechanics-panel input{border:1px solid #345271;border-radius:6px;background:#071321;color:#e2efff;padding:9px;font-size:12px}
+.mechanics-panel select{flex:1;min-width:220px;max-width:450px}
+.mechanics-evidence{font:10px 'DM Mono',monospace;color:#9fdbeb;padding:6px 9px;border:1px solid #2d5b71;border-radius:5px;text-transform:capitalize}
+.mechanics-limitations{background:#0b182a;border-left:2px solid #cda15a;padding:10px 12px;color:#b8cbe1;font-size:11px;line-height:1.65}
+.mechanics-limitations summary,.mechanics-auth summary{cursor:pointer;font-weight:700;color:#dceaff}
+.mechanics-limitations ul{padding-left:19px;margin:8px 0 0}
+.mechanics-workbench{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;margin-top:15px}
+.mechanics-input{display:flex;flex-direction:column;gap:7px;min-width:0}
+.mechanics-input small,.mechanics-auth small{font-size:10px;line-height:1.6;color:#8fa8c5}
+.mechanics-input textarea{width:100%;min-height:250px;max-height:600px;resize:vertical;font:11px/1.6 'DM Mono',monospace;tab-size:2}
+.mechanics-actions{display:flex;gap:8px;flex-wrap:wrap}
+.mechanics-panel button{border:1px solid #36587b;border-radius:5px;background:#122944;color:#d8eaff;padding:8px 12px;cursor:pointer;font-size:11px}
+.mechanics-panel button.mechanics-run{background:#1263bb;border-color:#388bf0;color:#fff}
+.mechanics-panel button:disabled{opacity:.6;cursor:wait}
+.mechanics-panel :is(button,textarea,input,select,summary,pre):focus-visible{outline:2px solid #55d8f7;outline-offset:3px}
+.mechanics-output{min-width:0;background:#071321;border:1px solid #243d58;border-radius:6px;padding:12px}
+.mechanics-output h3{margin:0 0 10px;color:#cddff3;font-size:12px}
+.mechanics-output pre{font:11px/1.65 'DM Mono',monospace;white-space:pre-wrap;overflow-wrap:anywhere;overflow:auto;max-height:430px;margin:0;color:#aee2d8}
+.mechanics-status{font-size:11px;line-height:1.7;color:#8ca5c2}
+.mechanics-error{color:#ffb4bd;background:#321827;border:1px solid #754050;border-radius:5px;padding:10px;font-size:11px;line-height:1.6;overflow-wrap:anywhere}
+.mechanics-error p{margin:0 0 8px}
+.mechanics-auth{margin-top:14px;font-size:10px;color:#8fa8c5;border-top:1px solid #243750;padding-top:10px}
+.mechanics-auth label{display:block;margin:10px 0 6px}
+.mechanics-auth>div{display:flex;gap:8px;flex-wrap:wrap}
+.mechanics-auth input{width:min(100%,310px)}
+.mechanics-auth small{display:block;margin-top:6px}
+@media(max-width:760px){.mechanics-panel{padding:12px}.mechanics-workbench{grid-template-columns:minmax(0,1fr)}.mechanics-picker{align-items:stretch}.mechanics-picker label{width:100%}.mechanics-panel select{min-width:0;max-width:100%;width:100%;flex:auto}.mechanics-evidence{width:100%;line-height:1.5}.mechanics-auth>div{flex-direction:column}.mechanics-auth input{width:100%}}

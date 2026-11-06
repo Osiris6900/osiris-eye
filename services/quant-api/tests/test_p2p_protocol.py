@@ -73,3 +73,27 @@ def test_required_capability_must_be_mutually_supported_and_allowed():
             allowed_capabilities=frozenset(),
             required_capabilities=frozenset({"peer_discovery"}),
         )
+
+
+@pytest.mark.parametrize("value", ["١.٢.٣", "1.0." + "0" * 10000, "4294967296.0.0", None])
+def test_network_version_parser_rejects_unicode_and_unbounded_components(value):
+    with pytest.raises(ValueError, match="invalid_protocol_version"):
+        ProtocolVersion.parse(value)
+
+
+@pytest.mark.parametrize("major", [float("nan"), 1.5, True])
+def test_noninteger_major_cannot_bypass_negotiation_range(major):
+    with pytest.raises(ValueError):
+        ProtocolVersion(major)
+    with pytest.raises(ValueError, match="invalid_supported_major_range"):
+        offer(minimum=major)
+
+
+def test_unbounded_peer_capabilities_rejected():
+    with pytest.raises(ValueError, match="invalid_capability_set"):
+        offer(capabilities={f"capability_{index}" for index in range(129)})
+
+
+def test_capability_control_characters_rejected():
+    with pytest.raises(ValueError, match="invalid_capability_name"):
+        offer(capabilities={"peer_discovery\nadmin_override"})

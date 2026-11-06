@@ -1,0 +1,56 @@
+[Unit]
+Description=OSIRIS encrypted market-data observation receiver
+Documentation=file:/usr/local/share/doc/osiris-p2p/P2P_HARDENED_DEPLOYMENT.md
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=osiris-p2p
+Group=osiris-p2p
+EnvironmentFile=/etc/osiris-p2p/node.env
+StateDirectory=osiris-p2p
+StateDirectoryMode=0700
+WorkingDirectory=/var/lib/osiris-p2p
+UMask=0077
+ExecStartPre=/usr/bin/python3 /usr/local/libexec/osiris-p2p/preflight.py
+ExecStart=/usr/local/bin/osiris-p2p-node
+StandardInput=null
+StandardOutput=journal
+StandardError=journal
+# Self-healing: restart after crashes AND clean exits so the node stays live 24/7.
+Restart=always
+RestartSec=5
+KillSignal=SIGINT
+TimeoutStopSec=15
+LimitNOFILE=4096
+TasksMax=128
+MemoryMax=1G
+CPUQuota=200%
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,4 +1,6 @@
 """Central catalog for research-platform module foundations."""
+from .market_mechanics_routes import CATALOG as MARKET_MECHANICS_CATALOG
+
 MODULES = [
     {"id": "order_book_microstructure_ai", "name": "Order Book & Market Microstructure AI", "status": "foundation", "capabilities": ["multi-level depth, spread and imbalance diagnostics"]},
     {"id": "smart_execution_simulator", "name": "Smart Execution Simulator", "status": "foundation", "capabilities": ["partial fills, fees and implementation shortfall simulation"]},
@@ -111,3 +113,16 @@ MODULES = [
     {"id":"operational_data_quality_monitor","name":"Operational Data Quality Monitor","status":"prototype","capabilities":["duplicate, timestamp, freshness and malformed-record audit","fail-closed data readiness"]},
     {"id":"controlled_recovery_gate","name":"Controlled Recovery Gate","status":"prototype","capabilities":["service, data, risk, consecutive-health and human approval gates","no live execution"]},
 ]
+
+MODULES.extend(
+    {
+        "id": module["id"],
+        "name": module["name"],
+        "status": "prototype",
+        "capabilities": [module["mechanism"]],
+        "endpoint": module["endpoint"],
+        "evidence_strength": module["evidence_strength"],
+        "limitations": module["limitations"],
+    }
+    for module in MARKET_MECHANICS_CATALOG
+)

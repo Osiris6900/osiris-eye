@@ -45,7 +45,7 @@ def test_capacity_derivatives_graph_and_dr():
 def test_benchmark_metrics_and_routes():
     result = benchmark_performance([.1,.0], [.05,.0])
     assert result["active_total_return"] == pytest.approx(.05)
-    assert client.get("/platform/modules").json()["count"] == 97
+    assert client.get("/platform/modules").json()["count"] == 107
     payloads = [
         ("/platform/instruments/global-coverage", {"instruments":[]}),
         ("/risk/counterparties/concentration", {"exposures":[],"nav":100}),

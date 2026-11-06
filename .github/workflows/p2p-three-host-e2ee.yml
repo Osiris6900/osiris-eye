@@ -11,6 +11,10 @@ concurrency:
   group: p2p-three-host-e2ee
   cancel-in-progress: false
 
+env:
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+
+# Coordinated hosts must be rerun together; each attempt has fresh artifacts.
 jobs:
   host-a:
     name: Host A - sender/controller
@@ -35,7 +39,7 @@ jobs:
           printf '{"ip":"%s"}\n' "$(tailscale ip -4 | head -n1)" > "$RUNNER_TEMP/osiris-3host/host-a.json"
       - uses: actions/upload-artifact@v4
         with:
-          name: three-e2ee-a-pub-${{ github.run_id }}
+          name: three-e2ee-a-pub-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/osiris-3host/host-a.pub
           retention-days: 1
       - name: Wait for Host B and C endpoints
@@ -43,22 +47,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          for artifact in "three-e2ee-b-endpoint-${{ github.run_id }}" "three-e2ee-c-endpoint-${{ github.run_id }}"; do
-            found=""
-            for _ in $(seq 1 180); do
-              found="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" --jq ".artifacts[] | select(.name == \"$artifact\" and .expired == false) | .id" | head -n1)"
-              [ -n "$found" ] && break
-              sleep 3
-            done
-            [ -n "$found" ] || { echo "Missing endpoint artifact: $artifact"; exit 1; }
+          for artifact in "three-e2ee-b-endpoint-${{ github.run_id }}-${{ github.run_attempt }}" "three-e2ee-c-endpoint-${{ github.run_id }}-${{ github.run_attempt }}"; do
+            python3 scripts/p2p_workflow_coordination.py wait-artifact --name "$artifact" --timeout 600
           done
       - uses: actions/download-artifact@v4
         with:
-          name: three-e2ee-b-endpoint-${{ github.run_id }}
+          name: three-e2ee-b-endpoint-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/osiris-3host
       - uses: actions/download-artifact@v4
         with:
-          name: three-e2ee-c-endpoint-${{ github.run_id }}
+          name: three-e2ee-c-endpoint-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/osiris-3host
       - name: Pin SSH host keys and run three-host E2EE test
         run: |
@@ -66,8 +64,8 @@ jobs:
           dir="$RUNNER_TEMP/osiris-3host"
           b="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["ip"])' "$dir/host-b.json")"
           c="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["ip"])' "$dir/host-c.json")"
-          ssh-keyscan -T 15 -H "$b" "$c" > "$dir/known_hosts"
-          test -s "$dir/known_hosts"
+          python3 scripts/p2p_workflow_coordination.py known-hosts \
+            --path "$dir/known_hosts" --endpoint "$dir/host-b.json" --endpoint "$dir/host-c.json"
           python3 scripts/test_p2p_three_host_e2ee_ssh.py \
             --ssh-target-b "runner@$b" --ssh-target-c "runner@$c" \
             --host-a-ip "$(tailscale ip -4 | head -n1)" --port 4001 \
@@ -77,17 +75,35 @@ jobs:
             --ssh-option=-o --ssh-option=StrictHostKeyChecking=yes \
             --ssh-option=-o --ssh-option="UserKnownHostsFile=$dir/known_hosts" \
             --ssh-option=-o --ssh-option=ConnectTimeout=15
+      - name: Record controller completion
+        if: always()
+        env:
+          TEST_STATUS: ${{ job.status }}
+        run: |
+          python3 scripts/p2p_workflow_coordination.py write-result \
+            --path "$RUNNER_TEMP/osiris-3host/result.json" --status "$TEST_STATUS"
+      - name: Release receivers after test completion
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: three-e2ee-controller-finished-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/osiris-3host/result.json
+          if-no-files-found: error
+          retention-days: 1
       - name: Upload diagnostics on failure
         if: failure() || cancelled()
         uses: actions/upload-artifact@v4
         with:
-          name: three-e2ee-a-failure-${{ github.run_id }}
+          name: three-e2ee-a-failure-${{ github.run_id }}-${{ github.run_attempt }}
           # Never upload the ephemeral SSH private key (host-a).
           path: |
             ${{ runner.temp }}/osiris-3host/host-a.json
             ${{ runner.temp }}/osiris-3host/known_hosts
           if-no-files-found: ignore
           retention-days: 3
+      - name: Remove ephemeral SSH client key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/osiris-3host/host-a"
 
   host-b:
     name: Host B - intended recipient
@@ -107,16 +123,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          name="three-e2ee-a-pub-${{ github.run_id }}"
-          for _ in $(seq 1 180); do
-            id="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" --jq ".artifacts[] | select(.name == \"$name\" and .expired == false) | .id" | head -n1)"
-            [ -n "$id" ] && exit 0
-            sleep 3
-          done
-          echo "Host A public key artifact timed out"; exit 1
+          python3 scripts/p2p_workflow_coordination.py wait-artifact \
+            --name "three-e2ee-a-pub-${{ github.run_id }}-${{ github.run_attempt }}" --timeout 600
       - uses: actions/download-artifact@v4
         with:
-          name: three-e2ee-a-pub-${{ github.run_id }}
+          name: three-e2ee-a-pub-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/osiris-3host
       - name: Start SSH receiver and publish endpoint
         run: |
@@ -124,19 +135,29 @@ jobs:
           dir="$RUNNER_TEMP/osiris-3host"
           mkdir -p "$dir" "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
           sudo apt-get update && sudo apt-get install -y openssh-server
-          cat "$dir/host-a.pub" > "$HOME/.ssh/authorized_keys"; chmod 600 "$HOME/.ssh/authorized_keys"
+          printf 'restrict ' > "$HOME/.ssh/authorized_keys"
+          cat "$dir/host-a.pub" >> "$HOME/.ssh/authorized_keys"; chmod 600 "$HOME/.ssh/authorized_keys"
           sudo ssh-keygen -A; sudo /usr/sbin/sshd
           ip="$(tailscale ip -4 | head -n1)"; test -n "$ip"
           for _ in $(seq 1 30); do timeout 2 bash -c ":</dev/tcp/$ip/22" 2>/dev/null && break; sleep 1; done
           timeout 5 bash -c ":</dev/tcp/$ip/22"
-          printf '{"ip":"%s"}\n' "$ip" > "$dir/host-b.json"
+          python3 scripts/p2p_workflow_coordination.py write-endpoint \
+            --path "$dir/host-b.json" --ip "$ip" \
+            --host-key /etc/ssh/ssh_host_ed25519_key.pub
       - uses: actions/upload-artifact@v4
         with:
-          name: three-e2ee-b-endpoint-${{ github.run_id }}
+          name: three-e2ee-b-endpoint-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/osiris-3host/host-b.json
           retention-days: 1
-      - name: Keep Host B online
-        run: sleep 600
+      - name: Keep Host B online until controller completes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/p2p_workflow_coordination.py wait-artifact \
+            --name "three-e2ee-controller-finished-${{ github.run_id }}-${{ github.run_attempt }}" --timeout 900
+      - name: Remove ephemeral SSH authorization
+        if: always()
+        run: rm -f "$HOME/.ssh/authorized_keys"
 
   host-c:
     name: Host C - non-recipient observer
@@ -156,16 +177,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          name="three-e2ee-a-pub-${{ github.run_id }}"
-          for _ in $(seq 1 180); do
-            id="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" --jq ".artifacts[] | select(.name == \"$name\" and .expired == false) | .id" | head -n1)"
-            [ -n "$id" ] && exit 0
-            sleep 3
-          done
-          echo "Host A public key artifact timed out"; exit 1
+          python3 scripts/p2p_workflow_coordination.py wait-artifact \
+            --name "three-e2ee-a-pub-${{ github.run_id }}-${{ github.run_attempt }}" --timeout 600
       - uses: actions/download-artifact@v4
         with:
-          name: three-e2ee-a-pub-${{ github.run_id }}
+          name: three-e2ee-a-pub-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/osiris-3host
       - name: Start SSH receiver and publish endpoint
         run: |
@@ -173,16 +189,26 @@ jobs:
           dir="$RUNNER_TEMP/osiris-3host"
           mkdir -p "$dir" "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
           sudo apt-get update && sudo apt-get install -y openssh-server
-          cat "$dir/host-a.pub" > "$HOME/.ssh/authorized_keys"; chmod 600 "$HOME/.ssh/authorized_keys"
+          printf 'restrict ' > "$HOME/.ssh/authorized_keys"
+          cat "$dir/host-a.pub" >> "$HOME/.ssh/authorized_keys"; chmod 600 "$HOME/.ssh/authorized_keys"
           sudo ssh-keygen -A; sudo /usr/sbin/sshd
           ip="$(tailscale ip -4 | head -n1)"; test -n "$ip"
           for _ in $(seq 1 30); do timeout 2 bash -c ":</dev/tcp/$ip/22" 2>/dev/null && break; sleep 1; done
           timeout 5 bash -c ":</dev/tcp/$ip/22"
-          printf '{"ip":"%s"}\n' "$ip" > "$dir/host-c.json"
+          python3 scripts/p2p_workflow_coordination.py write-endpoint \
+            --path "$dir/host-c.json" --ip "$ip" \
+            --host-key /etc/ssh/ssh_host_ed25519_key.pub
       - uses: actions/upload-artifact@v4
         with:
-          name: three-e2ee-c-endpoint-${{ github.run_id }}
+          name: three-e2ee-c-endpoint-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/osiris-3host/host-c.json
           retention-days: 1
-      - name: Keep Host C online
-        run: sleep 600
+      - name: Keep Host C online until controller completes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/p2p_workflow_coordination.py wait-artifact \
+            --name "three-e2ee-controller-finished-${{ github.run_id }}-${{ github.run_attempt }}" --timeout 900
+      - name: Remove ephemeral SSH authorization
+        if: always()
+        run: rm -f "$HOME/.ssh/authorized_keys"

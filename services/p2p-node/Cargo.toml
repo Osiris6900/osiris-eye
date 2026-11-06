@@ -12,7 +12,7 @@ path = "src/main.rs"
 [dependencies]
 futures = "0.3"
 ed25519-dalek = "2.1"
-libp2p = { version = "0.56", features = ["tokio", "tcp", "noise", "yamux", "gossipsub", "kad", "mdns", "identify", "relay", "macros"] }
+libp2p = { version = "0.56", features = ["tokio", "tcp", "noise", "yamux", "gossipsub", "kad", "mdns", "identify", "relay", "dcutr", "autonat", "upnp", "macros"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
@@ -23,3 +23,4 @@ hkdf = "0.12"
 rand_core = { version = "0.6", features = ["getrandom"] }
 x25519-dalek = { version = "2", features = ["static_secrets", "zeroize"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
+ureq = { version = "2", default-features = false, features = ["tls"] }

@@ -89,6 +89,18 @@ fn unsigned_bytes(record: &KeyBindingRecord) -> Result<Vec<u8>, &'static str> {
     serde_json::to_vec(&unsigned).map_err(|_| "key_binding_serialization_failed")
 }
 
+/// Reject X25519 low-order points before accepting or advertising a key binding.
+/// A fixed, non-secret scalar suffices for this public-key validation: low-order
+/// inputs produce an all-zero result for every correctly clamped X25519 scalar.
+fn validate_transport_public_key(public_key: &[u8; 32]) -> Result<(), &'static str> {
+    let probe = StaticSecret::from([0x42; 32]);
+    let public_key = x25519_dalek::PublicKey::from(*public_key);
+    if !probe.diffie_hellman(&public_key).was_contributory() {
+        return Err("invalid_low_order_transport_public_key");
+    }
+    Ok(())
+}
+
 /// Sign a node's X25519 public key with its existing libp2p Ed25519 identity.
 pub fn create_key_binding(
     identity_key: &identity::Keypair,
@@ -102,6 +114,7 @@ pub fn create_key_binding(
     {
         return Err("invalid_key_binding_epoch_or_lifetime");
     }
+    validate_transport_public_key(transport_public_key)?;
 
     let public_key = identity_key.public();
     let peer_id = PeerId::from_public_key(&public_key).to_string();
@@ -171,6 +184,7 @@ pub fn verify_key_binding_signature(
     if !identity_public_key.verify(&unsigned_bytes(record)?, &signature) {
         return Err("key_binding_signature_invalid");
     }
+    validate_transport_public_key(&transport_public_key)?;
 
     Ok(VerifiedKeyBinding {
         peer_id,
@@ -283,6 +297,40 @@ mod tests {
             "key_binding_peer_id_mismatch"
         );
     }
+
+    #[test]
+    fn rejects_non_contributory_transport_key_bindings_even_when_signed() {
+        let identity = identity::Keypair::generate_ed25519();
+        let transport = TransportKeyPair::generate();
+        // Zero and the order-one point both annihilate a clamped X25519 scalar.
+        let mut order_one = [0u8; 32];
+        order_one[0] = 1;
+        for low_order in [[0u8; 32], order_one] {
+            assert_eq!(
+                create_key_binding(&identity, &low_order, 1, 100, 200).err(),
+                Some("invalid_low_order_transport_public_key"),
+            );
+            let mut record = create_key_binding(&identity, &transport.public_key, 1, 100, 200).unwrap();
+            record.transport_public_key = STANDARD_NO_PAD.encode(low_order);
+            record.signature = STANDARD_NO_PAD.encode(identity.sign(&unsigned_bytes(&record).unwrap()).unwrap());
+            assert_eq!(
+                verify_key_binding(&record, 150, 1).err(),
+                Some("invalid_low_order_transport_public_key"),
+            );
+        }
+    }
+
+    #[test]
+    fn binding_lifetime_checks_do_not_overflow_at_timestamp_limits() {
+        let identity = identity::Keypair::generate_ed25519();
+        let transport = TransportKeyPair::generate();
+        let record = create_key_binding(&identity, &transport.public_key, 1, u64::MAX - 100, u64::MAX).unwrap();
+        assert!(verify_key_binding(&record, u64::MAX - 1, 1).is_ok());
+        assert_eq!(
+            create_key_binding(&identity, &transport.public_key, 1, u64::MAX, 0).err(),
+            Some("invalid_key_binding_epoch_or_lifetime"),
+        );
+    }
 }
 
 
@@ -371,7 +419,7 @@ pub fn encrypt_for_recipient(
     expires_at: u64,
 ) -> Result<EncryptedEnvelope, &'static str> {
     if plaintext.len() > 1_048_576
-        || recipient_peer_id.is_empty() || recipient_peer_id.len() > 128
+        || recipient_peer_id.len() > 128 || recipient_peer_id.parse::<PeerId>().is_err()
         || sender_key_epoch == 0
         || recipient_key_epoch == 0
         || expires_at <= created_at
@@ -456,6 +504,9 @@ pub fn decrypt_for_recipient(
         || envelope.ciphertext.len() > 1_398_123 {
         return Err("envelope_field_size_invalid");
     }
+    let message_id = STANDARD_NO_PAD.decode(&envelope.message_id)
+        .map_err(|_| "invalid_message_id_encoding")?;
+    if message_id.len() != 16 { return Err("invalid_message_id_length"); }
     let ephemeral_bytes = STANDARD_NO_PAD.decode(&envelope.ephemeral_public_key)
         .map_err(|_| "invalid_ephemeral_key_encoding")?;
     let ephemeral_bytes: [u8; 32] = ephemeral_bytes.try_into()
@@ -486,4 +537,190 @@ pub fn decrypt_for_recipient(
     let cipher = ChaCha20Poly1305::new((&key).into());
     cipher.decrypt(Nonce::from_slice(&nonce), Payload { msg: &ciphertext, aad: &aad })
         .map_err(|_| "envelope_decryption_failed")
+}
+
+
+#[cfg(test)]
+mod adversarial_envelope_tests {
+    use super::*;
+
+    struct Fixture {
+        sender_binding: VerifiedKeyBinding,
+        sender_identity: identity::Keypair,
+        recipient_peer: PeerId,
+        recipient_transport: TransportKeyPair,
+    }
+
+    fn fixture() -> Fixture {
+        let sender_identity = identity::Keypair::generate_ed25519();
+        let sender_transport = TransportKeyPair::generate();
+        let recipient_identity = identity::Keypair::generate_ed25519();
+        let recipient_transport = TransportKeyPair::generate();
+        let sender_record = create_key_binding(
+            &sender_identity, &sender_transport.public_key, 1, 100, 300,
+        ).unwrap();
+        let sender_binding = verify_key_binding(&sender_record, 150, 1).unwrap();
+        Fixture {
+            sender_binding,
+            sender_identity,
+            recipient_peer: PeerId::from(recipient_identity.public()),
+            recipient_transport,
+        }
+    }
+
+    fn envelope(f: &Fixture) -> EncryptedEnvelope {
+        encrypt_for_recipient(
+            &f.sender_identity, 1, &f.recipient_peer.to_string(),
+            &f.recipient_transport.public_key, 1, b"adversarial-test-payload",
+            150, 180,
+        ).unwrap()
+    }
+
+    fn decrypt(f: &Fixture, envelope: &EncryptedEnvelope, now: u64) -> Result<Vec<u8>, &'static str> {
+        decrypt_for_recipient(
+            envelope, &f.sender_binding, &f.recipient_peer, 1,
+            f.recipient_transport.private_key(), now,
+        )
+    }
+
+    fn resign(f: &Fixture, envelope: &mut EncryptedEnvelope) {
+        let mut signed = envelope_aad(envelope).unwrap();
+        signed.extend_from_slice(&STANDARD_NO_PAD.decode(&envelope.ciphertext).unwrap());
+        envelope.signature = STANDARD_NO_PAD.encode(f.sender_identity.sign(&signed).unwrap());
+    }
+
+    #[test]
+    fn signed_low_order_ephemeral_keys_cannot_bypass_shared_secret_check() {
+        let f = fixture();
+        let mut order_one = [0u8; 32];
+        order_one[0] = 1;
+        for low_order in [[0u8; 32], order_one] {
+            let mut e = envelope(&f);
+            e.ephemeral_public_key = STANDARD_NO_PAD.encode(low_order);
+            resign(&f, &mut e);
+            assert_eq!(decrypt(&f, &e, 160).err(), Some("invalid_low_order_shared_secret"));
+            assert_eq!(
+                encrypt_for_recipient(
+                    &f.sender_identity, 1, &f.recipient_peer.to_string(),
+                    &low_order, 1, b"must not encrypt", 150, 180,
+                ).err(),
+                Some("invalid_low_order_shared_secret"),
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_malformed_or_noncanonical_message_ids_even_when_signed() {
+        let f = fixture();
+        // Both have the required text length, but neither encodes a canonical
+        // 16-byte ID: the first is not base64; the second has nonzero pad bits.
+        for message_id in ["!!!!!!!!!!!!!!!!!!!!!!", "AAAAAAAAAAAAAAAAAAAAAB"] {
+            let mut e = envelope(&f);
+            e.message_id = message_id.to_owned();
+            resign(&f, &mut e);
+            assert_eq!(decrypt(&f, &e, 160).err(), Some("invalid_message_id_encoding"));
+        }
+    }
+
+    #[test]
+    fn rejects_oversized_ciphertext_before_decoding_or_signature_work() {
+        let f = fixture();
+        let mut e = envelope(&f);
+        e.ciphertext = "A".repeat(1_398_124);
+        e.signature = "!".repeat(86);
+        assert_eq!(decrypt(&f, &e, 160).err(), Some("envelope_field_size_invalid"));
+    }
+
+    #[test]
+    fn refuses_to_encrypt_for_invalid_peer_identifier() {
+        let f = fixture();
+        assert_eq!(
+            encrypt_for_recipient(
+                &f.sender_identity, 1, "not|a|peer", &f.recipient_transport.public_key,
+                1, b"payload", 150, 180,
+            ).err(),
+            Some("invalid_envelope_input"),
+        );
+    }
+
+    #[test]
+    fn envelope_lifetime_checks_do_not_overflow_at_timestamp_limits() {
+        let f = fixture();
+        let e = encrypt_for_recipient(
+            &f.sender_identity, 1, &f.recipient_peer.to_string(),
+            &f.recipient_transport.public_key, 1, b"near-timestamp-limit",
+            u64::MAX - 100, u64::MAX,
+        ).unwrap();
+        assert_eq!(decrypt(&f, &e, u64::MAX - 1).unwrap(), b"near-timestamp-limit");
+        let mut invalid = e;
+        invalid.created_at = u64::MAX;
+        invalid.expires_at = 0;
+        assert_eq!(decrypt(&f, &invalid, u64::MAX).err(), Some("envelope_identity_or_time_check_failed"));
+    }
+
+    #[test]
+    fn rejects_envelope_after_expiry() {
+        let f = fixture();
+        let e = envelope(&f);
+        assert_eq!(
+            decrypt(&f, &e, 181).err(),
+            Some("envelope_identity_or_time_check_failed"),
+        );
+    }
+
+    #[test]
+    fn rejects_envelope_created_beyond_allowed_clock_skew() {
+        let f = fixture();
+        let e = encrypt_for_recipient(
+            &f.sender_identity, 1, &f.recipient_peer.to_string(),
+            &f.recipient_transport.public_key, 1, b"future",
+            1_000, 1_100,
+        ).unwrap();
+        assert_eq!(
+            decrypt(&f, &e, 150).err(),
+            Some("envelope_identity_or_time_check_failed"),
+        );
+    }
+
+    #[test]
+    fn rejects_wrong_recipient_key_epoch() {
+        let f = fixture();
+        let e = envelope(&f);
+        assert_eq!(
+            decrypt_for_recipient(
+                &e, &f.sender_binding, &f.recipient_peer, 2,
+                f.recipient_transport.private_key(), 160,
+            ).err(),
+            Some("envelope_identity_or_time_check_failed"),
+        );
+    }
+
+    #[test]
+    fn rejects_signed_metadata_tampering() {
+        let f = fixture();
+        let mut e = envelope(&f);
+        e.expires_at = 181;
+        assert_eq!(decrypt(&f, &e, 160).err(), Some("envelope_signature_invalid"));
+    }
+
+    #[test]
+    fn rejects_malformed_ciphertext_encoding() {
+        let f = fixture();
+        let mut e = envelope(&f);
+        e.ciphertext = "!not-base64!".into();
+        assert_eq!(decrypt(&f, &e, 160).err(), Some("invalid_ciphertext_encoding"));
+    }
+
+    #[test]
+    fn rejects_envelope_lifetime_over_limit_at_creation() {
+        let f = fixture();
+        assert_eq!(
+            encrypt_for_recipient(
+                &f.sender_identity, 1, &f.recipient_peer.to_string(),
+                &f.recipient_transport.public_key, 1, b"too-long",
+                100, 100 + MAX_ENVELOPE_LIFETIME_SECS + 1,
+            ).err(),
+            Some("invalid_envelope_input"),
+        );
+    }
 }

@@ -32,3 +32,22 @@ This commit adds deterministic Python primitives and tests for all ten planned m
 3. Persist immutable raw data and normalized data with freshness, gap and lineage checks.
 4. Build event-driven backtesting with realistic costs and walk-forward/OOS evaluation.
 5. Connect simulated paper execution only after risk, reconciliation and kill-switch tests pass.
+
+## Market Mechanics diagnostics
+
+The registry now includes ten additional research prototypes, bringing the total to 107. These extend the original foundations above with caller-data calculations and a dashboard research panel. Evidence labels describe support for a mechanism, not validation of a predictive trading strategy.
+
+| Module | Calculation | Interpretation limit |
+|---|---|---|
+| Dealer Gamma Exposure (GEX) | Signed dealer gamma exposure and hedge sensitivity | Dealer positions must be supplied; option type does not determine the dealer's position sign |
+| Options Expiry & Max Pain | Strike-level settlement payouts and minimum aggregate intrinsic payout | Expiry effects are mixed; Max Pain is a weak predictor |
+| Liquidity Vacuum | Book sweep cost and unfilled quantity | A static displayed book omits hidden liquidity, cancellations and replenishment |
+| Order Flow Imbalance | Buyer/seller aggressor-volume imbalance | Short-horizon association depends on classification and market conditions |
+| Dark Pool Trading | Supplied off-exchange activity relative to total activity | Volume does not identify institutional buying or selling direction |
+| Funding Rate & Liquidation Clusters | Per-period funding and caller-defined liquidation scenarios | Cluster inventories are assumptions, not observed exchange positions |
+| Treasury Liquidity & Repo Market | Fed-assets/TGA/RRP liquidity proxy and repo spread | The proxy is incomplete and does not imply a causal risk-asset forecast |
+| Index Rebalancing | AUM-weight-change flow and ADV participation | Implementation timing, anticipatory trading and actual fund tracking vary |
+| Volatility-Control Funds | Target-volatility leverage and rebalance flow | Hypothetical fund rules and volatility inputs determine the estimate |
+| Cross-Asset Lead–Lag | Chronologically aligned lagged correlations | Historical correlations can change; lag selection creates multiple-testing bias |
+
+See [Market Mechanics](MARKET_MECHANICS.md) for the ten endpoint contracts, calculation conventions and editable API examples. The catalog is available at `GET /research/market-mechanics/catalog`; all new diagnostics remain research-only with execution disabled.

@@ -1,6 +1,6 @@
 """Ed25519 node identity and proof-of-possession enrollment primitives."""
 from __future__ import annotations
-import base64, hashlib, os, secrets, sqlite3, time
+import base64, binascii, hashlib, math, os, secrets, sqlite3, time
 from pathlib import Path
 from typing import Any
 from cryptography.exceptions import InvalidSignature
@@ -9,14 +9,19 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey,
 
 PROTOCOL_VERSION = "osiris-eye:p2p:enroll:v1"
 CHALLENGE_TTL_SECONDS = 300
+MAX_ACTIVE_CHALLENGES = 10_000
+MAX_ENROLLED_NODES = 100_000
 
 def _enc(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
 
 def _dec(value: str) -> bytes:
-    if not value or len(value) > 512:
+    if not isinstance(value, str) or not value or len(value) > 512:
         raise ValueError("invalid_base64_value")
-    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+    try:
+        return base64.b64decode(value + "=" * (-len(value) % 4), altchars=b"-_", validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise ValueError("invalid_base64_value") from exc
 
 def generate_node_identity() -> dict[str, str]:
     """Generate an Ed25519 identity locally; never upload the private key."""
@@ -36,18 +41,27 @@ def _verify(public_key_b64: str, signature_b64: str, challenge_id: str, nonce: s
     try:
         Ed25519PublicKey.from_public_bytes(_dec(public_key_b64)).verify(_dec(signature_b64), _message(challenge_id, nonce, node_id))
         return True
-    except InvalidSignature:
+    except (InvalidSignature, ValueError, TypeError):
         return False
 
 class P2PIdentityRegistry:
     """Local SQLite registry; shared multi-node storage is a later milestone."""
     def __init__(self, database_path: str | None = None, trusted_public_keys: set[str] | None = None):
         self.database_path = database_path or os.getenv("OSIRIS_P2P_DB_PATH", "./data/osiris-p2p.sqlite3")
+        if self.database_path == ":memory:":
+            raise ValueError("identity_registry_requires_persistent_database")
         if self.database_path != ":memory:":
             Path(self.database_path).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
-        self.trusted_public_keys = trusted_public_keys if trusted_public_keys is not None else {
+        configured_trusted_keys = trusted_public_keys if trusted_public_keys is not None else {
             x.strip() for x in os.getenv("OSIRIS_P2P_TRUSTED_PUBLIC_KEYS", "").split(",") if x.strip()
         }
+        # Trust applies to key bytes, not alternate padded base64 spellings.
+        self.trusted_public_keys = set()
+        for encoded_key in configured_trusted_keys:
+            key = _dec(encoded_key)
+            if len(key) != 32:
+                raise ValueError("invalid_trusted_ed25519_public_key")
+            self.trusted_public_keys.add(_enc(key))
         self._initialize()
 
     def _connect(self):
@@ -63,6 +77,11 @@ class P2PIdentityRegistry:
     def create_challenge(self) -> dict[str, Any]:
         cid, nonce, now = secrets.token_urlsafe(24), secrets.token_urlsafe(32), time.time()
         with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            db.execute("DELETE FROM p2p_challenges WHERE used=1 OR created_at < ?", (now - CHALLENGE_TTL_SECONDS,))
+            count = db.execute("SELECT COUNT(*) FROM p2p_challenges").fetchone()[0]
+            if count >= MAX_ACTIVE_CHALLENGES:
+                raise ValueError("challenge_capacity_exceeded")
             db.execute("INSERT INTO p2p_challenges(challenge_id,nonce,created_at) VALUES(?,?,?)", (cid, nonce, now))
         return {"challenge_id": cid, "nonce": nonce, "expires_in_seconds": CHALLENGE_TTL_SECONDS, "protocol": PROTOCOL_VERSION}
 
@@ -70,17 +89,27 @@ class P2PIdentityRegistry:
         public = _dec(public_key)
         if len(public) != 32:
             raise ValueError("invalid_ed25519_public_key")
+        public_key = _enc(public)
+        if not isinstance(challenge_id, str) or not challenge_id or len(challenge_id) > 128:
+            raise ValueError("invalid_challenge_id")
         node_id = hashlib.sha256(public).hexdigest()
         with self._connect() as db:
+            # Serialize the read, signature verification and consume/update across
+            # independent registry instances; a challenge can enroll only once.
+            db.execute("BEGIN IMMEDIATE")
             ch = db.execute("SELECT nonce,created_at,used FROM p2p_challenges WHERE challenge_id=?", (challenge_id,)).fetchone()
             if ch is None or ch["used"]:
                 raise ValueError("challenge_missing_or_already_used")
-            if time.time() - ch["created_at"] > CHALLENGE_TTL_SECONDS:
+            now = time.time()
+            age = now - ch["created_at"]
+            if not math.isfinite(age) or age < 0 or age > CHALLENGE_TTL_SECONDS:
                 raise ValueError("challenge_expired")
             if not _verify(public_key, signature, challenge_id, ch["nonce"], node_id):
                 raise ValueError("invalid_node_signature")
             trust = "trusted" if public_key in self.trusted_public_keys else "public_untrusted"
-            now = time.time()
+            exists = db.execute("SELECT 1 FROM p2p_nodes WHERE node_id=?", (node_id,)).fetchone()
+            if exists is None and db.execute("SELECT COUNT(*) FROM p2p_nodes").fetchone()[0] >= MAX_ENROLLED_NODES:
+                raise ValueError("node_registry_capacity_exceeded")
             db.execute("UPDATE p2p_challenges SET used=1 WHERE challenge_id=?", (challenge_id,))
             db.execute("""INSERT INTO p2p_nodes(node_id,public_key,trust_level,enrolled_at,last_seen_at)
                 VALUES(?,?,?,?,?) ON CONFLICT(node_id) DO UPDATE SET public_key=excluded.public_key,
