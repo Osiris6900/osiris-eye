@@ -126,6 +126,156 @@ def consensus_price(
     }
 
 
+MIN_SOURCE_WEIGHT = 0.5
+MAX_SOURCE_WEIGHT = 2.0
+
+
+def _weighted_median(pairs: list[tuple[float, float]]) -> float:
+    """Weighted median of (value, weight) pairs: the value where cumulative
+    weight first reaches half the total. Deterministic; weights must be
+    positive and finite."""
+    ordered = sorted(pairs, key=lambda item: item[0])
+    total = sum(weight for _, weight in ordered)
+    cumulative = 0.0
+    for value, weight in ordered:
+        cumulative += weight
+        if cumulative >= total / 2.0:
+            return value
+    return ordered[-1][0]
+
+
+def source_weights_from_reports(
+    reports: Iterable[dict[str, Any]],
+    *,
+    min_weight: float = MIN_SOURCE_WEIGHT,
+    max_weight: float = MAX_SOURCE_WEIGHT,
+    scale_pct: float = 0.5,
+    floor_pct: float = 0.05,
+) -> dict[str, float]:
+    """Health weight per source from its recent agreement with the mesh.
+
+    ``reports`` items: ``{"source": <provider>, "value": <float>}`` from a
+    recent window. Each source's weight is ``scale_pct`` divided by its mean
+    absolute deviation (%) from the overall median, clamped to
+    [``min_weight``, ``max_weight``]: sources that consistently land on the
+    mesh median rise toward 2.0, chronic outliers sink toward 0.5. This is
+    a bounded, transparent heuristic — never an authority grant: the quorum
+    and inlier gates below still apply unchanged.
+    """
+    if not 0 < min_weight <= 1 <= max_weight or scale_pct <= 0 or floor_pct <= 0:
+        raise ValueError("invalid_weight_bounds")
+    per_source: dict[str, list[float]] = {}
+    values: list[float] = []
+    for report in reports:
+        try:
+            value = float(report["value"])
+        except (KeyError, TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("invalid_consensus_report") from exc
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError("invalid_consensus_report")
+        source = str(report.get("source", "")).strip()
+        if not source:
+            raise ValueError("invalid_consensus_report")
+        per_source.setdefault(source, []).append(value)
+        values.append(value)
+    if not values:
+        raise ValueError("weights_require_reports")
+
+    med = _median(values)
+    weights: dict[str, float] = {}
+    for source in sorted(per_source):
+        deviations = [abs(v - med) / med * 100.0 for v in per_source[source]]
+        mean_dev = sum(deviations) / len(deviations)
+        weight = scale_pct / max(mean_dev, floor_pct)
+        weights[source] = round(min(max(weight, min_weight), max_weight), 4)
+    return weights
+
+
+def weighted_consensus_price(
+    reports: Iterable[dict[str, Any]],
+    *,
+    weights: dict[str, float] | None = None,
+    min_observers: int = MIN_QUORUM_OBSERVERS,
+    min_sources: int = MIN_QUORUM_SOURCES,
+    max_deviation_pct: float = DEFAULT_MAX_DEVIATION_PCT,
+) -> dict[str, Any]:
+    """Consensus price with per-source health weights.
+
+    Same quorum and inlier gates as :func:`consensus_price`; the accepted
+    price is the *weighted* median of the agreeing inliers, where each
+    report's weight comes from ``weights[source]`` clamped to
+    [MIN_SOURCE_WEIGHT, MAX_SOURCE_WEIGHT] (default 1.0). With
+    ``weights=None`` this defers to :func:`consensus_price` unchanged, so
+    behaviour only differs when real health weights are supplied. The
+    weights used are reported back verbatim for transparency.
+    """
+    if weights is None:
+        return consensus_price(
+            reports, min_observers=min_observers, min_sources=min_sources,
+            max_deviation_pct=max_deviation_pct,
+        )
+    if min_observers < 1 or min_sources < 1 or max_deviation_pct <= 0:
+        raise ValueError("invalid_consensus_bounds")
+    entries: list[tuple[float, float, str]] = []
+    sources: dict[str, int] = {}
+    for report in reports:
+        try:
+            value = float(report["value"])
+        except (KeyError, TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("invalid_consensus_report") from exc
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError("invalid_consensus_report")
+        source = str(report.get("source", "")).strip()
+        if not source:
+            raise ValueError("invalid_consensus_report")
+        try:
+            raw_weight = float(weights.get(source, 1.0))
+        except (TypeError, ValueError, OverflowError):
+            raw_weight = 1.0
+        if not math.isfinite(raw_weight):
+            raw_weight = 1.0
+        weight = min(max(raw_weight, MIN_SOURCE_WEIGHT), MAX_SOURCE_WEIGHT)
+        entries.append((value, weight, source))
+        sources[source] = sources.get(source, 0) + 1
+
+    if len(entries) < min_observers:
+        return {"accepted": False, "reason": "observer_quorum_not_met",
+                "observers": len(entries), "sources": len(sources)}
+    if len(sources) < min_sources:
+        return {"accepted": False, "reason": "source_quorum_not_met",
+                "observers": len(entries), "sources": len(sources)}
+
+    med = _median([value for value, _, _ in entries])
+    inliers = [(value, weight, source) for value, weight, source in entries
+               if abs(value - med) / med * 100.0 <= max_deviation_pct]
+    if len(inliers) < min_observers:
+        return {"accepted": False, "reason": "consensus_disagreement",
+                "observers": len(entries), "sources": len(sources),
+                "agreeing": len(inliers)}
+    weights_used: dict[str, float] = {}
+    for source in sorted(sources):
+        try:
+            raw = float(weights.get(source, 1.0))
+        except (TypeError, ValueError, OverflowError):
+            raw = 1.0
+        if not math.isfinite(raw):
+            raw = 1.0
+        weights_used[source] = round(min(max(raw, MIN_SOURCE_WEIGHT), MAX_SOURCE_WEIGHT), 4)
+    return {
+        "accepted": True,
+        "price": _weighted_median([(value, weight) for value, weight, _ in inliers]),
+        "method": "weighted_median_of_inliers",
+        "observers": len(entries),
+        "sources": len(sources),
+        "agreeing": len(inliers),
+        "agreement_ratio": round(len(inliers) / len(entries), 4),
+        "outliers_rejected": len(entries) - len(inliers),
+        "max_deviation_pct": max_deviation_pct,
+        "weights_used": weights_used,
+        "live_execution": False,
+    }
+
+
 # ---------------------------------------------------------------- research
 
 def returns_series(values: list[float]) -> list[float]:
