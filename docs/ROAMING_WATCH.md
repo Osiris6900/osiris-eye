@@ -33,17 +33,22 @@ add regional ones like Binance.US `api1/api2.binance.us`).
   door. A well-formed but unwanted response (`ValueError`, e.g. oversize)
   is surfaced, not retried — content problems don't fix themselves on
   another host.
-- A failed door **cools down** (default 30 s, max 300 s) and is then
-  re-probed: blocks lift, and the watcher comes back to check.
+- A failed door **cools down** (default 30 s, max 300 s). It receives no
+  requests during that time, even when every door is unavailable. If all
+  doors are cooling down, the source reports `watch_endpoints_cooling_down`.
+  After expiry the door becomes eligible again; it is tried if preferred
+  healthy doors fail. Successful recovery clears the cooldown.
 - At most `MAX_ENDPOINT_ATTEMPTS` (3) doors per request — failover never
   becomes a hammer.
 
 ## 2. Fastest-path ordering
 
 Every attempt is timed; healthy doors are ranked by smoothed round-trip
-(EWMA, α=0.3). Known-good doors first (fastest first), never-tried doors
-next, cooled-down doors last. Each node continuously re-selects its own
-fastest public path — combined with the per-quote `fetch_roundtrip_ms`
+(EWMA, α=0.3). Eligible known-good doors first (fastest first), never-tried
+doors next; active cooldowns are excluded. This ranks paths already
+measured by the node, rather than claiming to discover the globally fastest
+path. Untried or recovered doors are not proactively probed while a
+preferred healthy door works. Combined with per-quote `fetch_roundtrip_ms`
 telemetry (#136) and `source_latency_report`, the mesh always knows which
 door and which node is nearest to which exchange.
 
@@ -59,6 +64,15 @@ Per cycle, from what actually arrived (never assumed):
   suspicious)
 - `instrument_sources`: which providers delivered each instrument
 - `single_source_instruments`: instruments down to one lifeline
+- `missing_instruments`: expected instruments with no watched source
+  returning a quote, including total blind spots; FX and index symbols
+  use the collector's canonical instrument names
+
+The shared helper lives in `osiris_api.watch_coverage` and is re-exported
+from `roaming_watch` for existing callers. Collection, ingestion and P2P
+bridge cycle summaries expose it as `coverage`. Only watched provider and
+instrument combinations count. An explicit empty watchlist stays empty.
+Coverage describes fetched quotes; it does not certify ingestion or delivery.
 
 ## 4. The 24x7 loop (`run_roaming_watch`)
 
@@ -71,14 +85,33 @@ summary = run_roaming_watch(ResearchStore(), cycles=1440, interval_seconds=60.0)
 
 - Every cycle runs the full fail-closed watch+ingest pipeline through a
   `RoamingTransport`.
-- A cycle that explodes is recorded and the loop walks on — one bad minute
-  never kills the watcher. `max_consecutive_errors` (default 12) total
-  blow-ups in a row stop it honestly (`stop_reason: consecutive_errors`):
-  a node with no working path surfaces that instead of spinning silently.
+- Exceptions and cycles returning **zero watched observations** from a nonempty
+  watchlist both increment the failure streak. The latter records
+  `watch_no_observations`, whether all sources failed or silently returned
+  nothing. `max_consecutive_errors` (default 12) stops the loop with
+  `stop_reason: consecutive_errors`; it does not sleep after stopping.
+- Any watched observations reset the failure streak, including duplicates or
+  ingestion-rejected quotes: source health is distinct from permission to
+  store a quote. Useful partial coverage continues as `degraded`; an
+  explicit empty watchlist is `idle` and performs no requests.
+- `latest_coverage` and `cycle_reports` retain source errors, ingestion
+  rejections and blind spots. Reports use zero-based cycle numbers and
+  statuses `ok`, `degraded`, `no_observations`, `idle` or `error`. An
+  exception has no coverage (`null`). Only the latest 50 reports and errors
+  are kept, in memory as well as in the returned summary.
 - Bounds: interval 15–3600 s (consistent with the Rust bridge), cycles
   1–100,000. For truly continuous duty run under a supervisor or the Rust
   market-watch bridge; the ingestion kill switch gates every quote in
   every cycle.
+
+## Autonomous P2P bridge
+
+`market_watch_bridge.broadcast_cycle` now uses a `RoamingTransport`, and
+`run_bridge` retains one instance across its cycles so endpoint measurements
+and cooldowns survive. An explicitly supplied roaming transport is reused.
+Each bridge cycle reports `coverage` and `endpoint_stats`. Broadcasting still
+requires the bridge switch and successful gated local ingestion; writer
+errors propagate. See [P2P bridge](P2P_MARKET_WATCH_BRIDGE.md).
 
 ## What "unstoppable" actually is here
 
@@ -100,6 +133,7 @@ summary = run_roaming_watch(ResearchStore(), cycles=1440, interval_seconds=60.0)
 
 ## Tests
 
-`services/quant-api/tests/test_roaming_watch.py` — 18 cases, scripted
-clock and recording transports, no network access; runs in the standard CI
-Python job.
+Roaming watch, transport cooldown, coverage and market-watch bridge tests
+use scripted clocks and transports without network access. They cover total
+outages, silence, partial recovery, retained evidence, failover, endpoint state
+reuse and ingestion/broadcast gates in the standard CI Python job.

@@ -5,8 +5,8 @@ A "hidden spirit" layer over the global market watch — with honest edges:
 1. **Endpoint failover** — :class:`RoamingTransport` maps each request host
    to its *officially documented* alternate domains (``EQUIVALENT_HOSTS``)
    and walks them when one is unreachable. Only alternates published by the
-   exchange itself are shipped; operators can add regional ones. A blocked
-   or dead host cools down honestly and is retried later — the watcher
+   exchange itself are shipped; operators can add regional ones. An unavailable
+   host cools down and becomes eligible for later requests — the watcher
    never disguises itself, rotates identities, or bypasses a deliberate
    block: it simply uses the other public doors the venue itself opened.
 2. **Fastest-path ordering** — every attempt is timed; healthy endpoints
@@ -29,7 +29,9 @@ systems — the spirit roams public roads only.
 from __future__ import annotations
 
 import time
-from typing import Any, Callable
+from collections import deque
+from collections.abc import Callable
+from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from .data_store import ResearchStore
@@ -37,6 +39,7 @@ from .data_store import ResearchStore
 # Single source of truth for plain HTTP: the watch layer's own getter.
 from .global_market_watch import Transport, watch_and_ingest
 from .global_market_watch import _http_get as _default_http_get
+from .watch_coverage import coverage_report  # noqa: F401 - compatibility re-export
 
 MIN_INTERVAL_SECONDS = 15.0     # consistent with the Rust bridge bounds
 MAX_INTERVAL_SECONDS = 3600.0
@@ -85,13 +88,13 @@ class RoamingTransport:
     Wraps any base ``Transport``. Every request is offered to the primary
     host plus its documented alternates, ordered by smoothed round-trip:
     healthy endpoints first (fastest measured first), never-tried endpoints
-    next, cooled-down failures last. Only transport-level unavailability
-    (``RuntimeError``) triggers the next door — a well-formed but unwanted
-    response (``ValueError``) is surfaced, not retried, because retrying a
+    next. Endpoints with an active cooldown are skipped. Only transport-level
+    unavailability (``RuntimeError``) triggers the next door. A well-formed but
+    unwanted response (``ValueError``) is surfaced, not retried, because retrying a
     content problem on another host just multiplies load.
 
     A failing endpoint cools down for ``cooldown_seconds`` and is then
-    re-probed: blocks lift, and the spirit comes back to check. At most
+    eligible again; successful known endpoints remain preferred. At most
     ``MAX_ENDPOINT_ATTEMPTS`` doors are tried per request, so failover
     never becomes a hammer.
     """
@@ -133,19 +136,20 @@ class RoamingTransport:
 
     def _ordered_candidates(self, url: str) -> list[str]:
         host = _host_of(url)
-        if not host:
-            return [url]
-        group = (host,) + self._hosts.get(host, ())
         now = self._clock()
+        if not host:
+            return [url] if self._entry(url)["cooldown_until"] <= now else []
+        group = tuple(dict.fromkeys((host,) + self._hosts.get(host, ())))
 
-        def rank(candidate: str) -> tuple[float, float, float]:
+        def rank(candidate: str) -> tuple[float, float]:
             entry = self._entry(candidate)
-            cooled = 1.0 if entry["cooldown_until"] > now else 0.0
             unknown = 1.0 if entry["ewma_rtt_ms"] is None else 0.0
             ewma = entry["ewma_rtt_ms"] if entry["ewma_rtt_ms"] is not None else 0.0
-            return (cooled, unknown, ewma)
+            return (unknown, ewma)
 
-        ordered = sorted(group, key=rank)  # stable: unknowns keep declared order
+        eligible = [candidate for candidate in group
+                    if self._entry(candidate)["cooldown_until"] <= now]
+        ordered = sorted(eligible, key=rank)  # stable: unknowns keep declared order
         return [self._swap_host(url, candidate) for candidate in ordered]
 
     @staticmethod
@@ -161,7 +165,7 @@ class RoamingTransport:
     def __call__(self, url: str, timeout: float) -> bytes:
         candidates = self._ordered_candidates(url)[:MAX_ENDPOINT_ATTEMPTS]
         if not candidates:
-            candidates = [url]
+            raise RuntimeError("watch_endpoints_cooling_down")
         last_error: RuntimeError | None = None
         for candidate in candidates:
             host = _host_of(candidate)
@@ -185,10 +189,11 @@ class RoamingTransport:
                 else round(previous * (1.0 - _EWMA_ALPHA) + elapsed_ms * _EWMA_ALPHA, 3)
             )
             entry["last_error"] = None
+            entry["cooldown_until"] = 0.0
             return body
         if last_error is not None:
             raise last_error
-        return self._base(url, timeout)  # defensive: candidates was empty
+        raise RuntimeError("watch_endpoints_cooling_down")  # defensive: no eligible attempt
 
     def stats(self) -> dict[str, dict[str, Any]]:
         """Per-host transparency: attempts, successes, failures, smoothed
@@ -197,70 +202,6 @@ class RoamingTransport:
         return {
             host: dict(entry) for host, entry in sorted(self._stats.items())
         }
-
-
-# ------------------------------------------------------------------ coverage
-
-def coverage_report(
-    watchlist: dict[str, tuple[str, ...]],
-    collected: dict[str, Any],
-) -> dict[str, Any]:
-    """Per-cycle truth about who is still watching what.
-
-    ``collected`` is a :func:`collect_market_observations` result. Reports,
-    per watched source, how many quotes it delivered and its error if any;
-    per instrument, which providers delivered; plus the blind spots:
-    ``failed_sources`` (errored), ``silent_sources`` (no quotes and no
-    error — suspicious), and ``single_source_instruments`` (one lifeline
-    left). Derived only from what actually arrived — never assumed.
-    """
-    observations = collected.get("observations", [])
-    errors = collected.get("errors", [])
-    error_by_source = {str(item.get("source", "")): str(item.get("error", ""))
-                       for item in errors if isinstance(item, dict)}
-
-    per_source: dict[str, dict[str, Any]] = {}
-    instruments: dict[str, list[str]] = {}
-    for provider in sorted(watchlist):
-        per_source[provider] = {"quotes": 0, "status": "ok",
-                                "error": error_by_source.get(provider)}
-    for observation in observations:
-        if not isinstance(observation, dict):
-            continue
-        provider = str(observation.get("provider", ""))
-        instrument = str(observation.get("instrument", ""))
-        if provider in per_source:
-            per_source[provider]["quotes"] += 1
-        if instrument:
-            instruments.setdefault(instrument, [])
-            if provider and provider not in instruments[instrument]:
-                instruments[instrument].append(provider)
-
-    failed, silent = [], []
-    for provider, info in per_source.items():
-        if info["error"] is not None:
-            info["status"] = "error"
-            failed.append(provider)
-        elif info["quotes"] == 0:
-            info["status"] = "silent"
-            silent.append(provider)
-
-    single_source = sorted(name for name, providers in instruments.items()
-                           if len(providers) == 1)
-    for providers in instruments.values():
-        providers.sort()
-
-    return {
-        "sources_watched": len(per_source),
-        "sources_ok": sum(1 for info in per_source.values() if info["status"] == "ok"),
-        "failed_sources": sorted(failed),
-        "silent_sources": sorted(silent),
-        "per_source": per_source,
-        "instruments_covered": len(instruments),
-        "instrument_sources": {name: instruments[name] for name in sorted(instruments)},
-        "single_source_instruments": single_source,
-        "live_execution": False,
-    }
 
 
 # -------------------------------------------------------------------- daemon
@@ -285,8 +226,11 @@ def run_roaming_watch(
     Every cycle runs the full fail-closed watch+ingest pipeline through a
     :class:`RoamingTransport`. A cycle that explodes is recorded and the
     loop walks on — one bad minute never kills the watcher — but
-    ``max_consecutive_errors`` total blow-ups in a row stop it honestly
-    (a node with no working path should surface that, not spin silently).
+    ``max_consecutive_errors`` exceptions or cycles with no watched observations
+    in a row stop it honestly (a node with no working path should surface
+    that, not spin silently). Partial coverage can continue; duplicates and
+    ingestion-rejected quotes still demonstrate source health. Only the
+    latest 50 cycle reports and errors are retained in memory and returned.
     The ingestion kill switch still gates every quote; with it off, cycles
     run and store nothing. ``cycles`` is required and bounded: for truly
     continuous duty run this under a supervisor or the Rust bridge.
@@ -303,7 +247,10 @@ def run_roaming_watch(
     )
 
     totals = {"fetched": 0, "ingested": 0, "duplicates_skipped": 0}
-    cycle_errors: list[dict[str, str]] = []
+    # Keep memory bounded for supervised runs, not just the returned JSON.
+    cycle_errors: deque[dict[str, str]] = deque(maxlen=50)
+    cycle_reports: deque[dict[str, Any]] = deque(maxlen=50)
+    latest_coverage: dict[str, Any] | None = None
     consecutive_errors = 0
     cycles_run = 0
     stop_reason = "cycles_completed"
@@ -322,15 +269,48 @@ def run_roaming_watch(
             totals["fetched"] += summary["fetched"]
             totals["ingested"] += summary["ingested"]
             totals["duplicates_skipped"] += summary["duplicates_skipped"]
-            consecutive_errors = 0
+            latest_coverage = summary["coverage"]
+            no_observations = (
+                latest_coverage["sources_watched"] > 0
+                and latest_coverage["instruments_covered"] == 0
+            )
+            degraded = bool(
+                latest_coverage["failed_sources"] or latest_coverage["silent_sources"]
+                or latest_coverage["missing_instruments"]
+            )
+            status = (
+                "no_observations" if no_observations
+                else "idle" if latest_coverage["sources_watched"] == 0
+                else "degraded" if degraded else "ok"
+            )
+            cycle_reports.append({
+                "cycle": cycle,
+                "status": status,
+                "fetched": summary["fetched"],
+                "ingested": summary["ingested"],
+                "duplicates_skipped": summary["duplicates_skipped"],
+                "source_errors": summary["source_errors"],
+                "rejected": summary["rejected"],
+                "coverage": latest_coverage,
+            })
+            if no_observations:
+                consecutive_errors += 1
+                cycle_errors.append({"cycle": str(cycle), "error": "watch_no_observations"})
+            else:
+                # Duplicates and ingestion-gated quotes still prove source health.
+                consecutive_errors = 0
         except Exception as exc:  # noqa: BLE001 — the spirit survives its own cycle
             consecutive_errors += 1
             cycle_errors.append({"cycle": str(cycle), "error": f"{type(exc).__name__}:{exc}"})
-            if consecutive_errors >= max_consecutive_errors:
-                stop_reason = "consecutive_errors"
-                cycles_run += 1
-                break
+            latest_coverage = None
+            cycle_reports.append({
+                "cycle": cycle, "status": "error",
+                "error": f"{type(exc).__name__}:{exc}", "coverage": None,
+            })
         cycles_run += 1
+        if consecutive_errors >= max_consecutive_errors:
+            stop_reason = "consecutive_errors"
+            break
         if cycle < cycles - 1:
             sleep(interval_seconds)
 
@@ -341,7 +321,9 @@ def run_roaming_watch(
         "interval_seconds": interval_seconds,
         "stop_reason": stop_reason,
         "consecutive_errors_at_stop": consecutive_errors,
-        "cycle_errors": cycle_errors[-50:],
+        "cycle_errors": list(cycle_errors),
+        "cycle_reports": list(cycle_reports),
+        "latest_coverage": latest_coverage,
         "total_fetched": totals["fetched"],
         "total_ingested": totals["ingested"],
         "total_duplicates_skipped": totals["duplicates_skipped"],

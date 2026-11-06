@@ -33,6 +33,7 @@ from urllib.request import Request, urlopen
 
 from .data_store import ResearchStore
 from .p2p_ingestion import IngestionRejection, ingest_p2p_observation
+from .watch_coverage import coverage_report
 
 PROVIDER_BINANCE = "binance-public"
 PROVIDER_FRANKFURTER = "frankfurter-ecb"
@@ -492,7 +493,7 @@ def collect_market_observations(
     """
     if not 1 <= timeout_seconds <= 30:
         raise ValueError("invalid_http_timeout")
-    watchlist = watchlist or DEFAULT_WATCHLIST
+    watchlist = DEFAULT_WATCHLIST if watchlist is None else watchlist
     unknown = set(watchlist) - set(_SOURCE_FETCHERS)
     if unknown:
         raise ValueError("unknown_watch_source:" + ",".join(sorted(unknown)))
@@ -523,13 +524,15 @@ def collect_market_observations(
             "ok": True,
         })
         observations.extend(_with_fetch_latency(obs, elapsed_ms) for obs in fetched)
-    return {
+    result = {
         "observations": observations,
         "errors": errors,
         "latencies": latencies,
         "collected_at": current.isoformat(),
         "live_execution": False,
     }
+    result["coverage"] = coverage_report(watchlist, result)
+    return result
 
 
 def watch_and_ingest(
@@ -585,6 +588,7 @@ def watch_and_ingest(
         "rejected": rejected,
         "source_errors": collected["errors"],
         "latencies": collected["latencies"],
+        "coverage": collected["coverage"],
         "collected_at": collected["collected_at"],
         "live_execution": False,
         "broker_order_submitted": False,
