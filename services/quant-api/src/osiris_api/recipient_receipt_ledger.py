@@ -85,3 +85,30 @@ class RecipientReceiptLedger:
             ).fetchall()
         return {state: dict(rows).get(state, 0)
                 for state in ("pending", "acknowledged", "unconfirmed")}
+
+    def outstanding(self, *, limit: int = 100) -> list[dict[str, str | int]]:
+        """Inspect unresolved receipts after restart; never authorize retransmission.
+
+        The returned digest is a correlation identifier, not a payload or a
+        verification decision. Consumers must recheck current admission policy
+        and obtain verified Rust events before acknowledging delivery.
+        """
+        if type(limit) is not int or not 1 <= limit <= 1000:
+            raise ValueError("invalid_receipt_limit")
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT message_id,recipient_peer_id,envelope_sha256,state,created_at "
+                "FROM recipient_receipts WHERE state IN ('pending','unconfirmed') "
+                "ORDER BY created_at ASC,message_id ASC,recipient_peer_id ASC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [
+            {
+                "message_id": message_id,
+                "recipient_peer_id": recipient,
+                "envelope_sha256": digest,
+                "state": state,
+                "created_at": created_at,
+            }
+            for message_id, recipient, digest, state, created_at in rows
+        ]
