@@ -1,11 +1,18 @@
 """Global live-market watch layer: the network observes markets itself.
 
-Polls keyless public endpoints (no API key, no signup, no payment) — Binance
-Spot 24h tickers for crypto, Frankfurter/ECB reference rates for FX, and
-Stooq quotes for global indices — normalizes each quote into the signed
+Polls keyless public endpoints (no API key, no signup, no payment) — Binance,
+OKX and Bybit spot tickers, Coinbase/Kraken/Bitstamp USD pairs,
+Frankfurter/ECB and open-er-api reference rates for FX, and Stooq quotes for
+global indices — normalizes each quote into the signed
 ``osiris.observation.v1`` contract and feeds the authorized ingestion
 pipeline (issue #87), so any node can watch world markets and share
 observations over the mesh without anyone operating a vendor terminal.
+
+Every fetch is timed: the node-to-source HTTP round-trip (milliseconds) is
+attached to each quote payload and reported per source, so the mesh knows
+which exchanges are *network-near* to which node. This is honest latency
+telemetry from wherever the node runs — not physical exchange co-location,
+which requires rented rack space no software can substitute.
 
 Fail-closed: unreachable or malformed sources are recorded as errors; no
 value is ever fabricated. Live trading remains disabled.
@@ -18,6 +25,7 @@ import io
 import json
 import math
 import re
+import time
 from datetime import datetime, timezone
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
@@ -33,10 +41,13 @@ PROVIDER_COINBASE = "coinbase-public"
 PROVIDER_KRAKEN = "kraken-public"
 PROVIDER_BITSTAMP = "bitstamp-public"
 PROVIDER_ERAPI = "erapi-public"
+PROVIDER_OKX = "okx-public"
+PROVIDER_BYBIT = "bybit-public"
 
 DEFAULT_PROVIDERS = frozenset({
     PROVIDER_BINANCE, PROVIDER_FRANKFURTER, PROVIDER_STOOQ,
     PROVIDER_COINBASE, PROVIDER_KRAKEN, PROVIDER_BITSTAMP, PROVIDER_ERAPI,
+    PROVIDER_OKX, PROVIDER_BYBIT,
 })
 
 #: Keyless default watchlist. Operators can extend it; every source here
@@ -45,8 +56,11 @@ DEFAULT_PROVIDERS = frozenset({
 #: Crypto instruments are canonical USD-quoted symbols ("BTC", "ETH",
 #: "SOL", "XRP") shared across Coinbase, Kraken and Bitstamp — so the
 #: mesh consensus (#115) gets genuinely independent sources per
-#: instrument. Binance reports its own USDT pairs (BTCUSDT …) which stay
-#: separate instruments; every payload records the actual pair honestly.
+#: instrument. USDT-quoted pairs (BTCUSDT …) are likewise shared across
+#: Binance, OKX and Bybit — the same pair on three exchanges is one
+#: instrument with three independent observers — while USDT pairs stay
+#: separate from USD instruments honestly; every payload records the
+#: actual pair and venue.
 DEFAULT_WATCHLIST: dict[str, tuple[str, ...]] = {
     PROVIDER_BINANCE: ("BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"),
     PROVIDER_FRANKFURTER: ("EUR", "GBP", "JPY", "INR", "CNY", "AUD", "CAD", "CHF"),
@@ -55,6 +69,8 @@ DEFAULT_WATCHLIST: dict[str, tuple[str, ...]] = {
     PROVIDER_KRAKEN: ("BTC", "ETH", "SOL", "XRP"),
     PROVIDER_BITSTAMP: ("BTC", "ETH", "SOL", "XRP"),
     PROVIDER_ERAPI: ("EUR", "GBP", "JPY", "INR", "CNY", "AUD", "CAD", "CHF"),
+    PROVIDER_OKX: ("BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT"),
+    PROVIDER_BYBIT: ("BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT"),
 }
 
 #: Canonical crypto symbols supported by the USD-quoted exchanges.
@@ -76,9 +92,16 @@ MAX_SYMBOL_LENGTH = 32
 MAX_RESPONSE_BYTES = 1_048_576
 MAX_QUOTES_PER_SOURCE = 500
 
+#: Payload-stamped latency is quantized to 5 ms buckets: the "which source
+#: is network-near" signal lives at tens-to-hundreds of ms, and bucketing
+#: keeps an unchanged market yielding the identical payload hash so the
+#: ingestion dedupe (duplicates_skipped) still holds across cycles.
+LATENCY_BUCKET_MS = 5.0
+
 _BINANCE_SYMBOL = re.compile(r"[A-Z0-9]{5,20}")
 _FX_SYMBOL = re.compile(r"[A-Z]{3}")
 _STOOQ_SYMBOL = re.compile(r"[a-z0-9.^_-]{1,24}")
+_USDT_PAIR_SYMBOL = re.compile(r"[A-Z0-9]{2,10}USDT")
 
 Transport = Callable[[str, float], bytes]
 
@@ -119,6 +142,27 @@ def _observation(instrument: str, provider: str, quote: dict[str, Any], now: dat
         "instrument": instrument,
         "observed_at": now.isoformat(),
         "provider": provider,
+        "payload": payload,
+        "payload_sha256": hashlib.sha256(payload.encode("utf-8")).hexdigest(),
+    }
+
+
+def _with_fetch_latency(observation: dict[str, Any], elapsed_ms: float) -> dict[str, Any]:
+    """Stamp the node-to-source HTTP round-trip onto a finished observation.
+
+    The latency becomes part of the signed payload (hash recomputed), so a
+    gossiped observation carries the *fetching* node's distance to that
+    source with it. The value is quantized to ``LATENCY_BUCKET_MS`` buckets:
+    sub-bucket timing noise must not defeat payload-hash dedupe when the
+    market itself has not moved, and the network-nearness signal lives far
+    above that resolution.
+    """
+    quote = json.loads(observation["payload"])
+    bucketed = round(elapsed_ms / LATENCY_BUCKET_MS) * LATENCY_BUCKET_MS
+    quote["fetch_roundtrip_ms"] = round(bucketed, 3)
+    payload = json.dumps(quote, allow_nan=False, separators=(",", ":"), sort_keys=True)
+    return {
+        **observation,
         "payload": payload,
         "payload_sha256": hashlib.sha256(payload.encode("utf-8")).hexdigest(),
     }
@@ -342,6 +386,81 @@ def _fetch_erapi(symbols: tuple[str, ...], transport: Transport, timeout: float,
     return observations
 
 
+def _usdt_pair(symbol: str, error: str) -> str:
+    product = symbol.strip().upper()
+    if _USDT_PAIR_SYMBOL.fullmatch(product) is None:
+        raise ValueError(error)
+    return product
+
+
+def _fetch_okx(symbols: tuple[str, ...], transport: Transport, timeout: float,
+               now: datetime) -> list[dict[str, Any]]:
+    # OKX v5 public market data: one batch request covers every spot pair,
+    # keeping request count (and measured round-trips) per source at one.
+    products = [_usdt_pair(symbol, "invalid_okx_symbol") for symbol in symbols]
+    wanted = {f"{product[:-4]}-USDT": product for product in products}
+    body = transport("https://www.okx.com/api/v5/market/tickers?instType=SPOT", timeout)
+    try:
+        data = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("invalid_okx_ticker_response") from exc
+    tickers = data.get("data") if isinstance(data, dict) else None
+    if not isinstance(data, dict) or data.get("code") != "0" or not isinstance(tickers, list):
+        raise ValueError("invalid_okx_ticker_response")
+    observations = []
+    for entry in tickers:
+        if not isinstance(entry, dict):
+            continue
+        product = wanted.get(str(entry.get("instId", "")))
+        if product is None:
+            continue  # not on the watchlist; ignore
+        quote = {
+            "last": _finite(entry.get("last")),
+            "pair": str(entry["instId"]),
+            "volume_24h": _finite(entry.get("volCcy24h"))
+            if entry.get("volCcy24h") not in (None, "", "0", "0.0") else 0.0,
+            "source": "okx_v5_spot_tickers",
+        }
+        observations.append(_observation(product, PROVIDER_OKX, quote, now))
+        if len(observations) > MAX_QUOTES_PER_SOURCE:
+            raise ValueError("too_many_quotes")
+    return observations
+
+
+def _fetch_bybit(symbols: tuple[str, ...], transport: Transport, timeout: float,
+                 now: datetime) -> list[dict[str, Any]]:
+    # Bybit v5 public market data: one batch request per category.
+    products = [_usdt_pair(symbol, "invalid_bybit_symbol") for symbol in symbols]
+    wanted = set(products)
+    body = transport("https://api.bybit.com/v5/market/tickers?category=spot", timeout)
+    try:
+        data = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("invalid_bybit_ticker_response") from exc
+    result = data.get("result") if isinstance(data, dict) else None
+    tickers = result.get("list") if isinstance(result, dict) else None
+    if not isinstance(data, dict) or data.get("retCode") != 0 or not isinstance(tickers, list):
+        raise ValueError("invalid_bybit_ticker_response")
+    observations = []
+    for entry in tickers:
+        if not isinstance(entry, dict):
+            continue
+        product = str(entry.get("symbol", ""))
+        if product not in wanted:
+            continue  # not on the watchlist; ignore
+        quote = {
+            "last": _finite(entry.get("lastPrice")),
+            "pair": product,
+            "volume_24h": _finite(entry.get("volume24h"))
+            if entry.get("volume24h") not in (None, "", "0", "0.0") else 0.0,
+            "source": "bybit_v5_spot_tickers",
+        }
+        observations.append(_observation(product, PROVIDER_BYBIT, quote, now))
+        if len(observations) > MAX_QUOTES_PER_SOURCE:
+            raise ValueError("too_many_quotes")
+    return observations
+
+
 _SOURCE_FETCHERS = {
     PROVIDER_BINANCE: _fetch_binance,
     PROVIDER_FRANKFURTER: _fetch_frankfurter,
@@ -350,6 +469,8 @@ _SOURCE_FETCHERS = {
     PROVIDER_KRAKEN: _fetch_kraken,
     PROVIDER_BITSTAMP: _fetch_bitstamp,
     PROVIDER_ERAPI: _fetch_erapi,
+    PROVIDER_OKX: _fetch_okx,
+    PROVIDER_BYBIT: _fetch_bybit,
 }
 
 
@@ -361,7 +482,14 @@ def collect_market_observations(
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """Fetch live quotes from every keyless source; errors are collected,
-    never fatal, and no value is ever fabricated."""
+    never fatal, and no value is ever fabricated.
+
+    Each source fetch is timed with a monotonic clock; the round-trip in
+    milliseconds is stamped into every quote payload (``fetch_roundtrip_ms``)
+    and summarized in the ``latencies`` list — one entry per attempted
+    source, successful or not. These are network measurements from this
+    node's vantage point, not exchange co-location.
+    """
     if not 1 <= timeout_seconds <= 30:
         raise ValueError("invalid_http_timeout")
     watchlist = watchlist or DEFAULT_WATCHLIST
@@ -372,16 +500,33 @@ def collect_market_observations(
     current = now or _now_utc()
     observations: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
+    latencies: list[dict[str, Any]] = []
     for provider, symbols in sorted(watchlist.items()):
+        started = time.monotonic()
         try:
-            observations.extend(
-                _SOURCE_FETCHERS[provider](tuple(symbols), transport, timeout_seconds, current)
+            fetched = _SOURCE_FETCHERS[provider](
+                tuple(symbols), transport, timeout_seconds, current
             )
         except (RuntimeError, ValueError) as exc:
+            latencies.append({
+                "source": provider,
+                "fetch_roundtrip_ms": round((time.monotonic() - started) * 1000.0, 3),
+                "ok": False,
+            })
             errors.append({"source": provider, "error": str(exc)})
+            continue
+        elapsed_ms = (time.monotonic() - started) * 1000.0
+        latencies.append({
+            "source": provider,
+            "fetch_roundtrip_ms": round(elapsed_ms, 3),
+            "quotes": len(fetched),
+            "ok": True,
+        })
+        observations.extend(_with_fetch_latency(obs, elapsed_ms) for obs in fetched)
     return {
         "observations": observations,
         "errors": errors,
+        "latencies": latencies,
         "collected_at": current.isoformat(),
         "live_execution": False,
     }
@@ -439,6 +584,7 @@ def watch_and_ingest(
         "duplicates_skipped": duplicates,
         "rejected": rejected,
         "source_errors": collected["errors"],
+        "latencies": collected["latencies"],
         "collected_at": collected["collected_at"],
         "live_execution": False,
         "broker_order_submitted": False,

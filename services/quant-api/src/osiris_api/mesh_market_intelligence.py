@@ -23,6 +23,9 @@ import json
 import math
 from typing import Any, Iterable
 
+from .data_store import ResearchStore
+from .p2p_ingestion import DATASET
+
 MIN_QUORUM_OBSERVERS = 3
 MIN_QUORUM_SOURCES = 2
 DEFAULT_MAX_DEVIATION_PCT = 1.0
@@ -435,5 +438,95 @@ def explain_move(
         "breadth_ratio": round(same_direction / compared, 4) if compared else None,
         "leading_instruments": leaders[:3],
         "regime": regime_label(target_returns, window=window),
+        "live_execution": False,
+    }
+
+
+# ---------------------------------------------------------- source latency
+
+LATENCY_MAX_ROWS = 1000
+
+
+def source_latency_report(
+    store: ResearchStore,
+    *,
+    dataset: str = DATASET,
+    max_rows: int = LATENCY_MAX_ROWS,
+) -> dict[str, Any]:
+    """Rank watched sources by how network-near they are to the mesh.
+
+    Reads stored observation payloads and collects the ``fetch_roundtrip_ms``
+    stamps the global market watch writes into every quote. Per provider it
+    reports sample count, min/median/last round-trip and the newest sample
+    time, sorted nearest-first — so the network can see, for each exchange,
+    which sources are closest *to the nodes that fetched them*.
+
+    Honesty boundary: these are HTTP round-trips measured by whichever node
+    fetched each quote (gossiped observations carry their fetching node's
+    measurement). They reflect network distance plus exchange response time
+    from real node locations — never physical exchange co-location, which
+    no software can provide.
+    """
+    if not 1 <= max_rows <= LATENCY_MAX_ROWS:
+        raise ValueError("invalid_latency_max_rows")
+    rows = store.list(dataset, limit=max_rows)
+
+    samples: dict[str, list[tuple[str, float]]] = {}
+    skipped = 0
+    for row in rows:
+        payload = row.get("payload")
+        if not isinstance(payload, dict):
+            skipped += 1
+            continue
+        provider = str(payload.get("provider", "")).strip()
+        inner_raw = payload.get("payload")
+        if not provider or not isinstance(inner_raw, str):
+            skipped += 1
+            continue
+        try:
+            inner = json.loads(inner_raw)
+        except json.JSONDecodeError:
+            skipped += 1
+            continue
+        raw_ms = inner.get("fetch_roundtrip_ms") if isinstance(inner, dict) else None
+        try:
+            value = float(raw_ms)
+        except (TypeError, ValueError, OverflowError):
+            skipped += 1
+            continue
+        if not math.isfinite(value) or value < 0:
+            skipped += 1
+            continue
+        samples.setdefault(provider, []).append((str(row.get("available_at", "")), value))
+
+    sources: list[dict[str, Any]] = []
+    for provider in sorted(samples):
+        entries = samples[provider]
+        values = [value for _, value in entries]
+        last_seen, last_ms = max(entries, key=lambda item: item[0])
+        sources.append({
+            "provider": provider,
+            "samples": len(values),
+            "min_ms": round(min(values), 3),
+            "median_ms": round(_median(values), 3),
+            "last_ms": round(last_ms, 3),
+            "last_seen": last_seen,
+        })
+    sources.sort(key=lambda item: (item["median_ms"], item["provider"]))
+
+    return {
+        "dataset": dataset,
+        "rows_scanned": len(rows),
+        "rows_without_latency": skipped,
+        "sources": sources,
+        "nearest_sources": [item["provider"] for item in sources[:3]],
+        "basis": "http_round_trip_fetching_node_to_source",
+        "co_location": False,
+        "note": (
+            "Round-trips are measured by whichever mesh node fetched each "
+            "quote; gossiped observations carry their fetching node's "
+            "measurement. Low values mark sources network-near to some "
+            "node — this is not physical exchange co-location."
+        ),
         "live_execution": False,
     }
