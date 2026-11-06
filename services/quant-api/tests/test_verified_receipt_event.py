@@ -73,7 +73,7 @@ def test_accepts_window_boundaries():
         assert validate(payload)[0] == "event-1"
 
 
-@pytest.mark.parametrize("bad_sender", ["", "bad sender", "x" * 257, "bad\\npeer"])
+@pytest.mark.parametrize("bad_sender", ["", "bad sender", "x" * 257, "bad\npeer"])
 def test_rejects_invalid_expected_sender(bad_sender):
     with pytest.raises(ValueError, match="invalid_expected_sender"):
         validate(event(), expected_sender_peer_id=bad_sender)
