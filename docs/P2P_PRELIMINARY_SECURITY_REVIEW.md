@@ -59,7 +59,9 @@ them, and the [hardened deployment guide](P2P_HARDENED_DEPLOYMENT.md) documents
 loopback binding. Processes launched outside that profile do not inherit its
 guard.
 
-Required remediation: warn on non-loopback binds, document loopback-only default, and require an authenticated network boundary for remote health access.
+Remaining remediation: warn about or reject non-loopback binds in direct node
+launches, retain the documented loopback-only deployment profile, and require an
+authenticated network boundary for intentional remote health access.
 
 ## Controls observed
 
