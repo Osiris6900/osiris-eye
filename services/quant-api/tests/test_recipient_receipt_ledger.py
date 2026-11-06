@@ -124,3 +124,12 @@ def test_concurrent_conflicting_digest_never_overwrites(tmp_path):
     assert results.count(True) == 1
     assert results.count("receipt_reference_conflict") == 1
     assert sum(RecipientReceiptLedger(path).counts().values()) == 1
+
+
+@pytest.mark.parametrize("untrusted_flag", [1, "true", "yes", [], None])
+def test_acknowledge_requires_literal_boolean_true(tmp_path, untrusted_flag):
+    ledger = RecipientReceiptLedger(str(tmp_path / "receipt.sqlite3"))
+    ledger.register("msg", "peer", DIGEST)
+    with pytest.raises(ValueError, match="verified_receipt_required"):
+        ledger.acknowledge_verified("msg", "peer", DIGEST, verified=untrusted_flag)
+    assert ledger.status("msg", "peer", DIGEST) == "pending"
