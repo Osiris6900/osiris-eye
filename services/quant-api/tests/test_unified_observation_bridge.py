@@ -76,3 +76,60 @@ def test_missing_store_refused(monkeypatch):
     monkeypatch.setenv(ENABLE_ENV, "1")
     with pytest.raises(UnifiedBridgeRefused, match="validated_store_required"):
         broadcast_unified_cycle(lambda line: None, store=None, collectors=sources(), now=NOW)
+
+
+def test_tampered_hash_stale_and_future_data_rejected(monkeypatch, store):
+    from datetime import timedelta
+    monkeypatch.setenv(ENABLE_ENV, "1")
+    monkeypatch.setenv(INGEST_ENV, "1")
+    tampered = observation("binance-public", "TAMPERED")
+    tampered["payload"] = '{"value":999}'
+    stale = observation("binance-public", "STALE")
+    stale["observed_at"] = (NOW - timedelta(minutes=6)).isoformat()
+    future = observation("binance-public", "FUTURE")
+    future["observed_at"] = (NOW + timedelta(minutes=2)).isoformat()
+    good = observation("binance-public", "GOOD")
+    src = {"market": (lambda **kw: {
+        "observations": [tampered, stale, future, good], "errors": []
+    }, frozenset({"binance-public"}))}
+    lines = []
+    result = broadcast_unified_cycle(lines.append, store=store, collectors=src, now=NOW)
+    assert result["rejected"] == 3
+    assert result["broadcast"] == 1
+    assert json.loads(lines[0])["instrument"] == "GOOD"
+
+
+def test_unknown_source_preflight_prevents_partial_broadcast(monkeypatch, store):
+    monkeypatch.setenv(ENABLE_ENV, "1")
+    monkeypatch.setenv(INGEST_ENV, "1")
+    src = sources()
+    src["unknown"] = (lambda **kw: {"observations": [], "errors": []}, frozenset({"binance-public"}))
+    lines = []
+    with pytest.raises(UnifiedBridgeRefused, match="unknown_source"):
+        broadcast_unified_cycle(lines.append, store=store, collectors=src, now=NOW)
+    assert lines == []
+
+
+def test_source_failure_isolated_from_other_sources(monkeypatch, store):
+    monkeypatch.setenv(ENABLE_ENV, "1")
+    monkeypatch.setenv(INGEST_ENV, "1")
+    src = sources()
+    def unavailable(**kwargs):
+        raise RuntimeError("offline")
+    src["world"] = (unavailable, frozenset({"usgs-earthquakes"}))
+    lines = []
+    result = broadcast_unified_cycle(lines.append, store=store, collectors=src, now=NOW)
+    assert result["broadcast"] == 2
+    assert len(result["source_errors"]) == 1
+    assert result["source_errors"][0]["source"] == "world"
+
+
+def test_unapproved_configuration_preflight_prevents_partial_output(monkeypatch, store):
+    monkeypatch.setenv(ENABLE_ENV, "1")
+    monkeypatch.setenv(INGEST_ENV, "1")
+    src = sources()
+    src["celestial"] = (src["celestial"][0], frozenset({"untrusted"}))
+    lines = []
+    with pytest.raises(UnifiedBridgeRefused, match="no_authorized_providers"):
+        broadcast_unified_cycle(lines.append, store=store, collectors=src, now=NOW)
+    assert lines == []
