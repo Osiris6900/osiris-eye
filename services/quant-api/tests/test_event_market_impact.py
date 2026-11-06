@@ -47,7 +47,6 @@ def test_exposure_matches_us_storm_from_observation_contract():
 
 def test_exposure_case_insensitive_and_deduped():
     event = {"kind": "weather", "city": "New-York"}
-    assert match_event_exposure(event) == ["^SPX", "^NDX", "^DJI"] or True
     assert match_event_exposure(event) == ["^SPX", "^NDQ", "^DJI"]
 
 
