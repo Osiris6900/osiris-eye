@@ -39,7 +39,9 @@ def validate_trusted_event(
         raise ValueError("invalid_receipt_event_fields")
     if event["schema"] != _SCHEMA:
         raise ValueError("invalid_receipt_event_schema")
-    if (not isinstance(expected_sender_peer_id, str) or\n            not 1 <= len(expected_sender_peer_id) <= 256 or\n            any(ord(char) < 33 or ord(char) > 126 for char in expected_sender_peer_id)):
+    if (not isinstance(expected_sender_peer_id, str) or
+            not 1 <= len(expected_sender_peer_id) <= 256 or
+            any(ord(char) < 33 or ord(char) > 126 for char in expected_sender_peer_id)):
         raise ValueError("invalid_expected_sender")
     for field in ("event_id", "sender_peer_id", "recipient_peer_id", "message_id"):
         value = event[field]
@@ -55,7 +57,9 @@ def validate_trusted_event(
     accepted_at = event["accepted_at"]
     if type(accepted_at) is not int or type(now) is not int:
         raise ValueError("invalid_receipt_event_time")
-    if (type(max_age_seconds) is not int or type(max_future_skew_seconds) is not int\n            or not 0 <= max_age_seconds <= 3600\n            or not 0 <= max_future_skew_seconds <= 300):
+    if (type(max_age_seconds) is not int or type(max_future_skew_seconds) is not int
+            or not 0 <= max_age_seconds <= 3600
+            or not 0 <= max_future_skew_seconds <= 300):
         raise ValueError("invalid_receipt_event_window")
     if not now - max_age_seconds <= accepted_at <= now + max_future_skew_seconds:
         raise ValueError("stale_receipt_event")
