@@ -36,3 +36,31 @@ def test_unconfirmed_is_not_acknowledged(tmp_path):
 def test_requires_durable_file():
     with pytest.raises(ValueError):
         RecipientReceiptLedger(":memory:")
+
+
+def test_outstanding_is_bounded_ordered_and_survives_restart(tmp_path):
+    path = str(tmp_path / "receipt.sqlite3")
+    ledger = RecipientReceiptLedger(path)
+    ledger.register("later", "peer2", DIGEST, now=20)
+    ledger.register("early", "peer1", DIGEST, now=10)
+    ledger.register("done", "peer3", DIGEST, now=5)
+    assert ledger.acknowledge_verified("done", "peer3", DIGEST, verified=True)
+    assert ledger.mark_unconfirmed("early", "peer1")
+    rows = RecipientReceiptLedger(path).outstanding(limit=1)
+    assert len(rows) == 1
+    assert rows[0] == {
+        "message_id": "early",
+        "recipient_peer_id": "peer1",
+        "envelope_sha256": DIGEST,
+        "state": "unconfirmed",
+        "created_at": 10,
+    }
+    assert [row["message_id"] for row in ledger.outstanding()] == ["early", "later"]
+    assert ledger.counts()["acknowledged"] == 1
+
+
+@pytest.mark.parametrize("limit", [0, -1, 1001, True, 1.5, "10"])
+def test_outstanding_rejects_invalid_limits(tmp_path, limit):
+    ledger = RecipientReceiptLedger(str(tmp_path / "receipt.sqlite3"))
+    with pytest.raises(ValueError, match="invalid_receipt_limit"):
+        ledger.outstanding(limit=limit)
