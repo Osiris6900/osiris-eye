@@ -3,8 +3,8 @@
 This closes the loop: a node runs the watch cycle on an interval, writes
 each observation as one JSON line to the node process's stdin (the node's
 existing ingestion path), and the mesh distributes it — no operator action
-per cycle. Optionally mirrors every observation into the local research
-store through the fail-closed ingestion gates, so consensus and research
+per cycle. Requires successful local ingestion through the fail-closed gates before
+any observation is broadcast, so consensus and research
 (``mesh_market_intelligence``) can run on top.
 
 Fail-closed: broadcasting requires ``OSIRIS_MARKET_WATCH_BROADCAST=1``;
@@ -51,36 +51,37 @@ def broadcast_cycle(
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """One cycle: collect world-market observations and push each to the
-    node (one JSON line), optionally mirroring into the research store."""
+    node (one JSON line) only after successful gated local ingestion."""
     if os.getenv(ENABLE_ENV) != "1":
         raise BridgeRefused("broadcast_disabled_kill_switch")
+
+    if store is None:
+        raise BridgeRefused("validated_store_required")
 
     collected = collect_market_observations(
         watchlist=watchlist, transport=transport,
         timeout_seconds=timeout_seconds, now=now,
     )
     broadcast = 0
-    for observation in collected["observations"]:
-        write_line(json.dumps(observation, separators=(",", ":"), sort_keys=True))
-        broadcast += 1
-
     ingested = 0
     duplicates = 0
     rejected = 0
-    if store is not None:
-        for observation in collected["observations"]:
-            try:
-                ingest_p2p_observation(
-                    store, observation,
-                    allowed_providers=set(DEFAULT_PROVIDERS),
-                    now=now,
-                )
-                ingested += 1
-            except IngestionRejection as exc:
-                if str(exc).startswith("store_rejected:duplicate"):
-                    duplicates += 1
-                else:
-                    rejected += 1
+    for observation in collected["observations"]:
+        try:
+            ingest_p2p_observation(
+                store, observation,
+                allowed_providers=set(DEFAULT_PROVIDERS),
+                now=now,
+            )
+        except IngestionRejection as exc:
+            if str(exc).startswith("store_rejected:duplicate"):
+                duplicates += 1
+            else:
+                rejected += 1
+            continue
+        ingested += 1
+        write_line(json.dumps(observation, separators=(",", ":"), sort_keys=True))
+        broadcast += 1
 
     return {
         "broadcast": broadcast,
@@ -108,6 +109,8 @@ def run_bridge(
     accident."""
     if os.getenv(ENABLE_ENV) != "1":
         raise BridgeRefused("broadcast_disabled_kill_switch")
+    if store is None:
+        raise BridgeRefused("validated_store_required")
     if not MIN_INTERVAL_SECONDS <= interval_seconds <= MAX_INTERVAL_SECONDS:
         raise BridgeRefused("interval_out_of_bounds")
     if not 1 <= max_cycles <= MAX_CYCLES:
