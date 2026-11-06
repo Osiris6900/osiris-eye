@@ -60,6 +60,16 @@ DEFAULT_EXPOSURE_RULES: tuple[ExposureRule, ...] = (
     ExposureRule("weather", ("mumbai",), ("USD-INR",)),
     ExposureRule("weather", ("frankfurt",), ("USD-EUR",)),
     ExposureRule("weather", ("singapore",), ("USD-CNY", "^NKX")),
+    # Celestial (see docs/CELESTIAL_MARKET_WATCH.md): space weather has a
+    # physical infrastructure channel; lunar/planetary/eclipse items are
+    # behavioural correlation research only — causality never established.
+    ExposureRule("geomagnetic", ("storm",), ("^SPX", "^NDQ", "^DJI")),
+    ExposureRule("solar_wind", ("high-speed",), ("^SPX", "^NDQ")),
+    ExposureRule("xray_flare", ("m-class", "x-class"), ("^SPX", "^NDQ")),
+    ExposureRule("lunar", ("amavasya", "poornima"), ("^SPX", "^NDQ", "BTCUSDT")),
+    ExposureRule("planetary", ("opposition", "close approach", "conjunction"),
+                 ("^SPX", "^NDQ", "BTCUSDT")),
+    ExposureRule("eclipse", ("eclipse",), ("^SPX", "^NDQ", "^DJI", "BTCUSDT")),
 )
 
 
