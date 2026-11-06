@@ -80,7 +80,8 @@ def consensus_price(
     ``reports`` items: ``{"observer": <peer id>, "source": <provider>,
     "value": <float>}``. Acceptance requires both a quorum of observers and
     a quorum of distinct sources agreeing within ``max_deviation_pct`` of
-    the median — so no single provider or peer can dictate the price.
+    the median — so no single provider or peer can dictate the price. The
+    accepted price is the median of the *agreeing* reports only.
     """
     if min_observers < 1 or min_sources < 1 or max_deviation_pct <= 0:
         raise ValueError("invalid_consensus_bounds")
@@ -114,7 +115,7 @@ def consensus_price(
                 "agreeing": len(inliers)}
     return {
         "accepted": True,
-        "price": med,
+        "price": _median(inliers),
         "observers": len(values),
         "sources": len(sources),
         "agreeing": len(inliers),
