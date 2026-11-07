@@ -13,7 +13,7 @@
       "status": "unresolved"
     },
     "crates.io": {
-      "packages": 361,
+      "packages": 388,
       "status": "scanned"
     },
     "npm": {
@@ -22,398 +22,6 @@
     }
   },
   "findings": [
-    {
-      "classification": "vulnerability",
-      "ecosystem": "crates.io",
-      "ids": [
-        "GHSA-3v94-mw7p-v465",
-        "RUSTSEC-2026-0118",
-        "RUSTSEC-2026-0120"
-      ],
-      "matched_ids": [
-        "GHSA-3v94-mw7p-v465",
-        "RUSTSEC-2026-0118"
-      ],
-      "name": "hickory-proto",
-      "records": [
-        {
-          "affected": [
-            {
-              "database_specific": {
-                "source": "https://github.com/github/advisory-database/blob/main/advisories/github-reviewed/2026/05/GHSA-3v94-mw7p-v465/GHSA-3v94-mw7p-v465.json"
-              },
-              "package": {
-                "ecosystem": "crates.io",
-                "name": "hickory-proto",
-                "purl": "pkg:cargo/hickory-proto"
-              },
-              "ranges": [
-                {
-                  "events": [
-                    {
-                      "introduced": "0.25.0-alpha.3"
-                    },
-                    {
-                      "last_affected": "0.25.2"
-                    }
-                  ],
-                  "type": "SEMVER"
-                }
-              ]
-            },
-            {
-              "database_specific": {
-                "last_known_affected_version_range": "<= 0.26.0",
-                "source": "https://github.com/github/advisory-database/blob/main/advisories/github-reviewed/2026/05/GHSA-3v94-mw7p-v465/GHSA-3v94-mw7p-v465.json"
-              },
-              "package": {
-                "ecosystem": "crates.io",
-                "name": "hickory-net",
-                "purl": "pkg:cargo/hickory-net"
-              },
-              "ranges": [
-                {
-                  "events": [
-                    {
-                      "introduced": "0.26.0-alpha.1"
-                    },
-                    {
-                      "fixed": "0.26.1"
-                    }
-                  ],
-                  "type": "SEMVER"
-                }
-              ]
-            }
-          ],
-          "aliases": [
-            "RUSTSEC-2026-0118",
-            "RUSTSEC-2026-0120"
-          ],
-          "database_specific": {
-            "cwe_ids": [
-              "CWE-835"
-            ],
-            "github_reviewed": true,
-            "github_reviewed_at": "2026-05-07T02:59:20Z",
-            "nvd_published_at": null,
-            "severity": "HIGH"
-          },
-          "id": "GHSA-3v94-mw7p-v465",
-          "modified": "2026-09-10T03:50:45.304576252Z",
-          "published": "2026-05-07T02:59:20Z",
-          "severity": [
-            {
-              "score": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N",
-              "type": "CVSS_V4"
-            }
-          ],
-          "summary": "hickory-proto: NSEC3 closest-encloser proof validation enters unbounded loop on cross-zone responses",
-          "url": "https://osv.dev/vulnerability/GHSA-3v94-mw7p-v465"
-        },
-        {
-          "affected": [
-            {
-              "database_specific": {
-                "categories": [
-                  "denial-of-service"
-                ],
-                "cvss": null,
-                "informational": null,
-                "source": "https://github.com/rustsec/advisory-db/blob/osv/crates/RUSTSEC-2026-0118.json"
-              },
-              "ecosystem_specific": {
-                "affected_functions": null,
-                "affects": {
-                  "arch": [],
-                  "functions": [],
-                  "os": []
-                }
-              },
-              "package": {
-                "ecosystem": "crates.io",
-                "name": "hickory-proto",
-                "purl": "pkg:cargo/hickory-proto"
-              },
-              "ranges": [
-                {
-                  "events": [
-                    {
-                      "introduced": "0.25.0-alpha.3"
-                    },
-                    {
-                      "fixed": "0.26.0-beta.1"
-                    }
-                  ],
-                  "type": "SEMVER"
-                }
-              ]
-            }
-          ],
-          "aliases": [
-            "GHSA-3v94-mw7p-v465",
-            "RUSTSEC-2026-0120"
-          ],
-          "database_specific": {
-            "license": "CC-BY-4.0"
-          },
-          "id": "RUSTSEC-2026-0118",
-          "modified": "2026-10-12T18:00:13.245565018Z",
-          "published": "2026-05-01T12:00:00Z",
-          "severity": [],
-          "summary": "NSEC3 closest-encloser proof validation enters unbounded loop on cross-zone responses",
-          "url": "https://osv.dev/vulnerability/RUSTSEC-2026-0118"
-        }
-      ],
-      "version": "0.25.2"
-    },
-    {
-      "classification": "vulnerability",
-      "ecosystem": "crates.io",
-      "ids": [
-        "GHSA-q2qq-hmj6-3wpp",
-        "RUSTSEC-2026-0119"
-      ],
-      "matched_ids": [
-        "GHSA-q2qq-hmj6-3wpp",
-        "RUSTSEC-2026-0119"
-      ],
-      "name": "hickory-proto",
-      "records": [
-        {
-          "affected": [
-            {
-              "database_specific": {
-                "last_known_affected_version_range": "<= 0.26.0",
-                "source": "https://github.com/github/advisory-database/blob/main/advisories/github-reviewed/2026/05/GHSA-q2qq-hmj6-3wpp/GHSA-q2qq-hmj6-3wpp.json"
-              },
-              "package": {
-                "ecosystem": "crates.io",
-                "name": "hickory-proto",
-                "purl": "pkg:cargo/hickory-proto"
-              },
-              "ranges": [
-                {
-                  "events": [
-                    {
-                      "introduced": "0.3.1"
-                    },
-                    {
-                      "fixed": "0.26.1"
-                    }
-                  ],
-                  "type": "SEMVER"
-                }
-              ]
-            }
-          ],
-          "aliases": [
-            "RUSTSEC-2026-0119"
-          ],
-          "database_specific": {
-            "cwe_ids": [
-              "CWE-407",
-              "CWE-770"
-            ],
-            "github_reviewed": true,
-            "github_reviewed_at": "2026-05-07T02:59:48Z",
-            "nvd_published_at": null,
-            "severity": "MODERATE"
-          },
-          "id": "GHSA-q2qq-hmj6-3wpp",
-          "modified": "2026-09-10T03:51:06.690531529Z",
-          "published": "2026-05-07T02:59:48Z",
-          "severity": [
-            {
-              "score": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:L/SC:N/SI:N/SA:N",
-              "type": "CVSS_V4"
-            }
-          ],
-          "summary": "hickory-proto vulnerable to CPU exhaustion during message encoding due to O(n\u00b2) name compression",
-          "url": "https://osv.dev/vulnerability/GHSA-q2qq-hmj6-3wpp"
-        },
-        {
-          "affected": [
-            {
-              "database_specific": {
-                "categories": [
-                  "denial-of-service"
-                ],
-                "cvss": null,
-                "informational": null,
-                "source": "https://github.com/rustsec/advisory-db/blob/osv/crates/RUSTSEC-2026-0119.json"
-              },
-              "ecosystem_specific": {
-                "affected_functions": null,
-                "affects": {
-                  "arch": [],
-                  "functions": [],
-                  "os": []
-                }
-              },
-              "package": {
-                "ecosystem": "crates.io",
-                "name": "hickory-proto",
-                "purl": "pkg:cargo/hickory-proto"
-              },
-              "ranges": [
-                {
-                  "events": [
-                    {
-                      "introduced": "0.3.1"
-                    },
-                    {
-                      "fixed": "0.26.1"
-                    }
-                  ],
-                  "type": "SEMVER"
-                }
-              ]
-            }
-          ],
-          "aliases": [
-            "GHSA-q2qq-hmj6-3wpp"
-          ],
-          "database_specific": {
-            "license": "CC-BY-4.0"
-          },
-          "id": "RUSTSEC-2026-0119",
-          "modified": "2026-10-12T18:00:13.569223841Z",
-          "published": "2026-05-01T12:00:00Z",
-          "severity": [],
-          "summary": "CPU exhaustion during message encoding due to O(n\u00b2) name compression",
-          "url": "https://osv.dev/vulnerability/RUSTSEC-2026-0119"
-        }
-      ],
-      "version": "0.25.2"
-    },
-    {
-      "classification": "vulnerability",
-      "ecosystem": "crates.io",
-      "ids": [
-        "CVE-2026-93657",
-        "GHSA-5j98-2g5x-46v6"
-      ],
-      "matched_ids": [
-        "GHSA-5j98-2g5x-46v6"
-      ],
-      "name": "hickory-resolver",
-      "records": [
-        {
-          "affected": [
-            {
-              "database_specific": {
-                "source": "https://github.com/github/advisory-database/blob/main/advisories/github-reviewed/2026/10/GHSA-5j98-2g5x-46v6/GHSA-5j98-2g5x-46v6.json"
-              },
-              "package": {
-                "ecosystem": "crates.io",
-                "name": "hickory-resolver",
-                "purl": "pkg:cargo/hickory-resolver"
-              },
-              "ranges": [
-                {
-                  "events": [
-                    {
-                      "introduced": "0"
-                    },
-                    {
-                      "fixed": "0.26.2"
-                    }
-                  ],
-                  "type": "SEMVER"
-                }
-              ]
-            }
-          ],
-          "aliases": [
-            "CVE-2026-93657"
-          ],
-          "database_specific": {
-            "cwe_ids": [
-              "CWE-347"
-            ],
-            "github_reviewed": true,
-            "github_reviewed_at": "2026-10-05T22:54:35Z",
-            "nvd_published_at": null,
-            "severity": "HIGH"
-          },
-          "id": "GHSA-5j98-2g5x-46v6",
-          "modified": "2026-10-05T23:00:04.250222435Z",
-          "published": "2026-10-05T22:54:35Z",
-          "severity": [
-            {
-              "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:N",
-              "type": "CVSS_V3"
-            }
-          ],
-          "summary": "hickory-resolver: Resolver::lookup() and Resolver::lookup_ip() APIs obscure DNSSEC validation failures",
-          "url": "https://osv.dev/vulnerability/GHSA-5j98-2g5x-46v6"
-        }
-      ],
-      "version": "0.25.2"
-    },
-    {
-      "classification": "vulnerability",
-      "ecosystem": "crates.io",
-      "ids": [
-        "GHSA-6f2x-v7q7-m7m5"
-      ],
-      "matched_ids": [
-        "GHSA-6f2x-v7q7-m7m5"
-      ],
-      "name": "hickory-resolver",
-      "records": [
-        {
-          "affected": [
-            {
-              "database_specific": {
-                "source": "https://github.com/github/advisory-database/blob/main/advisories/github-reviewed/2026/10/GHSA-6f2x-v7q7-m7m5/GHSA-6f2x-v7q7-m7m5.json"
-              },
-              "package": {
-                "ecosystem": "crates.io",
-                "name": "hickory-resolver",
-                "purl": "pkg:cargo/hickory-resolver"
-              },
-              "ranges": [
-                {
-                  "events": [
-                    {
-                      "introduced": "0.25.0"
-                    },
-                    {
-                      "fixed": "0.26.2"
-                    }
-                  ],
-                  "type": "SEMVER"
-                }
-              ]
-            }
-          ],
-          "aliases": [],
-          "database_specific": {
-            "cwe_ids": [
-              "CWE-400"
-            ],
-            "github_reviewed": true,
-            "github_reviewed_at": "2026-10-05T22:55:18Z",
-            "nvd_published_at": null,
-            "severity": "MODERATE"
-          },
-          "id": "GHSA-6f2x-v7q7-m7m5",
-          "modified": "2026-10-05T23:15:03.987605025Z",
-          "published": "2026-10-05T22:55:18Z",
-          "severity": [
-            {
-              "score": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:L/SC:N/SI:N/SA:N",
-              "type": "CVSS_V4"
-            }
-          ],
-          "summary": "hickory-resolver follows irrelevant CNAME records",
-          "url": "https://osv.dev/vulnerability/GHSA-6f2x-v7q7-m7m5"
-        }
-      ],
-      "version": "0.25.2"
-    },
     {
       "classification": "maintenance-only",
       "ecosystem": "crates.io",
@@ -478,72 +86,6 @@
         }
       ],
       "version": "1.0.15"
-    },
-    {
-      "classification": "vulnerability",
-      "ecosystem": "crates.io",
-      "ids": [
-        "CVE-2026-32314",
-        "GHSA-vxx9-2994-q338"
-      ],
-      "matched_ids": [
-        "GHSA-vxx9-2994-q338"
-      ],
-      "name": "yamux",
-      "records": [
-        {
-          "affected": [
-            {
-              "database_specific": {
-                "source": "https://github.com/github/advisory-database/blob/main/advisories/github-reviewed/2026/03/GHSA-vxx9-2994-q338/GHSA-vxx9-2994-q338.json"
-              },
-              "package": {
-                "ecosystem": "crates.io",
-                "name": "yamux",
-                "purl": "pkg:cargo/yamux"
-              },
-              "ranges": [
-                {
-                  "events": [
-                    {
-                      "introduced": "0"
-                    },
-                    {
-                      "fixed": "0.13.10"
-                    }
-                  ],
-                  "type": "SEMVER"
-                }
-              ]
-            }
-          ],
-          "aliases": [
-            "CVE-2026-32314"
-          ],
-          "database_specific": {
-            "cwe_ids": [
-              "CWE-248",
-              "CWE-617"
-            ],
-            "github_reviewed": true,
-            "github_reviewed_at": "2026-03-13T20:04:38Z",
-            "nvd_published_at": "2026-03-16T14:19:34Z",
-            "severity": "HIGH"
-          },
-          "id": "GHSA-vxx9-2994-q338",
-          "modified": "2026-03-16T22:16:17.324879Z",
-          "published": "2026-03-13T20:04:38Z",
-          "severity": [
-            {
-              "score": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N",
-              "type": "CVSS_V4"
-            }
-          ],
-          "summary": "Yamux vulnerable to remote Panic via malformed Data frame with SYN set and len = 262145",
-          "url": "https://osv.dev/vulnerability/GHSA-vxx9-2994-q338"
-        }
-      ],
-      "version": "0.12.1"
     }
   ],
   "limitations": [
@@ -554,21 +96,21 @@
   ],
   "query": {
     "batch_size": 100,
-    "batches": 5,
-    "queried_at": "2026-11-07T20:45:36Z",
+    "batches": 6,
+    "queried_at": "2026-11-07T22:29:10Z",
     "querybatch_url": "https://api.osv.dev/v1/querybatch",
     "service": "OSV",
     "vulnerability_url_template": "https://api.osv.dev/v1/vulns/{id}"
   },
   "schema": "osiris.dependency-advisory-report.v1",
   "source": {
-    "commit": "212cad687b69ed421c0778699e451955576739c9",
+    "commit": "974de9ce04585e1d38824136514325f231b2bdaf",
     "inputs": {
       "apps/web/package-lock.json": {
         "sha256": "fc7b7c0a8bc7216c037feea96eeae9003d32a059d2f34a538de8313136f21c49"
       },
       "services/p2p-node/Cargo.lock": {
-        "sha256": "c0ae69da803126f3d8d8e0afd994ace85c7961f183242faf728bf6a0c6cb42ee"
+        "sha256": "d2d7437dbb9bc020c703c25a642fcf90abda9e27f01f34d27eeebdc05b0b0993"
       },
       "services/quant-api/pyproject.toml": {
         "sha256": "d720ef4661e1b01e916f02298dee6cb02ce4444401d0968639a7070e251fffa6"
@@ -577,11 +119,11 @@
     "repository": "Osiris6900/osiris-eye"
   },
   "summary": {
-    "advisory_groups": 6,
-    "affected_packages": 4,
+    "advisory_groups": 1,
+    "affected_packages": 1,
     "maintenance_only_groups": 1,
-    "queried_packages": 493,
-    "raw_advisory_matches": 8,
-    "vulnerability_groups": 5
+    "queried_packages": 520,
+    "raw_advisory_matches": 1,
+    "vulnerability_groups": 0
   }
 }
