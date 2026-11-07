@@ -93,7 +93,9 @@ The Python [observation outbox](UNIFIED_OBSERVATION_OUTBOX.md) keeps its existin
 local stdin acknowledgement semantics. This receipt feature does not change its
 `delivered` flag, clear pending rows, or promote an outbox entry to remote
 delivery. `pending` and `unconfirmed` stay distinct from `acknowledged`. A
-verified receipt does not start retransmission.
+verified receipt does not start retransmission. The opt-in
+[receipt-gated scheduler](P2P_RECEIPT_GATED_RETRY.md) also refuses to write
+another stdin line after an envelope has been tracked.
 
 When the [verified receipt bridge](P2P_VERIFIED_RECEIPT_BRIDGE_CONTRACT.md) is
 configured, `observation_delivery_acknowledged` still means only that this
