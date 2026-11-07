@@ -12,6 +12,7 @@ A local stdin success is never recorded as recipient acknowledgement.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sqlite3
@@ -60,11 +61,36 @@ class AdmissionDecision:
 
 
 def backoff_seconds(failures: int) -> int:
-    """Deterministic exponential delay. ``failures`` is how many sends already failed."""
+    """Deterministic exponential base delay. ``failures`` is how many sends already failed."""
     if type(failures) is not int or failures < 1:
         raise ValueError("invalid_backoff_attempt")
     delay = BACKOFF_BASE_SECONDS * (2 ** (failures - 1))
     return min(BACKOFF_CAP_SECONDS, delay)
+
+
+def jittered_backoff_seconds(
+    failures: int, *, observation_key: str, recipient: str,
+) -> int:
+    """Deterministic half-jitter over :func:`backoff_seconds`.
+
+    Without jitter every failing attempt for the same cohort wakes on the same
+    second and hammers the node together (thundering herd). The spread must not
+    come from a random source: this scheduler is durable, and a restart has to
+    reproduce the same ``next_attempt_at`` arithmetic from what is on disk.
+
+    The offset is therefore derived from SHA-256 of
+    ``observation_key | recipient | failures`` — stable across restarts,
+    distinct per attempt and per recipient, and uniform enough to spread a
+    cohort across the upper half of the backoff band, ``[base // 2, base]``.
+    The floor keeps a minimum wait so jitter never collapses into a hot loop.
+    """
+    if not isinstance(observation_key, str) or not isinstance(recipient, str):
+        raise ValueError("invalid_jitter_material")
+    base = backoff_seconds(failures)
+    material = f"{observation_key}|{recipient}|{failures}".encode()
+    digest = hashlib.sha256(material).digest()
+    spread = base - base // 2
+    return base // 2 + int.from_bytes(digest[:8], "big") % (spread + 1)
 
 
 def _enabled_flag(enabled: bool | None) -> bool:
@@ -248,7 +274,9 @@ class ReceiptRetryScheduler:
                     delay = now
                 else:
                     state, reason = "scheduled", "receipt_channel_unavailable"
-                    delay = now + backoff_seconds(nxt)
+                    delay = now + jittered_backoff_seconds(
+                        nxt, observation_key=key, recipient=recipient,
+                    )
                 db.execute(
                     """UPDATE receipt_retry_attempts
                        SET state=?, reason=?, deferrals=?, next_attempt_at=?
@@ -340,7 +368,10 @@ class ReceiptRetryScheduler:
                     "observation_key": key, "recipient_peer_id": recipient,
                     "state": "held", "reason": "retry_budget_exhausted",
                 }
-            delay = now + (backoff_seconds(attempts) if consume_attempt else BACKOFF_BASE_SECONDS)
+            delay = now + jittered_backoff_seconds(
+                attempts if consume_attempt else 1,
+                observation_key=key, recipient=recipient,
+            )
             db.execute(
                 """UPDATE receipt_retry_attempts
                    SET state='scheduled', attempts=?, next_attempt_at=?, reason=?
