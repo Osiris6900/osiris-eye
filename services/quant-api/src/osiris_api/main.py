@@ -326,6 +326,7 @@ def phase9_disaster_recovery(p: dict[str, Any] = Body(...)):
 def phase9_benchmark_performance(p: dict[str, Any] = Body(...)):
     return guarded(benchmark_performance, p.get("portfolio_returns", []), p.get("benchmark_returns", []), p.get("periods_per_year", 252))
 
+
 @app.get("/platform/command-center")
 def command_center():
     return command_center_snapshot(MODULES)
@@ -792,6 +793,7 @@ app.include_router(instrument_master_router)
 
 
 from .calendar_routes import router as exchange_calendar_router
+
 app.include_router(exchange_calendar_router)
 
 from .market_mechanics_routes import router as market_mechanics_router
@@ -829,3 +831,27 @@ def evaluate_paper_workflow_endpoint(p: dict[str, Any] = Body(...)):
     )
     result["audit"] = audit
     return result
+
+
+from .paper_observation_bridge import evaluate_stored_observation
+
+
+@app.post("/paper/workflow/from-observation")
+def evaluate_stored_observation_endpoint(p: dict[str, Any] = Body(...)):
+    """Evaluate an already-ingested observation; persist paper intent only."""
+    return guarded(
+        evaluate_stored_observation,
+        store,
+        record_key=p.get("record_key", ""),
+        source=p.get("source", ""),
+        allowed_providers=p.get("allowed_providers", []),
+        signals=p.get("signals", []),
+        asset_returns=p.get("asset_returns", []),
+        quantity=p.get("quantity", 0),
+        current_position_notional=p.get("current_position_notional", 0),
+        daily_pnl=p.get("daily_pnl", 0),
+        cost_bps_per_unit_turnover=p.get("cost_bps_per_unit_turnover", 2.0),
+        max_age_seconds=p.get("max_age_seconds", 300.0),
+        max_future_skew_seconds=p.get("max_future_skew_seconds", 60.0),
+        require_feed_admission=p.get("require_feed_admission", False) is True,
+    )

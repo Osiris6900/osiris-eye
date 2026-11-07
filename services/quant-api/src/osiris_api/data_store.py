@@ -156,6 +156,21 @@ class ResearchStore:
             """, (dataset, limit)).fetchall()
         return [self._serialize(row) for row in rows]
 
+    def get(self, dataset: str, source: str, record_key: str) -> dict[str, Any] | None:
+        """Return one exact immutable record without scanning the dataset."""
+        if not all(
+            isinstance(value, str) and value.strip()
+            for value in (dataset, source, record_key)
+        ):
+            raise ValueError("dataset, source and record_key must be non-empty strings")
+        with self._connect() as connection:
+            row = connection.execute("""
+                SELECT id, dataset, record_key, source, event_time, available_at,
+                       ingested_at, payload_json
+                FROM observations WHERE dataset=? AND source=? AND record_key=?
+            """, (dataset, source, record_key)).fetchone()
+        return None if row is None else self._serialize(row)
+
     def list_as_of(self, dataset: str, as_of: str, limit: int = 100) -> list[dict[str, Any]]:
         if not dataset.strip():
             raise ValueError("dataset must be non-empty")

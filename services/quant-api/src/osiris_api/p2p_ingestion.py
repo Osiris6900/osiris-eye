@@ -17,9 +17,10 @@ import hashlib
 import os
 import re
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Iterable
+from typing import TYPE_CHECKING, Any, Iterable, Mapping
 
 from .data_store import ResearchStore
+from .feed_admission import FeedAdmissionRejection, admit_feed
 from .risk import RiskLimits, check_order
 
 if TYPE_CHECKING:
@@ -151,6 +152,8 @@ def ingest_p2p_observation(
     max_future_skew_seconds: float = DEFAULT_MAX_FUTURE_SKEW_SECONDS,
     now: datetime | None = None,
     outbox: ObservationOutbox | None = None,
+    feed_policy: Mapping[str, Any] | None = None,
+    require_feed_policy: bool = False,
 ) -> dict[str, Any]:
     """Validate one P2P observation and append it to the research store.
 
@@ -164,6 +167,17 @@ def ingest_p2p_observation(
         max_age_seconds=max_age_seconds,
         max_future_skew_seconds=max_future_skew_seconds, now=current,
     )
+    if require_feed_policy and feed_policy is None:
+        raise IngestionRejection("feed_policy_required")
+    admission = None
+    if feed_policy is not None:
+        try:
+            admission = admit_feed(
+                provider=normalized["provider"], instrument=normalized["instrument"],
+                policy=feed_policy, now=current,
+            )
+        except FeedAdmissionRejection as exc:
+            raise IngestionRejection("feed_admission_rejected:" + str(exc)) from exc
     if outbox is not None:
         try:
             outbox.require_shared_database(store.database_path)
@@ -185,6 +199,8 @@ def ingest_p2p_observation(
             "payload_sha256": normalized["payload_sha256"],
         },
     }
+    if admission is not None:
+        fields["payload"]["feed_admission"] = admission
     try:
         if outbox is None:
             record = store.put(**fields)
@@ -206,6 +222,7 @@ def ingest_p2p_observation(
         "source": record["source"],
         "event_time": record["event_time"],
         "available_at": record["available_at"],
+        "feed_admission": admission,
         "live_execution": False,
     }
 

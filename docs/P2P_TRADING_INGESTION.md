@@ -19,6 +19,22 @@ paper-order intent on top.
    keys; re-delivered copies of the same observation fail closed instead of
    double-recording.
 
+## Operator-attested feed admission
+
+For deployments that require more than a provider allowlist, pass `feed_policy`
+to `ingest_p2p_observation` and set `require_feed_policy=True`. A missing policy
+then rejects before storage. Each provider policy must explicitly declare:
+
+- an authorized source and entitlement reference;
+- `redistribution_rights: "permitted"` (unknown or denied rights fail closed);
+- required event/availability timestamps and explicit instrument coverage;
+- a passing quality review with reviewer and a timezone-aware, non-stale review time.
+
+The admission report is stored beside the observation. These fields are an
+**operator attestation**, not independent verification of a vendor contract,
+license, or reviewer identity. Production acceptance still requires the actual
+rights and independent quality evidence.
+
 ## Paper intents (still not live trading)
 
 `paper_intent_from_observation` requires a second explicit opt-in
@@ -27,10 +43,37 @@ independent risk gate (`osiris_api.risk.check_order`). It only ever produces a
 paper intent: `live_execution` is always `False` and no broker or exchange is
 contacted.
 
+## Stored observation to durable paper workflow
+
+`osiris_api.paper_observation_bridge.evaluate_stored_observation` closes the
+integration gap between an ingested market observation and the existing
+backtest/risk paper workflow. The API equivalent is
+`POST /paper/workflow/from-observation`.
+
+It loads only an exact record already stored in `p2p_observations`, then
+rechecks the second paper opt-in, current provider allowlist, freshness, payload
+hash, provenance and a positive unambiguous reference price. Caller-supplied
+signal and return histories are evaluated by the existing lagged backtest and
+independent risk gate. The observation itself is never treated as a profitable
+signal.
+
+Approved, risk-blocked and HOLD evaluations are durably recorded in
+`paper_order_intents`. A content-derived intent ID makes an identical retry an
+`idempotent_replay` instead of a duplicate downstream record. Set
+`require_feed_admission=True` to additionally require a stored admitted-feed
+report. No fill, portfolio position, broker submission or live execution is
+created.
+
+Example request fields: `record_key`, `source`, `allowed_providers`, `signals`,
+`asset_returns`, `quantity`, and optional position/PnL/freshness controls. The
+normal API bearer-token middleware applies.
+
 ## Tests
 
-`services/quant-api/tests/test_p2p_ingestion.py` runs in the standard CI
-Python job and covers the happy path plus every rejection gate.
+`test_p2p_ingestion.py`, `test_feed_admission.py` and
+`test_paper_observation_bridge.py` run in the standard CI Python job. They cover
+admission failures, current authorization/freshness, risk blocks, HOLD, durable
+storage, exact lookups and idempotent replay.
 
 ## Honest limits
 
