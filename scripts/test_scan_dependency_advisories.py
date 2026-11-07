@@ -77,7 +77,25 @@ checksum = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 name = "api"
 version = "0.1.0"
 dependencies = ["fastapi>=0.110,<1"]
+
+[project.optional-dependencies]
+streams = ["websockets>=12,<18"]
+dev = ["pytest>=8,<9"]
 """)
+        self.python_lock = self.root / "requirements-deploy.lock"
+        self.python_lock.write_text("""#
+# test deployment lock
+#
+--index-url https://pypi.org/simple/
+
+fastapi==0.115.0 \\
+    --hash=sha256:{a}
+uvicorn[standard]==0.30.0 \\
+    --hash=sha256:{b} \\
+    --hash=sha256:{c}
+websockets==13.1 \\
+    --hash=sha256:{d}
+""".format(a="aa" * 32, b="bb" * 32, c="cc" * 32, d="dd" * 32))
         self.package = {"ecosystem": "crates.io", "name": "demo", "version": "1.2.3"}
 
     def tearDown(self):
@@ -88,12 +106,16 @@ dependencies = ["fastapi>=0.110,<1"]
             self.cargo,
             self.npm,
             self.pyproject,
+            self.python_lock,
             maintenance or {},
             "212cad687b69ed421c0778699e451955576739c9",
             client,
             queried_at="2026-11-08T00:00:00Z",
             batch_size=1,
         )
+
+    def validate(self, report):
+        scan.validate_report(report, self.cargo, self.npm, self.pyproject, self.python_lock)
 
     def test_alias_records_form_one_group_without_losing_ids(self):
         records = {
@@ -129,27 +151,83 @@ dependencies = ["fastapi>=0.110,<1"]
         maintenance = next(f for f in report["findings"] if f["classification"] == "maintenance-only")
         self.assertEqual(maintenance["maintenance_only_evidence"][0]["reason"], "maintenance only")
 
-    def test_coverage_hashes_batches_and_python_boundary(self):
+    def test_coverage_hashes_batches_and_python_lock(self):
         report = self.build(FakeClient())
-        self.assertEqual(report["summary"]["queried_packages"], 2)
+        self.assertEqual(report["summary"]["queried_packages"], 5)
         self.assertEqual(report["coverage"]["crates.io"]["packages"], 1)
         self.assertEqual(report["coverage"]["npm"]["packages"], 1)
-        self.assertEqual(report["coverage"]["PyPI"]["status"], "unresolved")
-        self.assertEqual(report["coverage"]["PyPI"]["packages"], 0)
-        self.assertEqual(report["query"]["batches"], 2)
+        self.assertEqual(report["coverage"]["PyPI"]["status"], "scanned")
+        self.assertEqual(report["coverage"]["PyPI"]["packages"], 3)
+        self.assertEqual(
+            report["coverage"]["PyPI"]["lock"],
+            "services/quant-api/requirements-deploy.lock",
+        )
+        self.assertEqual(report["coverage"]["PyPI"]["deployment_extras"], ["streams"])
+        self.assertEqual(report["query"]["batches"], 5)
         self.assertEqual(report["query"]["queried_at"], "2026-11-08T00:00:00Z")
-        scan.validate_report(report, self.cargo, self.npm, self.pyproject)
+        self.validate(report)
+
+    def test_python_lock_without_hash_fails_closed(self):
+        self.python_lock.write_text("fastapi==0.115.0\n")
+        with self.assertRaisesRegex(ValueError, "no sha256"):
+            scan.python_locked_packages(self.python_lock)
+
+    def test_python_lock_rejects_non_exact_lines(self):
+        self.python_lock.write_text(
+            "fastapi>=0.110 \\\n    --hash=sha256:%s\n" % ("aa" * 32)
+        )
+        with self.assertRaisesRegex(ValueError, "exact name==version pin"):
+            scan.python_locked_packages(self.python_lock)
+
+    def test_python_lock_rejects_direct_references(self):
+        self.python_lock.write_text(
+            "fastapi @ https://example.invalid/fastapi.whl \\\n"
+            "    --hash=sha256:%s\n" % ("aa" * 32)
+        )
+        with self.assertRaisesRegex(ValueError, "exact name==version pin"):
+            scan.python_locked_packages(self.python_lock)
+
+    def test_python_lock_rejects_duplicates(self):
+        self.python_lock.write_text(
+            "fastapi==0.115.0 \\\n    --hash=sha256:%s\n"
+            "fastapi==0.115.1 \\\n    --hash=sha256:%s\n" % ("aa" * 32, "bb" * 32)
+        )
+        with self.assertRaisesRegex(ValueError, "duplicate"):
+            scan.python_locked_packages(self.python_lock)
+
+    def test_declared_dependency_missing_from_lock_fails_closed(self):
+        self.python_lock.write_text(
+            "websockets==13.1 \\\n    --hash=sha256:%s\n" % ("aa" * 32)
+        )
+        with self.assertRaisesRegex(ValueError, "missing from the deployment lock"):
+            self.build(FakeClient())
+
+    def test_locked_version_outside_declared_range_fails_closed(self):
+        self.python_lock.write_text(self.python_lock.read_text().replace(
+            "fastapi==0.115.0", "fastapi==1.0.0"
+        ))
+        with self.assertRaisesRegex(ValueError, "violates declared requirement"):
+            self.build(FakeClient())
+
+    def test_unsupported_specifier_fails_closed(self):
+        self.pyproject.write_text("""[project]
+name = "api"
+version = "0.1.0"
+dependencies = ["fastapi~=0.110"]
+""")
+        with self.assertRaisesRegex(ValueError, "unsupported version specifier"):
+            self.build(FakeClient())
 
     def test_stale_report_fails_closed(self):
         report = self.build(FakeClient())
         self.cargo.write_text(self.cargo.read_text() + "# changed after scan\n")
         with self.assertRaisesRegex(ValueError, "stale"):
-            scan.validate_report(report, self.cargo, self.npm, self.pyproject)
+            self.validate(report)
 
     def test_source_commit_must_be_full_sha(self):
         with self.assertRaisesRegex(ValueError, "source commit"):
             scan.build_report(
-                self.cargo, self.npm, self.pyproject, {}, "main", FakeClient()
+                self.cargo, self.npm, self.pyproject, self.python_lock, {}, "main", FakeClient()
             )
 
     def test_misaligned_querybatch_response_fails_closed(self):
@@ -178,20 +256,20 @@ dependencies = ["fastapi>=0.110,<1"]
         report = self.build(FakeClient())
         report["summary"]["queried_packages"] += 1
         with self.assertRaisesRegex(ValueError, "summary is inconsistent"):
-            scan.validate_report(report, self.cargo, self.npm, self.pyproject)
+            self.validate(report)
 
     def test_validation_rejects_invalid_timestamp(self):
         report = self.build(FakeClient())
         report["query"]["queried_at"] = "not-a-timestamp"
         with self.assertRaisesRegex(ValueError, "timestamp is invalid"):
-            scan.validate_report(report, self.cargo, self.npm, self.pyproject)
+            self.validate(report)
 
     def test_validation_rejects_invalid_finding_ids(self):
         records = {"GHSA-one": advisory("GHSA-one")}
         report = self.build(FakeClient([(self.package, "GHSA-one")], records))
         report["findings"][0]["matched_ids"] = ["GHSA-other"]
         with self.assertRaisesRegex(ValueError, "matched IDs are inconsistent"):
-            scan.validate_report(report, self.cargo, self.npm, self.pyproject)
+            self.validate(report)
 
     def test_checked_in_report_matches_current_lock_inputs(self):
         root = Path(__file__).resolve().parents[1]
@@ -203,10 +281,12 @@ dependencies = ["fastapi>=0.110,<1"]
             root / "services/p2p-node/Cargo.lock",
             root / "apps/web/package-lock.json",
             root / "services/quant-api/pyproject.toml",
+            root / "services/quant-api/requirements-deploy.lock",
         )
         packages = scan.locked_packages(
             root / "services/p2p-node/Cargo.lock",
             root / "apps/web/package-lock.json",
+            root / "services/quant-api/requirements-deploy.lock",
         )
         findings = report["findings"]
         self.assertEqual(report["summary"], {
