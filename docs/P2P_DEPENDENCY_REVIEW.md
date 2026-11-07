@@ -5,8 +5,8 @@ scan, license clearance, software bill of materials, or cryptographic audit.
 
 ## Rust resolution
 
-`services/p2p-node/Cargo.lock` uses lock format 4 and records 356 packages:
-the local node plus 355 crates.io packages. Every registry entry has a checksum.
+`services/p2p-node/Cargo.lock` uses lock format 4 and records 362 packages:
+the local node plus 361 crates.io packages. Every registry entry has a checksum.
 No Git dependencies, alternate registries, or manifest `[patch]` overrides were
 found. These facts describe the configured sources; they do not establish that
 the dependencies are free of vulnerabilities.
@@ -43,6 +43,34 @@ and `numpy>=1.26,<3`. Its development range includes `pytest>=8,<9`.
 These are version constraints, not a resolved, hashed Python lockfile. Retain
 the exact installed environment with each release's test evidence; results from
 dependencies outside the declared ranges do not validate the supported set.
+
+## CycloneDX dependency inventory
+
+`scripts/generate_dependency_sbom.py` generates deterministic CycloneDX 1.5 JSON
+from the exact Cargo and npm lockfiles. For the reviewed inputs, the SBOM has
+496 components: three local applications, 361 crates.io libraries and 132 npm
+libraries. Cargo SHA-256 checksums, npm integrity hashes, distribution URLs,
+license metadata and npm development scope are included. Duplicate SBOM
+references, unsupported Cargo sources, missing licenses/integrity data and
+crate checksum mismatches fail closed.
+
+Crates.io exact-version API responses supply crate license metadata and are
+checked against the lockfile checksum. The local cache permits later offline
+regeneration; delete or refresh that cache when performing a new metadata
+review. Generation is deterministic across checkout paths and online/offline
+runs with the same inputs and cache.
+
+The three local applications include `osiris-quant-api`, but its dependency
+resolution is explicitly `unresolved`. Version ranges from `pyproject.toml` are
+recorded only as declarations, not as installed packages. Therefore this SBOM
+does not complete the Python deployment inventory and must not be represented
+as a whole-environment SBOM until a supported resolved and hashed Python lock
+is incorporated.
+
+This inventory is not a license-compatibility or redistribution decision,
+advisory scan, provenance attestation, reproducible-build proof, or independent
+security assessment. Exact-version license metadata still requires operator
+review against the actual distributed artifacts.
 
 ## CI action pinning ratchet
 
@@ -84,6 +112,10 @@ python -m pip check
 python -m pip freeze
 python scripts/check_p2p_workflows.py
 python scripts/test_check_p2p_workflows.py
+python scripts/test_generate_dependency_sbom.py
+python scripts/generate_dependency_sbom.py --output /tmp/osiris-eye-sbom.json
+python scripts/generate_dependency_sbom.py --offline --output /tmp/osiris-eye-sbom-offline.json
+cmp /tmp/osiris-eye-sbom.json /tmp/osiris-eye-sbom-offline.json
 ```
 
 The offline `--no-deps` metadata command passed during this review. Full offline
@@ -91,9 +123,9 @@ metadata could not complete because a platform dependency (`async-io 2.6.0`)
 was absent from the local cache; this is a cache limitation, not a successful
 full dependency inventory. Build/test evidence is recorded separately.
 
-Before a public release, record a current advisory scan for Rust and Python,
-triage reachable findings, generate a complete dependency/license inventory,
-lock the supported Python deployment environment, and record toolchain and
+Before a public release, record current Rust/Python/JavaScript advisory scans,
+triage reachable findings, lock and incorporate the supported Python deployment
+environment, complete license/redistribution review, and record toolchain and
 artifact hashes. Complete the actual third-party CI action SHA/digest pinning
 and trust review before release; the ratchet alone does not clear that gate.
 No advisory scanner was run in this task, so no “zero known vulnerabilities”
