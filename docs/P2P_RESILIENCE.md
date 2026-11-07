@@ -63,6 +63,10 @@ carries that knowledge across restarts.
 - Relay capacity donated by nodes is best-effort. Operators who need
   guaranteed reachability can still run the standalone relay binary
   (`src/bin/relay.rs`) on any always-on machine — it remains fully supported.
+- In libp2p-relay 0.21, the raw per-peer reservation/circuit comparison is
+  `current > configured` before insertion, so a configured value can tolerate
+  one more active item than its name suggests. Operator-facing limits must be
+  reviewed and tested against this behavior rather than assumed exact.
 
 ## Loopback quota regression
 
@@ -74,13 +78,14 @@ cargo test --manifest-path services/p2p-node/Cargo.toml --locked --test relay_qu
 
 The tests configure zero global reservation/circuit capacity and require both
 the relay's `ResourceLimitExceeded` event and the client's failed listener/dial.
-A separate per-peer case establishes one circuit successfully, then forces a
-second dial with `PeerCondition::Always` and requires relay-side denial while
-the first connection remains established. This avoids mistaking the Swarm's
-local duplicate-dial guard for quota enforcement. The global circuit case also
-asserts that no sender/receiver connection is established above quota. These
-are same-host protocol tests, not cross-network, independent-host, hostile-load
-or production-capacity evidence.
+A separate raw per-peer boundary case establishes one circuit successfully,
+then forces a second dial with `PeerCondition::Always` and requires relay-side
+denial while the first connection remains established. This avoids mistaking
+the Swarm's local duplicate-dial guard for quota enforcement. The global
+circuit case also asserts that no sender/receiver connection is established
+above quota. These are same-host protocol tests, not cross-network,
+independent-host, hostile-load, operator-limit acceptance or
+capacity evidence.
 
 ## Operating checklist
 
