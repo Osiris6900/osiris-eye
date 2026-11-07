@@ -1,0 +1,13 @@
+{
+  "schema": "osiris.ci-action-pin-baseline.v1",
+  "description": "Temporary ratchet for existing mutable CI action references. Do not increase these counts or add references; remove entries after actual SHA/digest pinning and review.",
+  "allowed_unpinned": {
+    "actions/checkout@v4": 14,
+    "actions/download-artifact@v4": 8,
+    "actions/setup-node@v4": 1,
+    "actions/setup-python@v5": 4,
+    "actions/upload-artifact@v4": 14,
+    "dtolnay/rust-toolchain@stable": 11,
+    "tailscale/github-action@v3": 7
+  }
+}

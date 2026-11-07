@@ -44,6 +44,36 @@ These are version constraints, not a resolved, hashed Python lockfile. Retain
 the exact installed environment with each release's test evidence; results from
 dependencies outside the declared ranges do not validate the supported set.
 
+## CI action pinning ratchet
+
+The workflow review found 59 remote `uses` references across eight workflow
+files, all using mutable tags instead of immutable commit SHAs. The checked-in
+`config/ci_action_pin_baseline.json` records this existing debt; it is not an
+approval of the referenced actions or evidence that their tags are trustworthy.
+
+| Mutable reference | Existing occurrences |
+|---|---:|
+| `actions/checkout@v4` | 14 |
+| `actions/upload-artifact@v4` | 14 |
+| `dtolnay/rust-toolchain@stable` | 11 |
+| `actions/download-artifact@v4` | 8 |
+| `tailscale/github-action@v3` | 7 |
+| `actions/setup-python@v5` | 4 |
+| `actions/setup-node@v4` | 1 |
+
+The existing Python CI entry point runs `scripts/check_p2p_workflows.py` and its
+regression tests. The offline audit covers step-level actions and job-level
+reusable workflows. Repository-local actions are allowed, remote GitHub actions
+require a full 40-character commit SHA, and Docker actions require a SHA-256
+image digest. A new mutable reference, a changed tag, or an occurrence count
+above its per-reference baseline fails closed. Reducing or eliminating baseline
+debt passes without requiring a baseline update.
+
+Actual pinning and review of all 59 references remain outstanding. The current
+GitHub token cannot modify workflow files; this limitation must not be bypassed.
+The ratchet is change control, not an advisory scan, provenance check, action
+trust review, or independent security assessment.
+
 ## Reproduce and remaining checks
 
 ```bash
@@ -52,6 +82,8 @@ cargo test --manifest-path services/p2p-node/Cargo.toml --locked --all-targets
 cargo build --manifest-path services/p2p-node/Cargo.toml --locked --release
 python -m pip check
 python -m pip freeze
+python scripts/check_p2p_workflows.py
+python scripts/test_check_p2p_workflows.py
 ```
 
 The offline `--no-deps` metadata command passed during this review. Full offline
@@ -62,6 +94,7 @@ full dependency inventory. Build/test evidence is recorded separately.
 Before a public release, record a current advisory scan for Rust and Python,
 triage reachable findings, generate a complete dependency/license inventory,
 lock the supported Python deployment environment, and record toolchain and
-artifact hashes. Pin and review third-party CI action revisions as part of the
-release process. No advisory scanner was run in this task, so no “zero known
-vulnerabilities” conclusion is supported.
+artifact hashes. Complete the actual third-party CI action SHA/digest pinning
+and trust review before release; the ratchet alone does not clear that gate.
+No advisory scanner was run in this task, so no “zero known vulnerabilities”
+conclusion is supported.
