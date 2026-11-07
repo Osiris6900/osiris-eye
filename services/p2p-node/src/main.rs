@@ -523,6 +523,18 @@ mod tests {
         let _ = std::fs::remove_file(path);
     }
 
+    #[test]
+    fn embedded_relay_config_enforces_exact_per_peer_operator_defaults() {
+        let config = super::embedded_relay_config();
+        assert_eq!(super::EMBEDDED_RELAY_RESERVATIONS_PER_PEER, 2);
+        assert_eq!(super::EMBEDDED_RELAY_CIRCUITS_PER_PEER, 2);
+        // Raw libp2p-relay 0.21 values are one below the exact public limit.
+        assert_eq!(config.max_reservations_per_peer, 1);
+        assert_eq!(config.max_circuits_per_peer, 1);
+        assert_eq!(config.max_reservations, 64);
+        assert_eq!(config.max_circuits, 8);
+    }
+
     #[test] fn accepts_valid_envelope() { assert!(valid().validate().is_ok()); }
     #[test] fn rejects_wrong_schema() { let mut v=valid(); v.schema="v0".into(); assert_eq!(v.validate(),Err("unsupported_schema")); }
     #[test] fn rejects_bad_digest() { let mut v=valid(); v.payload_sha256="xyz".into(); assert_eq!(v.validate(),Err("invalid_payload_sha256")); }
@@ -1175,6 +1187,25 @@ async fn serve_health_endpoint(
     }
 }
 
+const EMBEDDED_RELAY_RESERVATIONS_PER_PEER: usize = 2;
+const EMBEDDED_RELAY_CIRCUITS_PER_PEER: usize = 2;
+
+/// Build the embedded relay with the same operator-facing defaults as the
+/// standalone relay. libp2p-relay 0.21 checks `current > configured` before
+/// insertion, so an exact limit of N requires a raw value of N - 1. Revisit
+/// this translation when upgrading libp2p-relay; these are not raw quotas.
+fn embedded_relay_config() -> relay::Config {
+    let mut config = relay::Config::default();
+    config.max_reservations = 64;
+    config.max_reservations_per_peer = EMBEDDED_RELAY_RESERVATIONS_PER_PEER - 1;
+    config.max_circuits = 8;
+    config.max_circuits_per_peer = EMBEDDED_RELAY_CIRCUITS_PER_PEER - 1;
+    config.reservation_duration = Duration::from_secs(30 * 60);
+    config.max_circuit_duration = Duration::from_secs(60);
+    config.max_circuit_bytes = 1_048_576;
+    config
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let max_observation_age = observation_policy::parse_max_age(
@@ -1250,16 +1281,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         ),
         relay: relay_behaviour,
         relay_server: if relay_server_enabled {
-            // Same conservative limits as the standalone relay binary.
-            let mut config = relay::Config::default();
-            config.max_reservations = 64;
-            config.max_reservations_per_peer = 2;
-            config.max_circuits = 8;
-            config.max_circuits_per_peer = 2;
-            config.reservation_duration = Duration::from_secs(30 * 60);
-            config.max_circuit_duration = Duration::from_secs(60);
-            config.max_circuit_bytes = 1_048_576;
-            Some(relay::Behaviour::new(peer_id, config))
+            Some(relay::Behaviour::new(peer_id, embedded_relay_config()))
         } else { None }.into(),
         autonat: autonat::Behaviour::new(peer_id, autonat::Config::default()),
         dcutr: if hole_punch_enabled {
