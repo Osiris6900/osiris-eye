@@ -28,6 +28,8 @@ jobs:
           cache: pip
           cache-dependency-path: services/quant-api/pyproject.toml
       - name: Install package and test dependencies
-        run: python -m pip install -e ".[dev]"
+        run: |
+          python -m pip install --upgrade 'pip>=26.2'
+          python -m pip install -e ".[dev]"
       - name: Run API tests
         run: python -m pytest -q

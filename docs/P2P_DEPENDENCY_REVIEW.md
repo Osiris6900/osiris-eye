@@ -112,8 +112,12 @@ libp2p-yamux 0.47 default selected Yamux 0.13 rather than its customized 0.12
 compatibility path. This is local configuration evidence, not an external
 exploitability audit.
 
-Python remains explicitly `unresolved` and was not queried as a resolved PyPI
-environment. OSV matching is point-in-time advisory evidence, not proof of
+The historical OSV report below leaves Python `unresolved`. A subsequent local
+resolved-environment pip-audit scan is retained in
+[PYTHON_DEPENDENCY_AUDIT.json](PYTHON_DEPENDENCY_AUDIT.json): no known
+advisories after upgrading cryptography, pytest and pip. It includes development
+and scanner tooling, skips first-party source advisory matching and does not
+establish Python 3.11 or optional-extra dependency resolution. OSV matching is point-in-time advisory evidence, not proof of
 exploitation, a universal vulnerability-free result, or an independent audit.
 The broader dependency gate also remains open for Python resolution,
 license/redistribution and artifact-provenance review.

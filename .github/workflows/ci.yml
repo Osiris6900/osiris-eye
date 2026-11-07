@@ -26,7 +26,9 @@ jobs:
           cache: pip
           cache-dependency-path: services/quant-api/pyproject.toml
       - name: Install API and test dependencies
-        run: pip install -e "services/quant-api[dev]" 'PyYAML>=6,<7'
+        run: |
+          python -m pip install --upgrade 'pip>=26.2'
+          pip install -e "services/quant-api[dev]" 'PyYAML>=6,<7'
       - name: Run Python tests
         run: pytest -q services/quant-api/tests
       - name: Validate workflow YAML and embedded Bash
