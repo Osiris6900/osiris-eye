@@ -27,7 +27,7 @@ integrated results must be recorded against its final commit before promotion.
 | Revocation and rotation | Signed revocation persists, disconnects a live peer and blocks reconnect/message admission; operator rotation preserves epoch rules across restart | Local tests and rotation runbook exist; operational recovery exercise still required |
 | Two independent hosts | Same-commit binaries on separate machines establish authenticated connectivity and deliver the exact encrypted recipient observation | SSH harness/workflow implemented; passing final-commit cross-host E2EE evidence outstanding |
 | Three independent hosts | A encrypts only for B; B reports exact decrypted digest; excluded C reports recipient-gated discard without plaintext identifiers | Harness/workflow implemented; passing run outstanding; primitive wrong-key tests cover decryption failure separately |
-| Outage and load | Record recovery time, latency distribution, loss/rejection counts, RSS, CPU and disk growth for a declared peer/message workload, including relay/bootstrap outage | No final capacity claim or retained soak benchmark established; set numerical acceptance limits before running |
+| Outage and load | Record recovery time, latency distribution, loss/rejection counts, RSS, CPU and disk growth for a declared peer/message workload, including relay/bootstrap outage | [Numerical policy and fail-closed evidence checker](P2P_OUTAGE_LOAD_ACCEPTANCE.md) implemented; actual final-candidate multi-host soak and retained passing artifact outstanding |
 | Public operations | Operator-controlled endpoints pass the intended networks' connectivity, health, restart and monitoring checks | Configuration/profile exists; deployment, uptime and live peer count are not established |
 | Feed provenance | Each admitted feed has an authorized source, permitted redistribution, availability timestamps and independently checked quality | Fail-closed operator policy and durable attestation implemented; actual rights, entitlements and independent quality evidence remain required |
 | Independent assurance | External reviewers assess protocol, implementation and operator lifecycle; findings are remediated and retested | Internal reviews/tests do not constitute an independent cryptographic audit |
@@ -49,6 +49,7 @@ pip install -e 'services/quant-api[dev]'
 pytest -q services/quant-api/tests
 python scripts/test_p2p_workflow_coordination.py
 python scripts/test_p2p_ssh_harness.py
+python -m unittest scripts/test_check_p2p_load_acceptance.py -v
 python deploy/p2p/test_preflight.py
 cargo test --manifest-path services/p2p-node/Cargo.toml --all-targets
 cargo build --release --manifest-path services/p2p-node/Cargo.toml
