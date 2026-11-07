@@ -72,11 +72,15 @@ Run the real libp2p transport integration tests with:
 cargo test --manifest-path services/p2p-node/Cargo.toml --locked --test relay_quota
 ```
 
-The tests configure zero reservation/circuit capacity and require both the
-relay's `ResourceLimitExceeded` event and the client's failed listener/dial.
-They also assert that no sender/receiver connection is established above the
-circuit quota. These are same-host protocol tests, not cross-network,
-independent-host, hostile-load or production-capacity evidence.
+The tests configure zero global reservation/circuit capacity and require both
+the relay's `ResourceLimitExceeded` event and the client's failed listener/dial.
+A separate per-peer case establishes one circuit successfully, then forces a
+second dial with `PeerCondition::Always` and requires relay-side denial while
+the first connection remains established. This avoids mistaking the Swarm's
+local duplicate-dial guard for quota enforcement. The global circuit case also
+asserts that no sender/receiver connection is established above quota. These
+are same-host protocol tests, not cross-network, independent-host, hostile-load
+or production-capacity evidence.
 
 ## Operating checklist
 
