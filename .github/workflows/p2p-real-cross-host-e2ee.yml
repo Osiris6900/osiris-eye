@@ -21,10 +21,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - name: Connect Host A to Tailscale
-        uses: tailscale/github-action@v3
+        uses: tailscale/github-action@6cae46e2d796f265265cfcf628b72a32b4d7cade # v3
         with:
           authkey: ${{ secrets.TS_AUTHKEY }}
           tags: tag:ci-p2p
@@ -40,7 +40,7 @@ jobs:
           test -n "$HOST_A_IP"
           printf '{"tailscale_ip":"%s","port":4001}\n' "$HOST_A_IP" > "$RUNNER_TEMP/osiris-e2ee/host-a.json"
       - name: Share only the ephemeral public SSH key
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: e2ee-host-a-ssh-pub-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/osiris-e2ee/host-a.pub
@@ -54,7 +54,7 @@ jobs:
           python3 scripts/p2p_workflow_coordination.py wait-artifact \
             --name "e2ee-host-b-endpoint-${{ github.run_id }}-${{ github.run_attempt }}" --timeout 600
       - name: Download Host B SSH endpoint
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: e2ee-host-b-endpoint-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/osiris-e2ee
@@ -89,7 +89,7 @@ jobs:
             --path "$RUNNER_TEMP/osiris-e2ee/result.json" --status "$TEST_STATUS"
       - name: Release receiver after test completion
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: e2ee-controller-finished-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/osiris-e2ee/result.json
@@ -97,7 +97,7 @@ jobs:
           retention-days: 1
       - name: Upload E2EE logs on failure
         if: failure() || cancelled()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: e2ee-host-a-failure-${{ github.run_id }}-${{ github.run_attempt }}
           # Allowlist public diagnostics; never upload the host-a private SSH key.
@@ -117,10 +117,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - name: Connect Host B to Tailscale
-        uses: tailscale/github-action@v3
+        uses: tailscale/github-action@6cae46e2d796f265265cfcf628b72a32b4d7cade # v3
         with:
           authkey: ${{ secrets.TS_AUTHKEY }}
           tags: tag:ci-p2p
@@ -134,7 +134,7 @@ jobs:
           python3 scripts/p2p_workflow_coordination.py wait-artifact \
             --name "e2ee-host-a-ssh-pub-${{ github.run_id }}-${{ github.run_attempt }}" --timeout 600
       - name: Download Host A public SSH key
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: e2ee-host-a-ssh-pub-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/osiris-e2ee
@@ -164,7 +164,7 @@ jobs:
             --path "$DIR/host-b.json" --ip "$HOST_B_IP" \
             --host-key /etc/ssh/ssh_host_ed25519_key.pub
       - name: Publish Host B SSH endpoint
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: e2ee-host-b-endpoint-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/osiris-e2ee/host-b.json

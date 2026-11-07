@@ -27,6 +27,22 @@ def test_api_requires_constant_time_bearer_token_when_configured(monkeypatch):
     ).status_code == 200
 
 
+def test_api_rejects_non_ascii_bearer_header_without_server_error(monkeypatch):
+    monkeypatch.setenv("OSIRIS_API_TOKEN", "test-secret-token")
+    with TestClient(app, raise_server_exceptions=False) as api:
+        response = api.get(
+            "/platform/modules", headers={b"authorization": b"Bearer \xff"}
+        )
+    assert response.status_code == 401
+
+
+def test_api_rejects_wrong_header_with_unicode_configured_token(monkeypatch):
+    monkeypatch.setenv("OSIRIS_API_TOKEN", "secret-\u00e9")
+    with TestClient(app, raise_server_exceptions=False) as api:
+        response = api.get("/platform/modules", headers={"Authorization": "Bearer wrong"})
+    assert response.status_code == 401
+
+
 def test_observation_store_rejects_duplicate_keys_without_overwriting(tmp_path):
     store = ResearchStore(str(tmp_path / "research.sqlite3"))
     record = dict(

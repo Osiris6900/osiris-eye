@@ -8,11 +8,15 @@ Broker credentials, account data, orders and execution commands must remain
 outside this protocol. Encryption does not establish provider truth, market-data
 rights or trading suitability.
 
-This document describes implemented controls on the hardening branch. The
-baseline `48755ef3` passed local CI, including recipient E2EE, non-recipient
-discard, revocation/disconnect and three-peer mesh tests. New branch changes
-require their own test results. Two-host and three-host E2EE harnesses and
-workflows exist; a passing cross-host E2EE run has not been established. No
+This document describes implemented controls. Commit `ce16dbde` passed
+[integrated CI](https://github.com/Osiris6900/osiris-eye/actions/runs/42423590055),
+including local recipient E2EE, non-recipient rejection, core relay E2EE,
+freshness, revocation/disconnect and signed receipt checks. At `974de9ce`,
+[Tailscale cross-host observation delivery](https://github.com/Osiris6900/osiris-eye/actions/runs/42421052643)
+also passed; that workflow does not enable recipient E2EE. Subsequent changes
+require their own test results. Two-host and three-host recipient E2EE harnesses
+and workflows exist; those independent-host E2EE gates remain open. See
+[release gates](P2P_RELEASE_GATES.md) for evidence boundaries. No
 independent cryptographic audit, public-fleet uptime or production certification
 is claimed.
 

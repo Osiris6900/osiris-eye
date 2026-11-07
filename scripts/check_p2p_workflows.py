@@ -183,10 +183,13 @@ def main() -> None:
     except (OSError, ValueError, yaml.YAMLError, subprocess.SubprocessError) as error:
         raise SystemExit(str(error)) from error
     print(f"Validated {len(paths)} workflow YAML files and {checked} shell blocks")
-    print(
-        f"Action-pinning ratchet passed with {sum(unpinned.values())} "
-        "baselined mutable references; actual pinning is still outstanding"
-    )
+    if unpinned:
+        print(
+            f"Action-pinning ratchet passed with {sum(unpinned.values())} "
+            "baselined mutable references; actual pinning is still outstanding"
+        )
+    else:
+        print("Action-pinning audit passed: all remote actions use immutable revisions")
 
 
 if __name__ == "__main__":

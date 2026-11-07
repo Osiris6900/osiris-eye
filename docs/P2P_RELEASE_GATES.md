@@ -13,17 +13,28 @@ test, a cross-host passing run and an independent audit are separate evidence.
 
 ## Evidence and remaining gates
 
-The [baseline main CI run](https://github.com/Osiris6900/osiris-eye/actions/runs/41748810081)
-at commit `48755ef3d1c7a9f3fd3cbbb309d4f052ec06010b` passed its existing local tests.
-It does not verify the subsequent hardening changes. The current branch's
-integrated results must be recorded against its final commit before promotion.
+The [main CI run](https://github.com/Osiris6900/osiris-eye/actions/runs/42423590055)
+at commit `ce16dbde1e7b2377c82e5f14622238e60c04ff07` passed its Python, web and
+Rust jobs on 2026-11-07. The Rust job also passed the core relay E2EE,
+observation freshness, restart, revocation and signed delivery-receipt process
+checks. This establishes integrated local acceptance for that commit only;
+subsequent changes require their own results before promotion.
+
+At `974de9ce04585e1d38824136514325f231b2bdaf`, the
+[Tailscale two-host run](https://github.com/Osiris6900/osiris-eye/actions/runs/42421052643)
+passed both receiver and sender jobs, and the
+[three-peer mesh run](https://github.com/Osiris6900/osiris-eye/actions/runs/42421052595)
+passed. The Tailscale workflow does not enable recipient E2EE, so it establishes
+cross-host observation delivery, not cross-host recipient E2EE acceptance.
+Neither result establishes independent three-host recipient exclusion,
+public deployment, sustained load acceptance or an independent audit.
 
 | Gate | Acceptance criterion | Current evidence boundary |
 |---|---|---|
-| Crypto and input validation | Unit/adversarial suites reject modified signatures, ciphertext, wrong recipients, low-order keys, malformed metadata and expired envelopes | Implemented suites; hardening branch requires integrated run |
-| Core relay E2EE | Relay plus two core nodes exchange the exact recipient payload digest with mDNS disabled and both peer paths reported as relayed | Process harness implemented; retain passing result for final commit |
-| Observation freshness | Configured receiver rejects malformed, stale and future event times and continues accepting a fresh encrypted observation | Timestamp policy and process harness implemented; integrated verification required |
-| Replay and durable keys | Restart retains accepted message IDs and key-epoch floors; malformed, replaced or exhausted state fails closed | Tests implemented; final-commit results required; each state path supports one writer |
+| Crypto and input validation | Unit/adversarial suites reject modified signatures, ciphertext, wrong recipients, low-order keys, malformed metadata and expired envelopes | Passed in integrated CI at `ce16dbde`; later candidates require rerun |
+| Core relay E2EE | Relay plus two core nodes exchange the exact recipient payload digest with mDNS disabled and both peer paths reported as relayed | Passed in integrated CI at `ce16dbde`; core relay evidence upload also passed |
+| Observation freshness | Configured receiver rejects malformed, stale and future event times and continues accepting a fresh encrypted observation | Passed in integrated CI at `ce16dbde`; later candidates require rerun |
+| Replay and durable keys | Restart retains accepted message IDs and key-epoch floors; malformed, replaced or exhausted state fails closed | Local suites passed at `ce16dbde`; each state path supports one writer; later candidates require rerun |
 | Revocation and rotation | Signed revocation persists, disconnects a live peer and blocks reconnect/message admission; operator rotation preserves epoch rules across restart | Local tests and rotation runbook exist; operational recovery exercise still required |
 | Two independent hosts | Same-commit binaries on separate machines establish authenticated connectivity and deliver the exact encrypted recipient observation | SSH harness/workflow implemented; passing final-commit cross-host E2EE evidence outstanding |
 | Three independent hosts | A encrypts only for B; B reports exact decrypted digest; excluded C reports recipient-gated discard without plaintext identifiers | Harness/workflow implemented; passing run outstanding; primitive wrong-key tests cover decryption failure separately |
