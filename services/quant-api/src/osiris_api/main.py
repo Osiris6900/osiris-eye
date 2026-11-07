@@ -192,6 +192,7 @@ def backtest_simulate(request: BacktestIn):
 
 
 
+
 @app.post("/research/validation/walk-forward")
 def phase6_walk_forward(p: dict[str, Any] = Body(...)):
     return guarded(walk_forward_validation, p.get("returns", []), p.get("train_size", 0),
@@ -265,29 +266,36 @@ def phase7_trade_surveillance(p: dict[str, Any] = Body(...)):
 def phase8_lineage(p: dict[str, Any] = Body(...)):
     return guarded(audit_data_lineage, p.get("records", []))
 
+
 @app.post("/research/backtest/integrity-audit")
 def phase8_backtest_integrity(p: dict[str, Any] = Body(...)):
     return guarded(audit_backtest_integrity, p.get("evidence", {}))
+
 
 @app.post("/risk/governor/evaluate")
 def phase8_risk_governor(p: dict[str, Any] = Body(...)):
     return guarded(portfolio_risk_governor, p.get("positions", []), p.get("max_gross_exposure", 0), p.get("max_single_name_weight", 0), p.get("current_drawdown", 0), p.get("max_drawdown", 0))
 
+
 @app.post("/research/catalysts/impact-scenarios")
 def phase8_catalyst_scenarios(p: dict[str, Any] = Body(...)):
     return guarded(catalyst_impact_scenarios, p.get("weights", {}), p.get("scenarios", {}))
+
 
 @app.post("/research/models/observability")
 def phase8_model_observability(p: dict[str, Any] = Body(...)):
     return guarded(observe_model_health, p.get("reference", []), p.get("current", []), p.get("max_mean_shift", 0.5), p.get("max_std_ratio", 2.0))
 
+
 @app.post("/paper/trading/reconcile")
 def phase8_paper_reconciliation(p: dict[str, Any] = Body(...)):
     return guarded(reconcile_paper_trades, p.get("orders", []), p.get("fills", []), p.get("positions", []))
 
+
 @app.post("/platform/security/resilience-audit")
 def phase8_security_resilience(p: dict[str, Any] = Body(...)):
     return guarded(audit_security_resilience, p.get("controls", {}))
+
 
 @app.post("/platform/workflow/research-orchestrate")
 def phase8_research_orchestrator(p: dict[str, Any] = Body(...)):
@@ -298,33 +306,41 @@ def phase8_research_orchestrator(p: dict[str, Any] = Body(...)):
 def phase9_global_coverage(p: dict[str, Any] = Body(...)):
     return guarded(audit_global_instruments, p.get("instruments", []))
 
+
 @app.post("/risk/counterparties/concentration")
 def phase9_counterparty_risk(p: dict[str, Any] = Body(...)):
     return guarded(analyze_counterparty_risk, p.get("exposures", []), p.get("nav", 0), p.get("max_counterparty_weight", 0.25))
+
 
 @app.post("/portfolio/corporate-actions/audit")
 def phase9_corporate_actions(p: dict[str, Any] = Body(...)):
     return guarded(process_corporate_actions, p.get("actions", []), p.get("tax_lots", []))
 
+
 @app.post("/research/portfolio/capacity")
 def phase9_portfolio_capacity(p: dict[str, Any] = Body(...)):
     return guarded(estimate_portfolio_capacity, p.get("positions", []), p.get("participation_rate", 0.10), p.get("stress_volume_haircut", 0.50))
+
 
 @app.post("/research/derivatives/exposure")
 def phase9_derivatives_exposure(p: dict[str, Any] = Body(...)):
     return guarded(aggregate_derivatives_exposure, p.get("positions", []))
 
+
 @app.post("/research/knowledge-graph/financial-audit")
 def phase9_financial_graph(p: dict[str, Any] = Body(...)):
     return guarded(audit_financial_graph, p.get("nodes", []), p.get("edges", []))
+
 
 @app.post("/platform/resilience/disaster-recovery-simulate")
 def phase9_disaster_recovery(p: dict[str, Any] = Body(...)):
     return guarded(simulate_disaster_recovery, p.get("services", []))
 
+
 @app.post("/research/performance/benchmark")
 def phase9_benchmark_performance(p: dict[str, Any] = Body(...)):
     return guarded(benchmark_performance, p.get("portfolio_returns", []), p.get("benchmark_returns", []), p.get("periods_per_year", 252))
+
 
 @app.get("/platform/command-center")
 def command_center():
@@ -471,41 +487,51 @@ def api_order_book(p: dict[str, Any] = Body(...)):
 def api_execution_sim(p: dict[str, Any] = Body(...)):
     return guarded(execution_sim, p.get("quantity", 0), p.get("arrival_price", 0), p.get("fills", []), p.get("fee_bps", 0))
 
+
 @app.post("/research/models/governance")
 def api_model_governance(p: dict[str, Any] = Body(...)):
     return guarded(model_governance, p.get("reference", []), p.get("current", []), p.get("threshold", 1))
+
 
 @app.post("/research/knowledge-graph/audit")
 def api_knowledge_graph(p: dict[str, Any] = Body(...)):
     return guarded(knowledge_graph, p.get("nodes", []), p.get("edges", []))
 
+
 @app.post("/research/strategies/discover")
 def api_strategy_discovery(p: dict[str, Any] = Body(...)):
     return guarded(strategy_discovery, p.get("signals", []), p.get("returns", []))
+
 
 @app.post("/research/regime/change-point")
 def api_regime_change(p: dict[str, Any] = Body(...)):
     return guarded(regime_change, p.get("values", []), p.get("window", 20), p.get("threshold", 2))
 
+
 @app.post("/research/scenarios/monte-carlo")
 def api_monte_carlo(p: dict[str, Any] = Body(...)):
     return guarded(monte_carlo, p.get("mean_return", 0), p.get("volatility", 0), p.get("periods", 20), p.get("paths", 1000), p.get("seed", 7))
+
 
 @app.post("/research/news/audit")
 def api_news_audit(p: dict[str, Any] = Body(...)):
     return guarded(news_audit, p.get("items", []))
 
+
 @app.post("/platform/security/policy-audit")
 def api_security_audit(p: dict[str, Any] = Body(...)):
     return guarded(security_audit, p.get("permissions", []))
+
 
 @app.post("/research/portfolio/attribution")
 def api_attribution(p: dict[str, Any] = Body(...)):
     return guarded(attribution, p.get("asset_returns", {}), p.get("weights", {}))
 
+
 @app.post("/platform/compute/plan")
 def api_compute_plan(p: dict[str, Any] = Body(...)):
     return guarded(compute_plan, p.get("tasks", 0), p.get("workers", 1))
+
 
 @app.post("/platform/incidents/assess")
 def api_incident_assessment(p: dict[str, Any] = Body(...)):
@@ -516,45 +542,56 @@ def api_incident_assessment(p: dict[str, Any] = Body(...)):
 def api_connector_contract(p: dict[str, Any] = Body(...)):
     return guarded(connector_contract, p)
 
+
 @app.post("/research/market/replay")
 def api_market_replay(p: dict[str, Any] = Body(...)):
     return guarded(market_replay, p.get("events", []))
+
 
 @app.post("/research/portfolio/optimize")
 def api_portfolio_optimizer(p: dict[str, Any] = Body(...)):
     return guarded(portfolio_optimizer, p.get("volatilities", []), p.get("max_weight", 1.0))
 
+
 @app.post("/paper/orders/lifecycle")
 def api_paper_order(p: dict[str, Any] = Body(...)):
     return guarded(paper_order_lifecycle, p)
+
 
 @app.post("/research/factors/diagnostics")
 def api_factor_diagnostics(p: dict[str, Any] = Body(...)):
     return guarded(factor_diagnostics, p.get("asset_returns", {}), p.get("factor_returns", {}))
 
+
 @app.post("/research/options/greeks-aggregate")
 def api_derivatives_risk(p: dict[str, Any] = Body(...)):
     return guarded(derivatives_risk, p.get("positions", []))
+
 
 @app.post("/research/events/calendar-audit")
 def api_event_calendar(p: dict[str, Any] = Body(...)):
     return guarded(event_calendar_audit, p.get("events", []))
 
+
 @app.post("/research/experiments/manifest")
 def api_experiment_manifest(p: dict[str, Any] = Body(...)):
     return guarded(experiment_manifest, p)
+
 
 @app.post("/research/portfolio/stress")
 def api_portfolio_stress(p: dict[str, Any] = Body(...)):
     return guarded(portfolio_stress, p.get("returns", {}), p.get("weights", {}), p.get("shocks", {}))
 
+
 @app.post("/platform/sre/health")
 def api_sre_health(p: dict[str, Any] = Body(...)):
     return guarded(sre_health, p.get("services", []))
 
+
 @app.post("/platform/security/rbac-audit")
 def api_rbac_audit(p: dict[str, Any] = Body(...)):
     return guarded(rbac_audit, p.get("grants", []))
+
 
 @app.post("/platform/workflow/gate")
 def api_workflow_gate(p: dict[str, Any] = Body(...)):
@@ -565,6 +602,7 @@ def api_workflow_gate(p: dict[str, Any] = Body(...)):
 def api_market_batch_audit(p: dict[str, Any] = Body(...)):
     return guarded(audit_market_batch, p.get("provider", ""), p.get("dataset", ""),
                    p.get("license_status", "unverified"), p.get("records", []))
+
 
 @app.post("/data/market/batch-ingest")
 def api_market_batch_ingest(p: dict[str, Any] = Body(...)):
@@ -580,14 +618,17 @@ def api_market_batch_ingest(p: dict[str, Any] = Body(...)):
             available_at=normalized["available_at"], payload=normalized["payload"]))
     return {"accepted": len(saved), "records": saved, "live_execution": False}
 
+
 @app.get("/data/market/as-of")
 def api_market_as_of(dataset: str = Query(..., min_length=1, max_length=100),
                      as_of: str = Query(...), limit: int = Query(100, ge=1, le=1000)):
     return {"dataset": dataset, "as_of": as_of, "records": guarded(store.list_as_of, dataset, as_of, limit)}
 
+
 @app.post("/platform/data/instrument-master-audit")
 def api_instrument_master_audit(p: dict[str, Any] = Body(...)):
     return guarded(audit_instrument_master, p.get("instruments", []))
+
 
 @app.post("/platform/data/feed-health")
 def api_feed_health(p: dict[str, Any] = Body(...)):
@@ -614,32 +655,39 @@ def api_phase10_risk_monitor(p: dict[str, Any] = Body(...)):
                    p.get("max_gross_leverage", 2.0), p.get("max_name_weight", 0.25),
                    p.get("returns"), p.get("confidence", 0.95))
 
+
 @app.post("/platform/data/vendor-failover-audit")
 def api_phase10_vendor_failover(p: dict[str, Any] = Body(...)):
     return guarded(audit_vendor_failover, p.get("feeds", []),
                    p.get("max_age_seconds", 60), p.get("conflict_tolerance_bps", 5))
 
+
 @app.post("/research/alpha/factory-rank")
 def api_phase10_alpha_factory(p: dict[str, Any] = Body(...)):
     return guarded(score_alpha_hypotheses, p.get("experiments", []))
+
 
 @app.post("/portfolio/capital/risk-budget")
 def api_phase10_risk_budget(p: dict[str, Any] = Body(...)):
     return guarded(allocate_risk_budget, p.get("strategies", []),
                    p.get("total_risk_budget", 0), p.get("max_strategy_weight", 0.4))
 
+
 @app.post("/platform/agents/governance-audit")
 def api_phase10_agent_governance(p: dict[str, Any] = Body(...)):
     return guarded(audit_agent_governance, p.get("agents", []))
+
 
 @app.post("/research/execution/tca")
 def api_phase10_tca(p: dict[str, Any] = Body(...)):
     return guarded(analyze_execution_quality, p.get("trades", []))
 
+
 @app.post("/research/risk/systemic-stress")
 def api_phase10_systemic_stress(p: dict[str, Any] = Body(...)):
     return guarded(simulate_systemic_stress, p.get("exposures", []),
                    p.get("shocks", {}), p.get("nav", 0))
+
 
 @app.post("/platform/strategies/approval-review")
 def api_phase10_strategy_approval(p: dict[str, Any] = Body(...)):
@@ -657,31 +705,38 @@ def api_phase11_ledger(p: dict[str, Any] = Body(...)):
     return guarded(reconcile_ledger, p.get("positions", []), p.get("broker_positions", []),
                    p.get("cash", 0), p.get("broker_cash", 0), p.get("tolerance", 1e-6))
 
+
 @app.post("/execution/orders/lifecycle-audit")
 def api_phase11_order_lifecycle(p: dict[str, Any] = Body(...)):
     return guarded(simulate_order_lifecycle, p.get("order", {}))
+
 
 @app.post("/research/execution/cost-calibration")
 def api_phase11_cost_calibration(p: dict[str, Any] = Body(...)):
     return guarded(calibrate_transaction_costs, p.get("observations", []))
 
+
 @app.post("/risk/options/greeks-aggregate")
 def api_phase11_options_greeks(p: dict[str, Any] = Body(...)):
     return guarded(options_greeks_risk, p.get("positions", []))
+
 
 @app.post("/risk/margin/funding-stress")
 def api_phase11_margin(p: dict[str, Any] = Body(...)):
     return guarded(margin_funding_stress, p.get("positions", []), p.get("available_funds", 0),
                    p.get("maintenance_margin", 0), p.get("funding_bps", 0))
 
+
 @app.post("/portfolio/liquidity/exit-plan")
 def api_phase11_exit_plan(p: dict[str, Any] = Body(...)):
     return guarded(plan_position_exit, p.get("positions", []),
                    p.get("adv_participation", 0.1), p.get("stress_multiplier", 2.0))
 
+
 @app.post("/platform/models/rollout-gate")
 def api_phase11_model_rollout(p: dict[str, Any] = Body(...)):
     return guarded(evaluate_model_rollout, p.get("metrics", {}))
+
 
 @app.post("/platform/risk/kill-switch/evaluate")
 def api_phase11_kill_switch(p: dict[str, Any] = Body(...)):
@@ -792,6 +847,7 @@ app.include_router(instrument_master_router)
 
 
 from .calendar_routes import router as exchange_calendar_router
+
 app.include_router(exchange_calendar_router)
 
 from .market_mechanics_routes import router as market_mechanics_router
@@ -829,3 +885,27 @@ def evaluate_paper_workflow_endpoint(p: dict[str, Any] = Body(...)):
     )
     result["audit"] = audit
     return result
+
+
+from .paper_observation_bridge import evaluate_stored_observation
+
+
+@app.post("/paper/workflow/from-observation")
+def evaluate_stored_observation_endpoint(p: dict[str, Any] = Body(...)):
+    """Evaluate an already-ingested observation; persist paper intent only."""
+    return guarded(
+        evaluate_stored_observation,
+        store,
+        record_key=p.get("record_key", ""),
+        source=p.get("source", ""),
+        allowed_providers=p.get("allowed_providers", []),
+        signals=p.get("signals", []),
+        asset_returns=p.get("asset_returns", []),
+        quantity=p.get("quantity", 0),
+        current_position_notional=p.get("current_position_notional", 0),
+        daily_pnl=p.get("daily_pnl", 0),
+        cost_bps_per_unit_turnover=p.get("cost_bps_per_unit_turnover", 2.0),
+        max_age_seconds=p.get("max_age_seconds", 300.0),
+        max_future_skew_seconds=p.get("max_future_skew_seconds", 60.0),
+        require_feed_admission=p.get("require_feed_admission", False) is True,
+    )
