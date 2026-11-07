@@ -63,6 +63,11 @@ version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = ["fastapi>=0.110,<1"]
 ''')
+        self.python_lock = self.root / "requirements-deploy.lock"
+        self.python_lock.write_text('''--index-url https://pypi.org/simple/
+
+fastapi==0.115.0 \\
+    --hash=sha256:''' + "ef" * 32 + "\n")
         self.cache = empty_cache()
         self.cache["crates"]["demo-crate@1.2.3"] = {
             "license": "MIT",
@@ -75,13 +80,13 @@ dependencies = ["fastapi>=0.110,<1"]
         self.directory.cleanup()
 
     def build(self):
-        return build_sbom(self.cargo, self.npm, self.python, copy.deepcopy(self.cache), True)
+        return build_sbom(self.cargo, self.npm, self.python, self.python_lock, copy.deepcopy(self.cache), True)
 
     def test_locked_components_and_local_applications_are_inventoried(self):
         sbom = self.build()
         self.assertEqual(sbom["bomFormat"], "CycloneDX")
         self.assertEqual(sbom["specVersion"], "1.5")
-        self.assertEqual(len(sbom["components"]), 6)
+        self.assertEqual(len(sbom["components"]), 7)
         crate = next(c for c in sbom["components"] if c["name"] == "demo-crate")
         self.assertEqual(crate["hashes"], [{"alg": "SHA-256", "content": self.checksum}])
         self.assertEqual(crate["licenses"], [{"expression": "MIT"}])
@@ -89,13 +94,25 @@ dependencies = ["fastapi>=0.110,<1"]
         self.assertEqual(dev["scope"], "optional")
         self.assertEqual(dev["purl"], "pkg:npm/%40scope/dev@3.0.0")
 
-    def test_python_is_explicitly_unresolved_not_fabricated_as_locked(self):
+    def test_python_lock_is_inventoried_as_resolved_and_hashed(self):
         sbom = self.build()
         python = next(c for c in sbom["components"] if c["name"] == "osiris-quant-api")
         properties = {p["name"]: p["value"] for p in python["properties"]}
-        self.assertEqual(properties["osiris:dependency-resolution"], "unresolved")
+        self.assertEqual(properties["osiris:dependency-resolution"], "resolved-hashed-lock")
+        self.assertEqual(
+            properties["osiris:deployment-lock"],
+            "services/quant-api/requirements-deploy.lock",
+        )
         self.assertIn("fastapi>=0.110,<1", properties["osiris:declared-dependencies"])
-        self.assertFalse(any(c.get("purl", "").startswith("pkg:pypi/") for c in sbom["components"]))
+        fastapi = next(c for c in sbom["components"] if c.get("purl", "").startswith("pkg:pypi/"))
+        self.assertEqual(fastapi["purl"], "pkg:pypi/fastapi@0.115.0")
+        self.assertEqual(fastapi["scope"], "required")
+        self.assertEqual(fastapi["hashes"], [{"alg": "SHA-256", "content": "ef" * 32}])
+
+    def test_python_lock_without_hashes_fails_closed(self):
+        self.python_lock.write_text("fastapi==0.115.0\n")
+        with self.assertRaisesRegex(ValueError, "no sha256"):
+            self.build()
 
     def test_output_is_deterministic_and_checkout_path_independent(self):
         first = self.build()
@@ -104,15 +121,17 @@ dependencies = ["fastapi>=0.110,<1"]
         cargo = other / "Cargo.lock"
         npm = other / "package-lock.json"
         python = other / "pyproject.toml"
+        python_lock = other / "requirements-deploy.lock"
         cargo.write_text(self.cargo.read_text())
         npm.write_text(self.npm.read_text())
         python.write_text(self.python.read_text())
-        second = build_sbom(cargo, npm, python, copy.deepcopy(self.cache), True)
+        python_lock.write_text(self.python_lock.read_text())
+        second = build_sbom(cargo, npm, python, python_lock, copy.deepcopy(self.cache), True)
         self.assertEqual(first, second)
 
     def test_missing_offline_crate_metadata_fails_closed(self):
         with self.assertRaisesRegex(ValueError, "offline crate cache is missing"):
-            build_sbom(self.cargo, self.npm, self.python, empty_cache(), True)
+            build_sbom(self.cargo, self.npm, self.python, self.python_lock, empty_cache(), True)
 
     def test_crate_checksum_mismatch_fails_closed(self):
         self.cache["crates"]["demo-crate@1.2.3"]["checksum"] = "cd" * 32
