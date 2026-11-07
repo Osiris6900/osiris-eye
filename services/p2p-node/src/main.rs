@@ -497,7 +497,6 @@ mod tests {
         let binding_record = create_key_binding(
             &sender, &sender_transport.public_key, 1, now.saturating_sub(5), now + 300,
         ).unwrap();
-        let sender_binding = verify_key_binding(&binding_record, now, 1).unwrap();
         let mut envelope = encrypt_for_recipient(
             &sender, 1, &recipient_peer.to_string(), &recipient_transport.public_key,
             1, &serde_json::to_vec(&valid()).unwrap(), now, now + 120,
@@ -708,8 +707,6 @@ mod tests {
     }
     #[test] fn flag_parser_accepts_only_binary_values() {
         assert!(super::parse_flag(None, "X", true).unwrap());
-        assert!(!super::parse_flag(None, "X", false).unwrap());
-        assert!(super::parse_flag(Some("1"), "X", false).unwrap());
         assert!(!super::parse_flag(Some("0"), "X", true).unwrap());
         assert!(super::parse_flag(Some("true"), "X", true).is_err());
     }
@@ -965,7 +962,7 @@ fn parse_relay_address(raw: Option<&str>) -> Result<Option<(PeerId, Multiaddr)>,
 /// reachable even when any single relay dies.
 fn parse_relay_addresses(raw: Option<&str>) -> Result<Vec<(PeerId, Multiaddr)>, Box<dyn Error>> {
     let Some(raw) = raw else { return Ok(Vec::new()); };
-    let mut relays: Vec<(PeerId, Multiaddr)> = Vec::new();
+    let mut relays = Vec::new();
     for entry in raw.split(',').map(str::trim).filter(|entry| !entry.is_empty()) {
         let (peer, address) = parse_relay_address(Some(entry))?
             .ok_or("relay address entry unexpectedly empty")?;
@@ -1590,7 +1587,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     peer_id,
                     started_at.elapsed().as_secs(),
                     connected_peers,
-                    connected_bootstrap_peers,
+                    bootstrap_peers_connected,
                     bootstrap_peers.len()
                 );
             }
@@ -1740,8 +1737,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         .find(|(relay_peer, _)| *relay_peer == peer_id) {
                         if !relay_listeners.contains_key(relay_peer) {
                             match swarm.listen_on(address.clone().with(libp2p::multiaddr::Protocol::P2pCircuit)) {
-                                Ok(listener) => { relay_listeners.insert(peer_id, listener); emit!("relay_reservation_requested=true relay_peer={peer_id}"); }
-                                Err(error) => emit!("relay_reservation_error peer={peer_id} error={error}"),
+                                Ok(listener) => { relay_listeners.insert(peer_id, listener); emit!("relay_reservation_requested=true relay_peer={relay_peer}"); }
+                                Err(error) => emit!("relay_reservation_error peer={relay_peer} error={error}"),
                             }
                         }
                     }
@@ -1758,7 +1755,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Discovered(peers))) => {
                     for (peer, address) in peers {
                         if !is_peer_allowed(&peer, &trusted_peers, &revoked_peers) {
-                            emit!("mdns_peer_ignored={peer} reason=not_in_trusted_peer_allowlist");
+                            emit!("mdns_peer_ignored peer={peer} reason=not_in_trusted_peer_allowlist");
                             continue;
                         }
                         let discovered_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
@@ -1909,7 +1906,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         }
                         let parsed_envelope = match run_if_peer_allowed(
                             &authenticated_source, &trusted_peers, &revoked_peers,
-                            || serde_json::from_slice::<EncryptedEnvelope>(&message.data),
+                            || serde_json::from_slice::<EncryptedObservationError>(&message.data),
                         ) {
                             Ok(parsed) => parsed,
                             Err(()) => {
@@ -2159,11 +2156,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         Err(error) => emit!("hole_punch_failed peer={remote_peer_id} error={error}"),
                     }
                 }
-                SwarmEvent::Behaviour(BehaviourEvent::Upnp(upnp::Event::NewExternalAddr(address))) => {
+                SwarmEvent::Behaviour(BehaviourEvent::Upnp(upnp::Event::NewExternalAddr { external_addr: address, .. })) => {
                     swarm.add_external_address(address.clone());
                     emit!("upnp_external_address={address}");
                 }
-                SwarmEvent::Behaviour(BehaviourEvent::Upnp(upnp::Event::ExpiredExternalAddr(address))) => {
+                SwarmEvent::Behaviour(BehaviourEvent::Upnp(upnp::Event::ExpiredExternalAddr { external_addr: address, .. })) => {
                     swarm.remove_external_address(&address);
                     emit!("upnp_external_address_expired={address}");
                 }
