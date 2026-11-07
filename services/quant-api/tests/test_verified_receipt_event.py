@@ -1,7 +1,10 @@
-"""Adversarial tests for the trusted Rust receipt event validation boundary."""
+"""Adversarial tests for verified receipt event envelope parsing."""
 import pytest
 
-from osiris_api.verified_receipt_event import validate_trusted_event
+from osiris_api.verified_receipt_event import (
+    VERIFIED_EVENT_PROVENANCE,
+    parse_event_envelope,
+)
 
 
 def event():
@@ -13,27 +16,18 @@ def event():
         "message_id": "message",
         "envelope_sha256": "a" * 64,
         "accepted_at": 1000,
+        "provenance": VERIFIED_EVENT_PROVENANCE,
     }
 
 
 def validate(payload, **overrides):
-    kwargs = {
-        "authenticated_rust_peer": True,
-        "expected_sender_peer_id": "sender",
-        "now": 1000,
-    }
+    kwargs = {"expected_sender_peer_id": "sender", "now": 1000}
     kwargs.update(overrides)
-    return validate_trusted_event(payload, **kwargs)
+    return parse_event_envelope(payload, **kwargs)
 
 
-def test_accepts_exact_authenticated_event():
+def test_accepts_exact_event_shape():
     assert validate(event()) == ("event-1", "message", "recipient", "a" * 64)
-
-
-@pytest.mark.parametrize("authentication", [False, None, 1, "true"])
-def test_rejects_untrusted_transport(authentication):
-    with pytest.raises(ValueError, match="unauthenticated"):
-        validate(event(), authenticated_rust_peer=authentication)
 
 
 @pytest.mark.parametrize("field,value", [
@@ -42,6 +36,7 @@ def test_rejects_untrusted_transport(authentication):
     ("message_id", "x" * 257), ("envelope_sha256", "A" * 64),
     ("envelope_sha256", "a" * 63), ("accepted_at", True),
     ("accepted_at", 879), ("accepted_at", 1031),
+    ("provenance", "stdout"), ("provenance", True),
 ])
 def test_rejects_malformed_or_unmatched_events(field, value):
     payload = event()
@@ -50,15 +45,17 @@ def test_rejects_malformed_or_unmatched_events(field, value):
         validate(payload)
 
 
-def test_rejects_extra_fields_and_missing_fields():
+def test_rejects_verified_flag_stdout_and_missing_provenance():
     payload = event()
     payload["verified"] = True
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="invalid_receipt_event_fields"):
         validate(payload)
     del payload["verified"]
-    del payload["event_id"]
-    with pytest.raises(ValueError):
+    del payload["provenance"]
+    with pytest.raises(ValueError, match="invalid_receipt_event_fields"):
         validate(payload)
+    with pytest.raises(ValueError):
+        validate("observation_delivery_acknowledged recipient=peer verified=True")
 
 
 def test_rejects_wrong_local_sender():

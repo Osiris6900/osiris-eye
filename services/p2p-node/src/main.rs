@@ -4,14 +4,16 @@ mod e2ee;
 mod peer_key_store;
 mod peer_cache;
 mod observation_policy;
-mod delivery_receipt;
 
 use revocation::{RevocationRegistry, RevocationSyncMessage};
 use e2ee::{create_key_binding, decrypt_for_recipient, encrypt_for_recipient, verify_key_binding, EncryptedEnvelope, KeyBindingRecord, TransportKeyPair};
 use peer_auth::{is_peer_allowed, parse_revoked_peers, parse_trusted_peers, read_peer_setting, run_if_peer_allowed};
 use peer_cache::{CachedPeer, PeerCache};
 use peer_key_store::PeerKeyStore;
-use delivery_receipt::{create_receipt, DeliveryReceipt, PendingReceipts, MAX_RECEIPT_BYTES, RECEIPT_TOPIC};
+use osiris_p2p_node::delivery_receipt::{
+    create_receipt, AdmissionPolicy, DeliveryReceipt, PendingReceipts, MAX_RECEIPT_BYTES, RECEIPT_TOPIC,
+};
+use osiris_p2p_node::verified_receipt_bridge::VerifiedReceiptBridge;
 use std::{collections::{HashMap, HashSet}, env, error::Error, fs::{self, OpenOptions}, io::{BufRead, BufReader as StdBufReader, Write}, net::SocketAddr, path::PathBuf, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
 
 macro_rules! emit {
@@ -1021,6 +1023,14 @@ fn plan_rejoin_dials(
     plan
 }
 
+fn optional_env(name: &str) -> Result<Option<String>, Box<dyn Error>> {
+    match env::var(name) {
+        Ok(value) => Ok(Some(value)),
+        Err(env::VarError::NotPresent) => Ok(None),
+        Err(error) => Err(format!("{name} must be valid Unicode: {error}").into()),
+    }
+}
+
 fn parse_flag(raw: Option<&str>, setting: &str, default: bool) -> Result<bool, Box<dyn Error>> {
     match raw.map(str::trim) {
         None => Ok(default),
@@ -1496,9 +1506,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Disable only the stdin branch; keep polling the swarm for incoming peers.
     let mut stdin_open = true;
     let mut pending_receipts = PendingReceipts::new();
+    let mut receipt_bridge = VerifiedReceiptBridge::open_configured(
+        delivery_receipts_enabled,
+        optional_env("OSIRIS_VERIFIED_RECEIPT_SOCKET")?.as_deref(),
+        optional_env("OSIRIS_VERIFIED_RECEIPT_SPOOL")?.as_deref(),
+        optional_env("OSIRIS_VERIFIED_RECEIPT_LISTENER_PID")?.as_deref(),
+    )?;
     let mut receipt_tick = tokio::time::interval(Duration::from_secs(5));
     receipt_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     emit!("delivery_receipts_enabled={delivery_receipts_enabled} receipt_topic={RECEIPT_TOPIC}");
+    emit!("verified_receipt_bridge={}", if receipt_bridge.is_some() { "enabled" } else { "disabled" });
 
     loop {
         tokio::select! {
@@ -1509,6 +1526,23 @@ async fn main() -> Result<(), Box<dyn Error>> {
             _ = receipt_tick.tick(), if delivery_receipts_enabled => {
                 for (recipient, message_id) in pending_receipts.expire(Instant::now()) {
                     emit!("observation_delivery_unconfirmed recipient={recipient} message_id={message_id} reason=receipt_timeout");
+                }
+                if let Some(bridge) = receipt_bridge.as_mut() {
+                    match bridge.pending_events(8) {
+                        Ok(events) => {
+                            for event in events {
+                                let event_id = event.event_id.clone();
+                                match bridge.transmit(&event, Duration::from_secs(1)) {
+                                    Ok(disposition) => emit!("verified_receipt_ledger_confirmed event_id={event_id} disposition={disposition}"),
+                                    Err(reason) => {
+                                        emit!("verified_receipt_ledger_deferred event_id={event_id} reason={reason}");
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        Err(reason) => emit!("verified_receipt_ledger_deferred reason={reason}"),
+                    }
                 }
             }
             _ = key_binding_tick.tick() => {
@@ -1748,9 +1782,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
                             continue;
                         }
                         // Never infer the receipt signer from the forwarding peer.
-                        if message.source.is_none()
-                            || !is_peer_allowed(&authenticated_source, &trusted_peers, &revoked_peers)
-                            || !is_peer_allowed(&propagation_source, &trusted_peers, &revoked_peers) {
+                        let source_allowed = message.source.is_some()
+                            && is_peer_allowed(&authenticated_source, &trusted_peers, &revoked_peers);
+                        let propagation_allowed = is_peer_allowed(&propagation_source, &trusted_peers, &revoked_peers);
+                        if !source_allowed || !propagation_allowed {
                             emit!("delivery_receipt_rejected peer={authenticated_source} reason=publisher_not_allowed");
                             continue;
                         }
@@ -1777,14 +1812,43 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 continue;
                             }
                         };
-                        match pending_receipts.accept(
+                        let policy = AdmissionPolicy {
+                            authenticated_source_allowed: source_allowed,
+                            propagation_source_allowed: propagation_allowed,
+                        };
+                        match pending_receipts.verify(
                             &receipt, &authenticated_source, &peer_id,
-                            &binding.identity_public_key, receipt_now, Instant::now(),
+                            &binding.identity_public_key, receipt_now, Instant::now(), policy,
                         ) {
-                            Ok(()) => emit!(
-                                "observation_delivery_acknowledged recipient={} message_id={} envelope_sha256={} admission=validated_decrypted_replay_recorded",
-                                receipt.recipient_peer_id, receipt.message_id, receipt.envelope_sha256,
-                            ),
+                            Ok(event) => {
+                                if let Some(bridge) = receipt_bridge.as_mut() {
+                                    // Spool the verified event before dropping the pending attempt.
+                                    match bridge.enqueue(&event) {
+                                        Ok(()) => {
+                                            match pending_receipts.commit_verified(&event, Instant::now()) {
+                                                Ok(()) => emit!(
+                                                    "observation_delivery_acknowledged recipient={} message_id={} envelope_sha256={} admission=validated_decrypted_replay_recorded",
+                                                    receipt.recipient_peer_id, receipt.message_id, receipt.envelope_sha256,
+                                                ),
+                                                Err(reason) => emit!("verified_receipt_pending_commit_failed event_id={} reason={reason}", event.event_id),
+                                            }
+                                            match bridge.transmit(&event, Duration::from_secs(1)) {
+                                                Ok(disposition) => emit!("verified_receipt_ledger_confirmed event_id={} disposition={disposition}", event.event_id),
+                                                Err(reason) => emit!("verified_receipt_ledger_deferred event_id={} reason={reason}", event.event_id),
+                                            }
+                                        }
+                                        Err(reason) => emit!("delivery_receipt_rejected peer={authenticated_source} reason=spool_failed detail={reason}"),
+                                    }
+                                } else {
+                                    match pending_receipts.commit_verified(&event, Instant::now()) {
+                                        Ok(()) => emit!(
+                                            "observation_delivery_acknowledged recipient={} message_id={} envelope_sha256={} admission=validated_decrypted_replay_recorded",
+                                            receipt.recipient_peer_id, receipt.message_id, receipt.envelope_sha256,
+                                        ),
+                                        Err(reason) => emit!("delivery_receipt_rejected peer={authenticated_source} reason={reason}"),
+                                    }
+                                }
+                            }
                             Err(reason) => emit!("delivery_receipt_rejected peer={authenticated_source} reason={reason}"),
                         }
                         continue;

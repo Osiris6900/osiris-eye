@@ -1,7 +1,8 @@
 """Durable receipt-correlation ledger; never equates local writes with remote admission.
 
-Only verified receipt events from the Rust node may call acknowledge().
-This ledger is intentionally not yet wired into automatic retransmission.
+``acknowledge_verified`` does not accept a caller-supplied verification flag.
+Authenticated Unix events are the only path that moves a row to acknowledged.
+This ledger does not retransmit observations.
 """
 from __future__ import annotations
 
@@ -60,17 +61,13 @@ class RecipientReceiptLedger:
 
     def acknowledge_verified(self, message_id: str, recipient: str, digest: str, *,
                              verified: bool, now: int | None = None) -> bool:
-        """Caller must authenticate signature, signer, sender, freshness and policy."""
-        if verified is not True:
-            raise ValueError("verified_receipt_required")
-        with self._connect() as db:
-            cursor = db.execute(
-                "UPDATE recipient_receipts SET state='acknowledged', acknowledged_at=? "
-                "WHERE message_id=? AND recipient_peer_id=? AND envelope_sha256=? "
-                "AND state IN ('pending','unconfirmed')",
-                (int(time.time()) if now is None else now, message_id, recipient, digest),
-            )
-            return cursor.rowcount == 1
+        """Reject every direct acknowledgement, including ``verified=True``.
+
+        The flag is not proof. Pending and unconfirmed rows become acknowledged
+        only inside the authenticated receipt consumer's SQLite transaction.
+        """
+        _ = (message_id, recipient, digest, verified, now)
+        raise ValueError("untrusted_verification_flag")
 
     def mark_unconfirmed(self, message_id: str, recipient: str) -> bool:
         with self._connect() as db:

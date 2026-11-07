@@ -92,8 +92,16 @@ exactly-once delivery.
 The Python [observation outbox](UNIFIED_OBSERVATION_OUTBOX.md) keeps its existing
 local stdin acknowledgement semantics. This receipt feature does not change its
 `delivered` flag, clear pending rows, or promote an outbox entry to remote
-delivery. Connecting verified receipts to durable per-recipient delivery state
-requires a separate adapter, persistence and recovery contract.
+delivery. `pending` and `unconfirmed` stay distinct from `acknowledged`. A
+verified receipt does not start retransmission.
+
+When the [verified receipt bridge](P2P_VERIFIED_RECEIPT_BRIDGE_CONTRACT.md) is
+configured, `observation_delivery_acknowledged` still means only that this
+process verified the receipt and consumed its in-memory pending attempt.
+`verified_receipt_ledger_confirmed` is the separate statement that the Python
+ledger committed the correlated row. A deferred ledger line means the event
+remains in the local spool; it is not success and it is not a reason to resend
+the observation.
 
 ## Validation
 

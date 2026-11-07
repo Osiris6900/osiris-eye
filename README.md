@@ -137,7 +137,7 @@ The first release targets encrypted market-data research and paper trading. Ther
 
 The unified market, world-event and celestial bridge supports an optional durable SQLite outbox in the research store's database. Observation ingestion and enqueue commit together before local-node delivery. Retries recheck the ingestion kill switch, current provider authorization, freshness and payload contract; invalid queued records are quarantined. See [outbox setup, atomic persistence, counters and delivery limits](docs/UNIFIED_OBSERVATION_OUTBOX.md).
 
-With E2EE enabled, `OSIRIS_DELIVERY_RECEIPTS=1` adds identity-signed recipient admission receipts bound to the exact encrypted message. Sender tracking is bounded and temporary; the Python outbox still acknowledges only local stdin delivery. See [receipt configuration, validation and limits](docs/P2P_DELIVERY_RECEIPTS.md).
+With E2EE enabled, `OSIRIS_DELIVERY_RECEIPTS=1` adds identity-signed recipient admission receipts bound to the exact encrypted message. Sender tracking is bounded and temporary. An optional Linux peer-credential bridge can record a verified receipt in the Python ledger; it does not retransmit and does not treat local stdin delivery as remote acknowledgement. See [receipt limits](docs/P2P_DELIVERY_RECEIPTS.md) and the [ledger bridge](docs/P2P_VERIFIED_RECEIPT_BRIDGE_CONTRACT.md).
 
 See the [release gates and validation commands](docs/P2P_RELEASE_GATES.md), [security model](docs/P2P_SECURITY_MODEL.md), [E2EE configuration](docs/P2P_LIVE_E2EE_ROLLOUT.md), [hardened receiver profile](docs/P2P_HARDENED_DEPLOYMENT.md) and [public-node setup](docs/P2P_PUBLIC_NODE_DEPLOYMENT.md). The deployment files are operator preparation; no service or public endpoint is started by this repository.
 

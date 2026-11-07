@@ -47,7 +47,7 @@ jobs:
       - name: Verify decentralized bootstrap configuration gate
         run: python -m unittest discover -s scripts -p 'test_check_decentralized_bootstrap.py' -v
       - name: Syntax-check P2P acceptance helpers
-        run: python -m py_compile scripts/test_p2p_cross_host_ssh.py scripts/test_p2p_cross_host_e2ee_ssh.py scripts/test_p2p_core_trusted_peer_allowlist.py scripts/test_p2p_bootstrap_readiness.py scripts/test_p2p_bootstrap_restart.py scripts/test_p2p_global_revocation_sync.py scripts/test_p2p_e2ee_three_process.py scripts/test_p2p_delivery_receipts.py scripts/test_p2p_three_host_e2ee_ssh.py scripts/test_p2p_live_swarm_revocation.py scripts/test_p2p_core_relay_e2ee.py scripts/test_p2p_observation_freshness.py
+        run: python -m py_compile scripts/test_p2p_cross_host_ssh.py scripts/test_p2p_cross_host_e2ee_ssh.py scripts/test_p2p_core_trusted_peer_allowlist.py scripts/test_p2p_bootstrap_readiness.py scripts/test_p2p_bootstrap_restart.py scripts/test_p2p_global_revocation_sync.py scripts/test_p2p_e2ee_three_process.py scripts/test_p2p_delivery_receipts.py scripts/test_verified_receipt_rust_bridge.py scripts/test_p2p_three_host_e2ee_ssh.py scripts/test_p2p_live_swarm_revocation.py scripts/test_p2p_core_relay_e2ee.py scripts/test_p2p_observation_freshness.py
 
   rust:
     runs-on: ubuntu-latest
@@ -59,6 +59,8 @@ jobs:
         run: cargo test --manifest-path crates/risk-kernel/Cargo.toml
       - name: Test decentralized P2P node
         run: cargo test --locked --manifest-path services/p2p-node/Cargo.toml --all-targets
+      - name: Verify Rust receipt events persist in the Python ledger
+        run: python scripts/test_verified_receipt_rust_bridge.py
       - name: Build P2P node for process-level tests
         run: cargo build --locked --release --manifest-path services/p2p-node/Cargo.toml
       - name: Verify two OS processes exchange a P2P observation

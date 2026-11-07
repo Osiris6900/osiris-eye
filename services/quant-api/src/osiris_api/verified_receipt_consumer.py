@@ -1,15 +1,13 @@
-"""Durable idempotent consumer for independently authenticated Rust receipt events.
+"""Durable idempotent consumer for kernel-authenticated Rust receipt events.
 
-This is NOT a network endpoint or an authentication mechanism. A trusted
-transport adapter must establish the Rust peer identity independently before
-calling consume(). Never derive authenticated_rust_peer from the event body.
+This is not a network endpoint. ``consume`` accepts only the credential object
+the Unix adapter constructs after SO_PEERCRED succeeds. A boolean, including
+``True``, is not authentication and cannot acknowledge a receipt.
 """
 from __future__ import annotations
 
-import sqlite3
-
 from .recipient_receipt_ledger import RecipientReceiptLedger
-from .verified_receipt_event import validate_trusted_event
+from .verified_receipt_event import APPLIED, DUPLICATE, parse_event_envelope
 
 
 class VerifiedReceiptConsumer:
@@ -27,16 +25,19 @@ class VerifiedReceiptConsumer:
                 accepted_at INTEGER NOT NULL
             )""")
 
-    def consume(self, event: dict, *, authenticated_rust_peer: bool, now: int) -> bool:
-        """Commit exact pending correlation and event ID in one SQLite transaction.
+    def consume(self, event: dict, *, peer_credentials: object, now: int) -> str:
+        """Commit one correlated event, or recognize an identical durable replay.
 
-        Returns True only for a newly acknowledged correlation. Replaying an
-        identical committed event returns False. An event ID reused for a
-        different correlation is rejected. No retransmission is authorized.
+        Returns ``applied`` when pending/unconfirmed becomes acknowledged.
+        Returns ``duplicate`` when this exact event id was already committed;
+        that does not change delivery state. Mismatches raise and roll back.
+        The caller must write a transport ack only after this method returns.
         """
-        event_id, message_id, recipient, digest = validate_trusted_event(
+        from .verified_receipt_unix import LinuxPeerCredentials
+        if type(peer_credentials) is not LinuxPeerCredentials:
+            raise ValueError("unauthenticated_receipt_event")
+        event_id, message_id, recipient, digest = parse_event_envelope(
             event,
-            authenticated_rust_peer=authenticated_rust_peer,
             expected_sender_peer_id=self.sender_peer_id,
             now=now,
         )
@@ -51,7 +52,16 @@ class VerifiedReceiptConsumer:
             if previous is not None:
                 if previous != identity:
                     raise ValueError("receipt_event_id_conflict")
-                return False
+                return DUPLICATE
+            current = db.execute(
+                "SELECT envelope_sha256,state FROM recipient_receipts "
+                "WHERE message_id=? AND recipient_peer_id=?",
+                (message_id, recipient),
+            ).fetchone()
+            if current is None:
+                raise ValueError("receipt_event_not_pending")
+            if current[0] != digest:
+                raise ValueError("receipt_digest_mismatch")
             cursor = db.execute(
                 "UPDATE recipient_receipts SET state='acknowledged',acknowledged_at=? "
                 "WHERE message_id=? AND recipient_peer_id=? AND envelope_sha256=? "
@@ -66,4 +76,4 @@ class VerifiedReceiptConsumer:
                 "VALUES (?,?,?,?,?)",
                 (event_id, *identity),
             )
-            return True
+            return APPLIED
