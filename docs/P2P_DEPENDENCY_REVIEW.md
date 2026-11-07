@@ -6,23 +6,26 @@ materials, reachability proof, or a cryptographic/independent security audit.
 
 ## Rust resolution
 
-`services/p2p-node/Cargo.lock` uses lock format 4 and records 362 packages:
-the local node plus 361 crates.io packages. Every registry entry has a checksum.
+`services/p2p-node/Cargo.lock` uses lock format 4 and records 389 packages:
+the local node plus 388 crates.io packages. Every registry entry has a checksum.
 No Git dependencies, alternate registries, or manifest `[patch]` overrides were
 found. These facts describe the configured sources; they do not establish that
 the dependencies are free of vulnerabilities.
 
 | Component | Locked version |
 |---|---|
-| libp2p | 0.56.0 |
-| libp2p-noise | 0.46.1 |
-| libp2p-identity | 0.2.14 |
-| snow | 0.9.6 |
-| ed25519-dalek | 2.2.0 |
-| x25519-dalek | 2.0.1 |
+| libp2p | 0.57.1 |
+| libp2p-noise | 0.47.0 |
+| libp2p-identity | 0.3.1 |
+| libp2p-yamux | 0.48.0 |
+| hickory-proto / hickory-resolver | 0.26.3 |
+| yamux | 0.14.1 |
+| snow | 0.10.0 |
+| ed25519-dalek (direct node dependency) | 2.2.0 |
+| x25519-dalek (direct node dependency) | 2.0.1 |
 | chacha20poly1305 | 0.10.1 |
-| hkdf | 0.12.4 |
-| sha2 | 0.10.9 |
+| hkdf (direct node dependency) | 0.12.4 |
+| sha2 (direct node dependency) | 0.10.9 |
 | rusqlite | 0.32.1 |
 
 The CI node build and tests use `--locked`, so dependency resolution cannot
@@ -49,7 +52,7 @@ dependencies outside the declared ranges do not validate the supported set.
 
 `scripts/generate_dependency_sbom.py` generates deterministic CycloneDX 1.5 JSON
 from the exact Cargo and npm lockfiles. For the reviewed inputs, the SBOM has
-496 components: three local applications, 361 crates.io libraries and 132 npm
+523 components: three local applications, 388 crates.io libraries and 132 npm
 libraries. Cargo SHA-256 checksums, npm integrity hashes, distribution URLs,
 license metadata and npm development scope are included. Duplicate SBOM
 references, unsupported Cargo sources, missing licenses/integrity data and
@@ -85,18 +88,14 @@ IDs/classifications or derived summary counts are stale or internally
 inconsistent. The checks derive expected counts from the current lock inputs;
 they do not require a fixed number of advisories after remediation.
 
-The live query at `2026-11-07T20:45:36Z` covered 493 packages at source commit
-`212cad687b69ed421c0778699e451955576739c9`: 361 crates.io and 132 npm packages.
-Eight raw matches were normalized into six alias-aware advisory groups affecting
-four Cargo packages. No npm package returned a match in this query.
+The live query at `2026-11-07T22:29:10Z` covered 520 packages at source commit
+`974de9ce04585e1d38824136514325f231b2bdaf`: 388 crates.io and 132 npm packages.
+One raw match was normalized into one alias-aware maintenance-only advisory group
+affecting one Cargo package. No vulnerability group or npm match was returned in
+this point-in-time query.
 
 | Package | Classification | Advisory group IDs |
 |---|---|---|
-| hickory-proto 0.25.2 | vulnerability | GHSA-3v94-mw7p-v465 / RUSTSEC-2026-0118 / RUSTSEC-2026-0120 |
-| hickory-proto 0.25.2 | vulnerability | GHSA-q2qq-hmj6-3wpp / RUSTSEC-2026-0119 |
-| hickory-resolver 0.25.2 | vulnerability | GHSA-5j98-2g5x-46v6 / CVE-2026-93657 |
-| hickory-resolver 0.25.2 | vulnerability | GHSA-6f2x-v7q7-m7m5 |
-| yamux 0.12.1 | vulnerability | GHSA-vxx9-2994-q338 / CVE-2026-32314 |
 | paste 1.0.15 | maintenance-only | RUSTSEC-2024-0436 |
 
 `config/osv_maintenance_only.json` explicitly classifies the `paste` record as
@@ -104,11 +103,14 @@ an unmaintained-package warning. It is retained as maintenance evidence rather
 than counted as proof of an exploitable vulnerability. Unknown or unclassified
 records default to the vulnerability classification; they are not suppressed.
 
-The five vulnerability groups remain remediation work. This report does not
-claim that the old Yamux compatibility path was reachable: OSIRIS call sites use
-`yamux::Config::default()`, and the reviewed libp2p-yamux 0.47 default selects
-Yamux 0.13 rather than its customized 0.12 compatibility path. That local
-configuration evidence is not an external exploitability audit.
+The coordinated libp2p 0.57.1 remediation resolves to Hickory 0.26.3 and Yamux
+0.14.1 and removes Yamux 0.12.1 and 0.13.10 from the lock graph. The five
+vulnerability groups in the preceding report no longer match this remediated
+graph. That result does not prove the old Yamux compatibility path was
+reachable: OSIRIS call sites use `yamux::Config::default()`, and the reviewed
+libp2p-yamux 0.47 default selected Yamux 0.13 rather than its customized 0.12
+compatibility path. This is local configuration evidence, not an external
+exploitability audit.
 
 Python remains explicitly `unresolved` and was not queried as a resolved PyPI
 environment. OSV matching is point-in-time advisory evidence, not proof of
@@ -162,14 +164,13 @@ python scripts/generate_dependency_sbom.py --offline --output /tmp/osiris-eye-sb
 cmp /tmp/osiris-eye-sbom.json /tmp/osiris-eye-sbom-offline.json
 python scripts/test_scan_dependency_advisories.py
 python scripts/scan_dependency_advisories.py \
-  --source-commit 212cad687b69ed421c0778699e451955576739c9 \
+  --source-commit 974de9ce04585e1d38824136514325f231b2bdaf \
   --output docs/P2P_DEPENDENCY_ADVISORIES.json
 ```
 
-The offline `--no-deps` metadata command passed during this review. Full offline
-metadata could not complete because a platform dependency (`async-io 2.6.0`)
-was absent from the local cache; this is a cache limitation, not a successful
-full dependency inventory. Build/test evidence is recorded separately.
+The preserved remediated files passed 165 Rust tests locally. Those same-host
+results do not establish independent-host, cross-network, hostile-load,
+production-capacity, external-audit, or exploitability evidence.
 
 Before a public release, refresh the Cargo/npm advisory report, remediate its
 current findings, triage reachability, lock and scan the supported Python
