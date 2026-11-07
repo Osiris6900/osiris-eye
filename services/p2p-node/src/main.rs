@@ -2159,11 +2159,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         Err(error) => emit!("hole_punch_failed peer={remote_peer_id} error={error}"),
                     }
                 }
-                SwarmEvent::Behaviour(BehaviourEvent::Upnp(upnp::Event::NewExternalAddr(address))) => {
+                SwarmEvent::Behaviour(BehaviourEvent::Upnp(upnp::Event::NewExternalAddr { external_addr: address, .. })) => {
                     swarm.add_external_address(address.clone());
                     emit!("upnp_external_address={address}");
                 }
-                SwarmEvent::Behaviour(BehaviourEvent::Upnp(upnp::Event::ExpiredExternalAddr(address))) => {
+                SwarmEvent::Behaviour(BehaviourEvent::Upnp(upnp::Event::ExpiredExternalAddr { external_addr: address, .. })) => {
                     swarm.remove_external_address(&address);
                     emit!("upnp_external_address_expired={address}");
                 }
