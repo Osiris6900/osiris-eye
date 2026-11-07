@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Query OSV for every exact locked Cargo/npm package and retain a JSON report.
+"""Query OSV for every exact locked Cargo/npm/PyPI package and retain a JSON report.
 
 OSV matches are advisory evidence, not reachability analysis or an independent
-security audit. Python version ranges are reported as unresolved and are never
-represented as a scanned deployment environment.
+security audit. Python deployment dependencies are scanned from the exact hashed
+pip-compile lock ``services/quant-api/requirements-deploy.lock``; development-only
+tooling is not part of the deployment environment.
 """
 from __future__ import annotations
 
@@ -21,20 +22,23 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
-from generate_dependency_sbom import cargo_packages, npm_packages
+from generate_dependency_sbom import cargo_packages, npm_packages, normalize_pypi_name, python_locked_packages
 
 SCHEMA = "osiris.dependency-advisory-report.v1"
 MAINTENANCE_SCHEMA = "osiris.osv-maintenance-only.v1"
 API_BASE = "https://api.osv.dev/v1"
 USER_AGENT = "osiris-eye-dependency-advisory-scan (https://github.com/Osiris6900/osiris-eye)"
 COMMIT_RE = re.compile(r"[0-9a-f]{40}\Z")
+PYTHON_LOCK_LABEL = "services/quant-api/requirements-deploy.lock"
+# Extras that are tooling, not part of the deployed Python environment.
+NON_DEPLOYMENT_EXTRAS = ("dev",)
 
 
 def sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def locked_packages(cargo_lock: Path, npm_lock: Path) -> list[dict[str, str]]:
+def locked_packages(cargo_lock: Path, npm_lock: Path, python_lock: Path) -> list[dict[str, str]]:
     _, crates = cargo_packages(cargo_lock)
     _, locked_npm = npm_packages(npm_lock)
     packages = [
@@ -43,8 +47,90 @@ def locked_packages(cargo_lock: Path, npm_lock: Path) -> list[dict[str, str]]:
     ] + [
         {"ecosystem": "npm", "name": name, "version": version}
         for _, name, version, _ in locked_npm
+    ] + [
+        {"ecosystem": "PyPI", "name": package["name"], "version": package["version"]}
+        for package in python_locked_packages(python_lock)
     ]
     return sorted(packages, key=lambda p: (p["ecosystem"], p["name"], p["version"]))
+
+
+DECLARED_REQUIREMENT_RE = re.compile(
+    r"([A-Za-z0-9_.-]+)(?:\[[A-Za-z0-9_,.\s-]*\])?\s*(.*)"
+)
+SPECIFIER_RE = re.compile(r"(==|!=|>=|<=|>|<)\s*([0-9]+(?:\.[0-9]+)*)")
+
+
+def _version_key(version: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in version.split("."))
+
+
+def _satisfies(version: str, operator: str, bound: str) -> bool:
+    # PEP 440 release-segment semantics: pad with zeros, then compare.
+    left, right = _version_key(version), _version_key(bound)
+    width = max(len(left), len(right))
+    left += (0,) * (width - len(left))
+    right += (0,) * (width - len(right))
+    if operator == "==":
+        return left == right
+    if operator == "!=":
+        return left != right
+    if operator == ">=":
+        return left >= right
+    if operator == "<=":
+        return left <= right
+    if operator == ">":
+        return left > right
+    return left < right
+
+
+def declared_requirement(declared: str) -> tuple[str, list[tuple[str, str]]]:
+    """Parse one declared requirement into (normalized name, numeric specifiers).
+
+    Only numeric dotted versions with ==/!=/>=/<=/</> operators are supported;
+    anything else (wildcards, compatible releases, markers) fails closed.
+    """
+    match = DECLARED_REQUIREMENT_RE.fullmatch(declared.strip())
+    if not match:
+        raise ValueError(f"unsupported declared requirement: {declared!r}")
+    name = normalize_pypi_name(match.group(1))
+    specifiers = []
+    remainder = match.group(2).strip()
+    if remainder:
+        for part in remainder.split(","):
+            specifier = SPECIFIER_RE.fullmatch(part.strip())
+            if not specifier:
+                raise ValueError(
+                    f"unsupported version specifier {part.strip()!r} in {declared!r}"
+                )
+            specifiers.append((specifier.group(1), specifier.group(2)))
+    return name, specifiers
+
+
+def check_python_lock_covers_declared(pyproject: Path, python_lock: Path) -> None:
+    """Fail closed unless every declared deployment requirement is locked and satisfied."""
+    project = tomllib.loads(pyproject.read_text()).get("project", {})
+    locked = {package["name"]: package["version"] for package in python_locked_packages(python_lock)}
+    declared = list(project.get("dependencies", []))
+    optional = project.get("optional-dependencies", {})
+    if not isinstance(optional, dict):
+        raise ValueError(f"{pyproject}: optional-dependencies must be a mapping")
+    for extra, requirements in optional.items():
+        if extra in NON_DEPLOYMENT_EXTRAS:
+            continue
+        if not isinstance(requirements, list):
+            raise ValueError(f"{pyproject}: optional extra {extra} must be a list")
+        declared.extend(requirements)
+    for requirement in declared:
+        name, specifiers = declared_requirement(requirement)
+        if name not in locked:
+            raise ValueError(
+                f"declared dependency {name} is missing from the deployment lock {python_lock}"
+            )
+        for operator, bound in specifiers:
+            if not _satisfies(locked[name], operator, bound):
+                raise ValueError(
+                    f"locked {name}=={locked[name]} violates declared requirement {requirement!r}"
+                )
 
 
 def load_maintenance_only(path: Path) -> dict[str, dict[str, str]]:
@@ -218,6 +304,7 @@ def build_report(
     cargo_lock: Path,
     npm_lock: Path,
     pyproject: Path,
+    python_lock: Path,
     maintenance_only: dict[str, dict[str, str]],
     source_commit: str,
     client: OsvClient,
@@ -226,7 +313,8 @@ def build_report(
 ) -> dict:
     if not COMMIT_RE.fullmatch(source_commit):
         raise ValueError("source commit must be a full lowercase 40-character Git SHA")
-    packages = locked_packages(cargo_lock, npm_lock)
+    check_python_lock_covers_declared(pyproject, python_lock)
+    packages = locked_packages(cargo_lock, npm_lock, python_lock)
     matches = client.querybatch(packages, batch_size)
     record_ids = sorted({advisory_id for _, advisory_id in matches})
     records = {advisory_id: client.vulnerability(advisory_id) for advisory_id in record_ids}
@@ -245,6 +333,7 @@ def build_report(
                 "apps/web/package-lock.json": {"sha256": sha256_file(npm_lock)},
                 "services/p2p-node/Cargo.lock": {"sha256": sha256_file(cargo_lock)},
                 "services/quant-api/pyproject.toml": {"sha256": sha256_file(pyproject)},
+                PYTHON_LOCK_LABEL: {"sha256": sha256_file(python_lock)},
             },
         },
         "query": {
@@ -259,10 +348,14 @@ def build_report(
             "crates.io": {"status": "scanned", "packages": counts["crates.io"]},
             "npm": {"status": "scanned", "packages": counts["npm"]},
             "PyPI": {
-                "status": "unresolved",
-                "packages": 0,
+                "status": "scanned",
+                "packages": counts["PyPI"],
+                "lock": PYTHON_LOCK_LABEL,
+                "deployment_extras": sorted(
+                    extra for extra in python_project.get("optional-dependencies", {})
+                    if extra not in NON_DEPLOYMENT_EXTRAS
+                ),
                 "declared_requirements": python_project.get("dependencies", []),
-                "reason": "pyproject.toml contains version ranges, not a supported resolved and hashed deployment lock; Python packages were not queried.",
             },
         },
         "summary": {
@@ -277,13 +370,13 @@ def build_report(
         "limitations": [
             "OSV matching is point-in-time advisory evidence, not reachability analysis, proof of exploitation, or an independent security audit.",
             "A package with no returned match is not proven free of vulnerabilities.",
-            "Python deployment dependencies remain unresolved and were not scanned.",
+            "Python deployment dependencies are scanned from the exact hashed lock services/quant-api/requirements-deploy.lock (base plus runtime extras); development-only tooling is excluded from the deployment environment.",
             "This report does not complete license/redistribution, artifact-provenance, or reproducible-build review.",
         ],
     }
 
 
-def validate_report(report: dict, cargo_lock: Path, npm_lock: Path, pyproject: Path) -> None:
+def validate_report(report: dict, cargo_lock: Path, npm_lock: Path, pyproject: Path, python_lock: Path) -> None:
     if not isinstance(report, dict) or report.get("schema") != SCHEMA:
         raise ValueError("checked-in advisory report has an unsupported schema")
     source = report.get("source", {})
@@ -292,7 +385,8 @@ def validate_report(report: dict, cargo_lock: Path, npm_lock: Path, pyproject: P
     if not isinstance(source.get("commit"), str) or not COMMIT_RE.fullmatch(source["commit"]):
         raise ValueError("advisory report source commit must be a full lowercase Git SHA")
 
-    packages = locked_packages(cargo_lock, npm_lock)
+    check_python_lock_covers_declared(pyproject, python_lock)
+    packages = locked_packages(cargo_lock, npm_lock, python_lock)
     package_keys = {(p["ecosystem"], p["name"], p["version"]) for p in packages}
     expected_counts = defaultdict(int)
     for package in packages:
@@ -301,6 +395,7 @@ def validate_report(report: dict, cargo_lock: Path, npm_lock: Path, pyproject: P
         "apps/web/package-lock.json": sha256_file(npm_lock),
         "services/p2p-node/Cargo.lock": sha256_file(cargo_lock),
         "services/quant-api/pyproject.toml": sha256_file(pyproject),
+        PYTHON_LOCK_LABEL: sha256_file(python_lock),
     }
     inputs = source.get("inputs", {})
     for path, digest in expected_hashes.items():
@@ -308,15 +403,21 @@ def validate_report(report: dict, cargo_lock: Path, npm_lock: Path, pyproject: P
             raise ValueError(f"advisory report is stale for {path}; regenerate it")
 
     coverage = report.get("coverage", {})
-    for ecosystem in ("crates.io", "npm"):
+    for ecosystem in ("crates.io", "npm", "PyPI"):
         ecosystem_coverage = coverage.get(ecosystem, {})
         if ecosystem_coverage.get("status") != "scanned" \
                 or ecosystem_coverage.get("packages") != expected_counts[ecosystem]:
             raise ValueError(f"advisory report package coverage is stale for {ecosystem}")
     python_coverage = coverage.get("PyPI", {})
     python_project = tomllib.loads(pyproject.read_text()).get("project", {})
-    if python_coverage.get("status") != "unresolved" or python_coverage.get("packages") != 0:
-        raise ValueError("Python resolution status must remain explicit and unscanned")
+    if python_coverage.get("lock") != PYTHON_LOCK_LABEL:
+        raise ValueError("advisory report Python lock reference is stale")
+    expected_extras = sorted(
+        extra for extra in python_project.get("optional-dependencies", {})
+        if extra not in NON_DEPLOYMENT_EXTRAS
+    )
+    if python_coverage.get("deployment_extras") != expected_extras:
+        raise ValueError("advisory report Python deployment extras are stale")
     if python_coverage.get("declared_requirements") != python_project.get("dependencies", []):
         raise ValueError("advisory report Python declarations are stale")
 
@@ -408,6 +509,7 @@ def main() -> None:
             root / "services/p2p-node/Cargo.lock",
             root / "apps/web/package-lock.json",
             root / "services/quant-api/pyproject.toml",
+            root / "services/quant-api/requirements-deploy.lock",
             load_maintenance_only(args.maintenance_only),
             args.source_commit,
             OsvClient(),
@@ -421,7 +523,7 @@ def main() -> None:
     print(
         f"Wrote {args.output}: {summary['queried_packages']} packages, "
         f"{summary['vulnerability_groups']} vulnerability groups, "
-        f"{summary['maintenance_only_groups']} maintenance-only groups; Python unresolved"
+        f"{summary['maintenance_only_groups']} maintenance-only groups"
     )
     if args.fail_on_vulnerability and summary["vulnerability_groups"]:
         raise SystemExit(2)
