@@ -233,10 +233,12 @@ class ReceiptRetryScheduler:
                 (now, limit),
             ).fetchall()
         for key, recipient in due:
-            outcomes.append(self._attempt(
+            outcome = self._attempt(
                 key, recipient, publish=publish, allowed_providers=allowed_providers,
                 policy=policy, now=now, clock=clock,
-            ))
+            )
+            if outcome is not None:
+                outcomes.append(outcome)
         return outcomes
 
     def _apply_ledger(self, now: int) -> None:
@@ -293,7 +295,7 @@ class ReceiptRetryScheduler:
         self, key: str, recipient: str, *, publish: Publish,
         allowed_providers: set[str] | frozenset[str], policy: AdmissionDecision,
         now: int, clock: datetime,
-    ) -> dict[str, str]:
+    ) -> dict[str, str] | None:
         with self._immediate() as db:
             claimed = db.execute(
                 """UPDATE receipt_retry_attempts SET state='publishing'
@@ -302,8 +304,9 @@ class ReceiptRetryScheduler:
                 (key, recipient, now),
             ).rowcount
             if claimed != 1:
-                row = self._row(db, key, recipient)
-                return _view(row)
+                # Another worker advanced this row after our due-row snapshot.
+                # Its result is not a publication performed by this call.
+                return None
             row = self._row(db, key, recipient)
         decision = policy.outcome(recipient)
         if decision == "policy_uncertain":
@@ -447,12 +450,3 @@ def _correlation(result: object) -> tuple[str, str | None, str | None]:
             or any(char not in "0123456789abcdef" for char in digest)):
         raise ValueError("invalid_publish_correlation")
     return status, message_id, digest
-
-
-def _view(row: dict[str, Any]) -> dict[str, str]:
-    return {
-        "observation_key": row["observation_key"],
-        "recipient_peer_id": row["recipient_peer_id"],
-        "state": row["state"],
-        "reason": row["reason"] or "",
-    }

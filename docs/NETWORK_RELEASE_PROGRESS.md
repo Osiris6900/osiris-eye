@@ -40,3 +40,16 @@ upgrades pip >=26.2 before installation. Full local tests passed after the
 upgrade (865); `pip check` passed. The audit inventory is
 [retained here](PYTHON_DEPENDENCY_AUDIT.json). Advisory matches are point-in-time
 and do not establish exploitability or independent security assurance.
+
+Remote Python CI at `154a651` exposed a concurrent retry-result reporting race.
+Only the winning worker sent, but a losing worker could return the same
+`published` snapshot as a new outcome. A deterministic interleaving reproduces
+the failure; losing claims now emit no action outcome. The full local suite
+passed again (865). Node/E2EE source is unchanged by this Python-only fix.
+
+Fixed-launcher remote acceptance reruns:
+- [Two hosts](https://github.com/Osiris6900/osiris-eye/actions/runs/42424830531)
+- [Three hosts](https://github.com/Osiris6900/osiris-eye/actions/runs/42424833409)
+
+Both target `154a65111d92cbd344ad2cc1b49a80ed8f53cd28`; results must be
+recorded before closing gates.
