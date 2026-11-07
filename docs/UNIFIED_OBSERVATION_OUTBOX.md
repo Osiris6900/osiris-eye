@@ -128,11 +128,15 @@ shared-database path. It does not make SQLite commit and network publication one
 transaction or establish remote delivery acknowledgement.
 
 The Rust node's optional [E2EE delivery receipts](P2P_DELIVERY_RECEIPTS.md) can
-separately verify a recipient's network-admission assertion. They are not wired
-to this outbox: `delivered` continues to mean a successful local writer call,
+separately verify a recipient's network-admission assertion. `drain` is not
+wired to them: `delivered` continues to mean a successful local writer call,
 and receipt arrival, timeout or sender restart does not change queue state.
-A durable per-recipient receipt adapter and recovery contract remain separate
-integration work.
+
+An opt-in [receipt-gated scheduler](P2P_RECEIPT_GATED_RETRY.md) can sit in front
+of a caller-supplied writer. It is disabled unless
+`OSIRIS_OUTBOX_RECEIPT_RETRY=1`. It does not call `drain`, does not treat stdin
+success as acknowledgement, and does not write a second envelope after the
+node has tracked one.
 
 ## Local regression checks
 
