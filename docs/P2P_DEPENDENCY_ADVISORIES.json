@@ -6,11 +6,15 @@
         "uvicorn[standard]>=0.27,<1",
         "pydantic>=2.6,<3",
         "numpy>=1.26,<3",
-        "cryptography>=42,<47"
+        "cryptography>=50,<51"
       ],
-      "packages": 0,
-      "reason": "pyproject.toml contains version ranges, not a supported resolved and hashed deployment lock; Python packages were not queried.",
-      "status": "unresolved"
+      "deployment_extras": [
+        "ibkr",
+        "streams"
+      ],
+      "lock": "services/quant-api/requirements-deploy.lock",
+      "packages": 28,
+      "status": "scanned"
     },
     "crates.io": {
       "packages": 388,
@@ -91,20 +95,20 @@
   "limitations": [
     "OSV matching is point-in-time advisory evidence, not reachability analysis, proof of exploitation, or an independent security audit.",
     "A package with no returned match is not proven free of vulnerabilities.",
-    "Python deployment dependencies remain unresolved and were not scanned.",
+    "Python deployment dependencies are scanned from the exact hashed lock services/quant-api/requirements-deploy.lock (base plus runtime extras); development-only tooling is excluded from the deployment environment.",
     "This report does not complete license/redistribution, artifact-provenance, or reproducible-build review."
   ],
   "query": {
     "batch_size": 100,
     "batches": 6,
-    "queried_at": "2026-11-07T22:29:10Z",
+    "queried_at": "2026-11-07T23:43:30Z",
     "querybatch_url": "https://api.osv.dev/v1/querybatch",
     "service": "OSV",
     "vulnerability_url_template": "https://api.osv.dev/v1/vulns/{id}"
   },
   "schema": "osiris.dependency-advisory-report.v1",
   "source": {
-    "commit": "974de9ce04585e1d38824136514325f231b2bdaf",
+    "commit": "ce16dbde1e7b2377c82e5f14622238e60c04ff07",
     "inputs": {
       "apps/web/package-lock.json": {
         "sha256": "fc7b7c0a8bc7216c037feea96eeae9003d32a059d2f34a538de8313136f21c49"
@@ -113,7 +117,10 @@
         "sha256": "d2d7437dbb9bc020c703c25a642fcf90abda9e27f01f34d27eeebdc05b0b0993"
       },
       "services/quant-api/pyproject.toml": {
-        "sha256": "d720ef4661e1b01e916f02298dee6cb02ce4444401d0968639a7070e251fffa6"
+        "sha256": "6c1d1104f2694609c512b28ad06d1f740099b9aeae307fd44d636285ffdaee38"
+      },
+      "services/quant-api/requirements-deploy.lock": {
+        "sha256": "31165c71f957a348268bf6b9b9da050c373a36282b67d6a872826ecbb45a82db"
       }
     },
     "repository": "Osiris6900/osiris-eye"
@@ -122,7 +129,7 @@
     "advisory_groups": 1,
     "affected_packages": 1,
     "maintenance_only_groups": 1,
-    "queried_packages": 520,
+    "queried_packages": 548,
     "raw_advisory_matches": 1,
     "vulnerability_groups": 0
   }

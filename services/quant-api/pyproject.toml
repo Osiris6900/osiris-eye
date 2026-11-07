@@ -5,7 +5,7 @@ build-backend="setuptools.build_meta"
 name="osiris-quant-api"
 version="0.1.0"
 requires-python=">=3.11"
-dependencies=["fastapi>=0.110,<1","uvicorn[standard]>=0.27,<1","pydantic>=2.6,<3","numpy>=1.26,<3","cryptography>=42,<47"]
+dependencies=["fastapi>=0.110,<1","uvicorn[standard]>=0.27,<1","pydantic>=2.6,<3","numpy>=1.26,<3","cryptography>=50,<51"]
 [project.optional-dependencies]
 ibkr=["ib_async>=2.0,<3"]
 streams=["websockets>=12,<18"]
