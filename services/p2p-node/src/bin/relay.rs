@@ -43,6 +43,40 @@ fn env_usize(name: &str, default: usize) -> Result<usize, Box<dyn Error>> {
     }
 }
 
+/// Translate an exact operator limit to libp2p-relay 0.21's raw configuration.
+/// Upstream denies only when `current > configured` before insertion, so the
+/// raw value must be one lower. Zero operator limits fail closed: setting the
+/// global limit to zero is the explicit way to deny all reservations/circuits.
+fn libp2p_per_peer_limit(requested: usize) -> Result<usize, &'static str> {
+    requested.checked_sub(1).ok_or(
+        "per-peer limit must be at least 1; set the corresponding global limit to 0 to deny all",
+    )
+}
+
+fn env_per_peer_limit(name: &str, default: usize) -> Result<usize, Box<dyn Error>> {
+    let requested = env_usize(name, default)?;
+    libp2p_per_peer_limit(requested)
+        .map_err(|error| format!("{name}: {error} (requested {requested})").into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::libp2p_per_peer_limit;
+
+    #[test]
+    fn exact_operator_limits_account_for_libp2p_pre_insertion_comparison() {
+        assert_eq!(libp2p_per_peer_limit(1), Ok(0));
+        assert_eq!(libp2p_per_peer_limit(2), Ok(1));
+        assert_eq!(libp2p_per_peer_limit(64), Ok(63));
+        assert_eq!(libp2p_per_peer_limit(usize::MAX), Ok(usize::MAX - 1));
+    }
+
+    #[test]
+    fn zero_per_peer_limit_fails_closed_instead_of_admitting_one() {
+        assert!(libp2p_per_peer_limit(0).is_err());
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     if env::var("OSIRIS_RELAY_SERVER_ENABLED").as_deref() != Ok("true") {
@@ -57,10 +91,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut relay_config = relay::Config::default();
     relay_config.max_reservations = env_usize("OSIRIS_RELAY_MAX_RESERVATIONS", 64)?;
     relay_config.max_reservations_per_peer =
-        env_usize("OSIRIS_RELAY_MAX_RESERVATIONS_PER_PEER", 2)?;
+        env_per_peer_limit("OSIRIS_RELAY_MAX_RESERVATIONS_PER_PEER", 2)?;
     relay_config.max_circuits = env_usize("OSIRIS_RELAY_MAX_CIRCUITS", 8)?;
     relay_config.max_circuits_per_peer =
-        env_usize("OSIRIS_RELAY_MAX_CIRCUITS_PER_PEER", 2)?;
+        env_per_peer_limit("OSIRIS_RELAY_MAX_CIRCUITS_PER_PEER", 2)?;
     relay_config.reservation_duration = Duration::from_secs(30 * 60);
     relay_config.max_circuit_duration = Duration::from_secs(60);
     relay_config.max_circuit_bytes = 1_048_576;
