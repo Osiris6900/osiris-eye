@@ -15,6 +15,7 @@ from osiris_api.receipt_gated_retry import (
     PublishNotSent,
     ReceiptRetryScheduler,
     backoff_seconds,
+    jittered_backoff_seconds,
 )
 from osiris_api.recipient_receipt_ledger import RecipientReceiptLedger
 from osiris_api.verified_receipt_consumer import VerifiedReceiptConsumer
@@ -228,8 +229,14 @@ def test_backoff_budget_and_receipt_expiry(gate):
         raise PublishNotSent("stdin closed")
 
     scheduler.schedule(observation(), RECIPIENT, now=NOW)
+
+    def delay(failures):
+        return jittered_backoff_seconds(
+            failures, observation_key=key_for(), recipient=RECIPIENT,
+        )
+
     for index in range(MAX_ATTEMPTS - 1):
-        when = NOW + sum(backoff_seconds(item) for item in range(1, index + 1))
+        when = NOW + sum(delay(item) for item in range(1, index + 1))
         outcome = scheduler.advance(
             publish=fail, allowed_providers={"synthetic-retry"},
             policy=policy(), now=when, observed_clock=CLOCK,
@@ -240,7 +247,7 @@ def test_backoff_budget_and_receipt_expiry(gate):
             policy=policy(), now=when, observed_clock=CLOCK,
         )
         assert early == []
-    last = NOW + sum(backoff_seconds(item) for item in range(1, MAX_ATTEMPTS))
+    last = NOW + sum(delay(item) for item in range(1, MAX_ATTEMPTS))
     exhausted = scheduler.advance(
         publish=fail, allowed_providers={"synthetic-retry"},
         policy=policy(), now=last, observed_clock=CLOCK,
@@ -263,6 +270,51 @@ def test_backoff_budget_and_receipt_expiry(gate):
     assert quiet == []
     assert scheduler.snapshot(key_for("wait"), RECIPIENT)["state"] == "unconfirmed"
     assert ledger.status(MESSAGE, RECIPIENT, DIGEST) == "unconfirmed"
+
+
+def test_jitter_is_deterministic_bounded_and_spread():
+    key = key_for()
+    for failures in (1, 2, 3, 4, 10):
+        base = backoff_seconds(failures)
+        first = jittered_backoff_seconds(
+            failures, observation_key=key, recipient=RECIPIENT,
+        )
+        again = jittered_backoff_seconds(
+            failures, observation_key=key, recipient=RECIPIENT,
+        )
+        assert first == again
+        assert base // 2 <= first <= base
+    with pytest.raises(ValueError, match="invalid_backoff_attempt"):
+        jittered_backoff_seconds(0, observation_key=key, recipient=RECIPIENT)
+    with pytest.raises(ValueError, match="invalid_jitter_material"):
+        jittered_backoff_seconds(1, observation_key=key, recipient=None)
+    spread = {
+        jittered_backoff_seconds(3, observation_key=key, recipient=f"peer-{index}")
+        for index in range(32)
+    }
+    assert len(spread) > 1
+
+
+def test_jitter_spreads_peer_wakeups(gate):
+    scheduler, _ledger = gate
+    recipients = [f"peer-{index}" for index in range(16)]
+    for recipient in recipients:
+        scheduler.schedule(observation(), recipient, now=NOW)
+
+    def fail(payload, recipient):
+        raise PublishNotSent("stdin closed")
+
+    outcome = scheduler.advance(
+        publish=fail, allowed_providers={"synthetic-retry"},
+        policy=AdmissionDecision(set(recipients), set()), now=NOW, observed_clock=CLOCK,
+    )
+    assert all(item["state"] == "scheduled" for item in outcome)
+    wakeups = {
+        scheduler.snapshot(key_for(), recipient)["next_attempt_at"]
+        for recipient in recipients
+    }
+    assert len(wakeups) > 1
+    assert all(NOW + 1 <= when <= NOW + 2 for when in wakeups)
 
 
 def test_stale_observation_expires_without_a_write(gate):

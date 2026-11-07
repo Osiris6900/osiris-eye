@@ -31,8 +31,13 @@ The scheduler writes stdin only while an attempt has no tracked envelope:
 4. The verified-receipt channel must be reported ready. If it is not, nothing
    is written. Repeated outages become `held` after 8 deferrals for manual review.
 5. A writer that fails before acceptance (`PublishNotSent`) backs off and may
-   try again. Backoff is deterministic: 2, 4, 8, then 16 seconds, capped at 60.
-   The fourth failed send is `held` with `retry_budget_exhausted`.
+   try again. Backoff is exponential — base 2, 4, 8, then 16 seconds, capped
+   at 60 — with deterministic half-jitter: each delay lands in the upper half
+   of its band, derived from SHA-256 of `observation_key | recipient |
+   failures`. There is no random source, so a restart reproduces the same
+   schedule from disk, while a cohort of failing peers spreads across the band
+   instead of waking on the same second. The fourth failed send is `held`
+   with `retry_budget_exhausted`.
 6. A tracked result registers `(message_id, recipient, envelope_sha256)` in
    `RecipientReceiptLedger` before the attempt is marked `published`. No later
    pass writes that pair again.
