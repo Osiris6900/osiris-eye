@@ -1,7 +1,8 @@
 # P2P dependency inventory and verification boundary
 
-This is a source and lockfile review of the hardening branch, not a vulnerability
-scan, license clearance, software bill of materials, or cryptographic audit.
+This document combines a source and lockfile review with a point-in-time OSV
+advisory scan. It is not license clearance, a complete software bill of
+materials, reachability proof, or a cryptographic/independent security audit.
 
 ## Rust resolution
 
@@ -68,9 +69,52 @@ as a whole-environment SBOM until a supported resolved and hashed Python lock
 is incorporated.
 
 This inventory is not a license-compatibility or redistribution decision,
-advisory scan, provenance attestation, reproducible-build proof, or independent
-security assessment. Exact-version license metadata still requires operator
-review against the actual distributed artifacts.
+provenance attestation, reproducible-build proof, or independent security
+assessment. Exact-version license metadata still requires operator review
+against the actual distributed artifacts.
+
+## OSV advisory evidence
+
+`scripts/scan_dependency_advisories.py` queries OSV for every exact registry
+package in the Cargo and npm lockfiles and writes
+`docs/P2P_DEPENDENCY_ADVISORIES.json`. The checked-in report records the source
+commit, input SHA-256 hashes, query timestamp, package counts, matched advisory
+IDs, aliases and selected OSV record fields. Its offline validation fails when
+the report's source identity, timestamp, input hashes, package coverage, finding
+IDs/classifications or derived summary counts are stale or internally
+inconsistent. The checks derive expected counts from the current lock inputs;
+they do not require a fixed number of advisories after remediation.
+
+The live query at `2026-11-07T20:45:36Z` covered 493 packages at source commit
+`212cad687b69ed421c0778699e451955576739c9`: 361 crates.io and 132 npm packages.
+Eight raw matches were normalized into six alias-aware advisory groups affecting
+four Cargo packages. No npm package returned a match in this query.
+
+| Package | Classification | Advisory group IDs |
+|---|---|---|
+| hickory-proto 0.25.2 | vulnerability | GHSA-3v94-mw7p-v465 / RUSTSEC-2026-0118 / RUSTSEC-2026-0120 |
+| hickory-proto 0.25.2 | vulnerability | GHSA-q2qq-hmj6-3wpp / RUSTSEC-2026-0119 |
+| hickory-resolver 0.25.2 | vulnerability | GHSA-5j98-2g5x-46v6 / CVE-2026-93657 |
+| hickory-resolver 0.25.2 | vulnerability | GHSA-6f2x-v7q7-m7m5 |
+| yamux 0.12.1 | vulnerability | GHSA-vxx9-2994-q338 / CVE-2026-32314 |
+| paste 1.0.15 | maintenance-only | RUSTSEC-2024-0436 |
+
+`config/osv_maintenance_only.json` explicitly classifies the `paste` record as
+an unmaintained-package warning. It is retained as maintenance evidence rather
+than counted as proof of an exploitable vulnerability. Unknown or unclassified
+records default to the vulnerability classification; they are not suppressed.
+
+The five vulnerability groups remain remediation work. This report does not
+claim that the old Yamux compatibility path was reachable: OSIRIS call sites use
+`yamux::Config::default()`, and the reviewed libp2p-yamux 0.47 default selects
+Yamux 0.13 rather than its customized 0.12 compatibility path. That local
+configuration evidence is not an external exploitability audit.
+
+Python remains explicitly `unresolved` and was not queried as a resolved PyPI
+environment. OSV matching is point-in-time advisory evidence, not proof of
+exploitation, a universal vulnerability-free result, or an independent audit.
+The broader dependency gate also remains open for Python resolution,
+license/redistribution and artifact-provenance review.
 
 ## CI action pinning ratchet
 
@@ -116,6 +160,10 @@ python scripts/test_generate_dependency_sbom.py
 python scripts/generate_dependency_sbom.py --output /tmp/osiris-eye-sbom.json
 python scripts/generate_dependency_sbom.py --offline --output /tmp/osiris-eye-sbom-offline.json
 cmp /tmp/osiris-eye-sbom.json /tmp/osiris-eye-sbom-offline.json
+python scripts/test_scan_dependency_advisories.py
+python scripts/scan_dependency_advisories.py \
+  --source-commit 212cad687b69ed421c0778699e451955576739c9 \
+  --output docs/P2P_DEPENDENCY_ADVISORIES.json
 ```
 
 The offline `--no-deps` metadata command passed during this review. Full offline
@@ -123,10 +171,11 @@ metadata could not complete because a platform dependency (`async-io 2.6.0`)
 was absent from the local cache; this is a cache limitation, not a successful
 full dependency inventory. Build/test evidence is recorded separately.
 
-Before a public release, record current Rust/Python/JavaScript advisory scans,
-triage reachable findings, lock and incorporate the supported Python deployment
-environment, complete license/redistribution review, and record toolchain and
-artifact hashes. Complete the actual third-party CI action SHA/digest pinning
-and trust review before release; the ratchet alone does not clear that gate.
-No advisory scanner was run in this task, so no “zero known vulnerabilities”
-conclusion is supported.
+Before a public release, refresh the Cargo/npm advisory report, remediate its
+current findings, triage reachability, lock and scan the supported Python
+deployment environment, complete license/redistribution review, and record
+toolchain and artifact hashes. Complete the actual third-party CI action
+SHA/digest pinning and trust review before release; the ratchet alone does not
+clear that gate. `--fail-on-vulnerability` returns exit status 2 after writing a
+report when any vulnerability group remains, so it can gate a remediated tree.
+The checked-in evidence does not support a “zero known vulnerabilities” claim.
