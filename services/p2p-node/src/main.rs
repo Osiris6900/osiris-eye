@@ -867,13 +867,13 @@ fn load_or_create_transport_key() -> Result<TransportKeyPair, Box<dyn Error>> {
         return Ok(TransportKeyPair::from_private_bytes(key));
     }
     let key = TransportKeyPair::generate();
-    let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
+    let mut file = OpenOptions::new().write(true).create_new(true).open(&path)?;
     file.write_all(&key.private_bytes())?;
     file.sync_all()?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
     }
     Ok(key)
 }
@@ -1741,7 +1741,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         if !relay_listeners.contains_key(relay_peer) {
                             match swarm.listen_on(address.clone().with(libp2p::multiaddr::Protocol::P2pCircuit)) {
                                 Ok(listener) => { relay_listeners.insert(peer_id, listener); emit!("relay_reservation_requested=true relay_peer={peer_id}"); }
-                                Err(error) => emit!("relay_reservation_error peer={relay_peer} error={error}"),
+                                Err(error) => emit!("relay_reservation_error peer={peer_id} error={error}"),
                             }
                         }
                     }
