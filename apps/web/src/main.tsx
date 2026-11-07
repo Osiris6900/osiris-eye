@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import MarketMechanics from './MarketMechanics';
 import './style.css';
+import LiveCryptoTape from './LiveCryptoTape';
 
 const tickers = [
   ['NIFTY 50','24,198.60','+112.35','+0.47%','up'],['BANKNIFTY','51,342.20','+296.75','+0.56%','up'],
@@ -20,48 +21,7 @@ function Chart() {
 }
 function VolSurface(){return <div className="vol-wrap"><div className="vol-grid">{Array.from({length:49},(_,i)=><i key={i} style={{'--v':Math.max(8,70-Math.abs(i%7-3)*15-Math.abs(Math.floor(i/7)-3)*13)} as React.CSSProperties}/>)}</div><div className="vol-label">IV SURFACE · DEMO</div><b>18.4%</b></div>}
 
-type LiveQuote = { symbol: string; price: string; change: string; eventTime: number };
-function LiveCryptoTape() {
- const [quotes,setQuotes]=useState<Record<string,LiveQuote>>({});
- const [status,setStatus]=useState<'connecting'|'live'|'reconnecting'>('connecting');
- useEffect(()=>{
-  let socket: WebSocket | null=null;
-  let retry: ReturnType<typeof setTimeout> | undefined;
-  let disposed=false;
-  let attempts=0;
-  const connect=()=>{
-   if(disposed) return;
-   setStatus(attempts===0?'connecting':'reconnecting');
-   socket=new WebSocket('wss://stream.binance.com:9443/stream?streams=btcusdt@ticker/ethusdt@ticker/solusdt@ticker/bnbusdt@ticker/xrpusdt@ticker');
-   socket.onopen=()=>{attempts=0;setStatus('live');};
-   socket.onmessage=(event)=>{
-    try {
-     const packet=JSON.parse(event.data);
-     const d=packet.data;
-     if(!d || typeof d.s!=='string') return;
-     const symbol=String(d.s).toUpperCase();
-     setQuotes(previous=>({...previous,[symbol]:{
-      symbol,price:Number(d.c).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:4}),
-      change:Number(d.P).toFixed(2),eventTime:Number(d.E)
-     }}));
-    } catch { /* Ignore malformed upstream frames. */ }
-   };
-   socket.onerror=()=>{setStatus('reconnecting');socket?.close();};
-   socket.onclose=()=>{
-    if(!disposed){setStatus('reconnecting');attempts+=1;retry=setTimeout(connect,Math.min(15000,1000*2**Math.min(attempts,4)));}
-   };
-  };
-  connect();
-  return ()=>{disposed=true;if(retry)clearTimeout(retry);socket?.close();};
- },[]);
- const symbols=['BTCUSDT','ETHUSDT','SOLUSDT','BNBUSDT','XRPUSDT'];
- return <section className="live-feed-panel">
-  <div className="live-feed-head"><b>LIVE CRYPTO · BINANCE SPOT</b><span className={status==='live'?'feed-live':'feed-wait'}>● {status==='live'?'STREAM CONNECTED':status==='connecting'?'CONNECTING':'RECONNECTING'}</span></div>
-  <div className="live-feed-quotes">{symbols.map(symbol=>{const q=quotes[symbol];return <div key={symbol}><small>{symbol.replace('USDT',' / USDT')}</small><strong>{q?q.price:'—'}</strong><em className={q?(Number(q.change)>=0?'up':'down'):''}>{q?(Number(q.change)>=0?'+':'')+q.change+'%':'Waiting for tick'}</em></div>})}</div>
-  <small className="feed-disclaimer">Exchange WebSocket ticker updates · Binance Spot only · Not NSE/NYSE data · No orders submitted</small>
- </section>;
-}
-function App(){
+export function App(){
  const [active,setActive]=useState('Dashboard');const [time,setTime]=useState('5m');const [symbol,setSymbol]=useState('NIFTY 50');const [query,setQuery]=useState('');const [period,setPeriod]=useState('05 Dec');
  const filtered=useMemo(()=>tickers.filter(t=>t[0].toLowerCase().includes(query.toLowerCase())),[query]);
  return <div className="app-shell">
@@ -74,6 +34,7 @@ function App(){
    <div className="demo-banner"><span>● SIMULATION ENVIRONMENT</span><span>Illustrative market values · Not live prices · No orders can be placed</span></div>
    <section className="ticker-strip">{tickers.map(t=><button className="ticker" key={t[0]} onClick={()=>setSymbol(t[0])}><b>{t[0]}</b><strong>{t[1]}</strong><small className={t[4]}>{t[2]} ({t[3]})</small><Spark down={t[4]==='down'}/></button>)}</section>
    <div className="section-heading"><div><small>MARKET OVERVIEW / INDIA + GLOBAL</small><h1>{active==='Dashboard'?'Trading Intelligence Dashboard':active}</h1></div><span className="market-open">● RESEARCH MODE</span></div>
+   <LiveCryptoTape/>
    <MarketMechanics/>
    <section className="top-grid">
     <article className="panel chart-panel"><div className="panel-head"><div><h2>⌁ {symbol}</h2><small>NSE · INDEX · <span className="up">+0.47%</span></small></div><div className="tabs">{['1m','5m','15m','1h','4h','1D'].map(t=><button className={time===t?'on':''} onClick={()=>setTime(t)} key={t}>{t}</button>)}</div></div><div className="chart-legend"><span>O 24,195.10</span><span>H 24,201.45</span><span>L 24,190.20</span><span>C 24,198.60</span><span className="up">+3.50 (+0.01%)</span></div><Chart/><div className="volume-bars">{Array.from({length:48},(_,i)=><i key={i} style={{height:(9+(i*17)%28)+'px'}}/>)}</div></article>
@@ -95,4 +56,5 @@ function App(){
   </main>
  </div>
 }
-createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>);
+const root = document.getElementById('root');
+if (root) createRoot(root).render(<React.StrictMode><App/></React.StrictMode>);

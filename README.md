@@ -30,7 +30,15 @@ Six prototype research systems add cross-asset correlation/lead-lag hypothesis s
 
 Six prototype research APIs add chronological walk-forward fold diagnostics, weighted portfolio risk and concentration, participation/square-root execution-cost heuristics, feature PSI plus accuracy-drift checks, rule-based macro regime labels, and strategy triage with turnover and multiple-testing penalties. These are transparent research primitives: no external macro feed, calibrated market-impact model, model deployment authorization, or live order routing is provided. See [docs/PHASE6_ADVANCED_QUANT_INTELLIGENCE.md](docs/PHASE6_ADVANCED_QUANT_INTELLIGENCE.md).
 
-## Phase 5 institutional backtesting\n\nA multi-asset portfolio simulator applies target weights with a one-period lag and models explicit commission, spread, slippage and impact assumptions. It reports equity, CAGR, volatility, Sharpe and drawdown diagnostics. See [docs/PHASE5_INSTITUTIONAL_BACKTESTING.md](docs/PHASE5_INSTITUTIONAL_BACKTESTING.md). This remains a research simulator, not fill-level execution.\n\n## Phase 4 market-data infrastructure\n\nSix foundations add batch validation and ingestion, UTC normalization, instrument-master audits, feed freshness checks, operator-declared entitlement gating, and event-time plus availability-time point-in-time queries. See [docs/PHASE4_MARKET_DATA_INFRASTRUCTURE.md](docs/PHASE4_MARKET_DATA_INFRASTRUCTURE.md). These use local SQLite; no vendor feeds or production streaming service are connected.\n\n## Advanced intelligence systems
+## Phase 5 institutional backtesting
+
+A multi-asset portfolio simulator applies target weights with a one-period lag and models explicit commission, spread, slippage and impact assumptions. It reports equity, CAGR, volatility, Sharpe and drawdown diagnostics. See [docs/PHASE5_INSTITUTIONAL_BACKTESTING.md](docs/PHASE5_INSTITUTIONAL_BACKTESTING.md). This remains a research simulator, not fill-level execution.
+
+## Phase 4 market-data infrastructure
+
+Six foundations add batch validation and ingestion, UTC normalization, instrument-master audits, feed freshness checks, operator-declared entitlement gating, and event-time plus availability-time point-in-time queries. See [docs/PHASE4_MARKET_DATA_INFRASTRUCTURE.md](docs/PHASE4_MARKET_DATA_INFRASTRUCTURE.md). These use local SQLite; no vendor feeds or production streaming service are connected.
+
+## Advanced intelligence systems
 
 The seven requested capability groups are now specified in [docs/ADVANCED_INTELLIGENCE_SYSTEMS.md](docs/ADVANCED_INTELLIGENCE_SYSTEMS.md):
 1. Multi-Agent AI research team with scoped permissions and human approval.
@@ -41,7 +49,9 @@ The seven requested capability groups are now specified in [docs/ADVANCED_INTELL
 6. Weather, lunar, solar/space-weather and other alternative-data research lab.
 7. Futuristic operator dashboard covering AI, global markets, options, anomalies, quant research and risk.
 
-Data provenance, point-in-time joins, feed-quality gates, model records and security controls are defined in [docs/DATA_CONTRACTS_AND_VALIDATION.md](docs/DATA_CONTRACTS_AND_VALIDATION.md), and [docs/MASTER_ENGINEERING_BLUEPRINT.md](docs/MASTER_ENGINEERING_BLUEPRINT.md).\n\nThe broader target architecture—including deep order-flow intelligence, portfolio intelligence, smart execution research, market simulation, financial knowledge graph, observability, model governance, alternative intelligence, latency discipline, security and phased acceptance gates—is documented in [docs/MASTER_ENGINEERING_BLUEPRINT.md](docs/MASTER_ENGINEERING_BLUEPRINT.md).
+Data provenance, point-in-time joins, feed-quality gates, model records and security controls are defined in [docs/DATA_CONTRACTS_AND_VALIDATION.md](docs/DATA_CONTRACTS_AND_VALIDATION.md), and [docs/MASTER_ENGINEERING_BLUEPRINT.md](docs/MASTER_ENGINEERING_BLUEPRINT.md).
+
+The broader target architecture—including deep order-flow intelligence, portfolio intelligence, smart execution research, market simulation, financial knowledge graph, observability, model governance, alternative intelligence, latency discipline, security and phased acceptance gates—is documented in [docs/MASTER_ENGINEERING_BLUEPRINT.md](docs/MASTER_ENGINEERING_BLUEPRINT.md).
 
 These documents specify the target architecture and acceptance criteria; they do not mean all live feeds, trained models, agent runtime, or dashboard screens are already implemented.
 
@@ -68,9 +78,31 @@ cargo test
 
 ```bash
 cd apps/web
-npm install
+npm ci
 npm run dev
 ```
+
+### Web validation and live crypto panel
+
+Use Node.js 24 LTS, matching CI.
+
+```bash
+cd apps/web
+npm ci
+npm test
+npm run build
+```
+
+Frontend behavior tests cover exchange tick validation, stale-data hiding,
+reconnect/cleanup, dashboard mounting, and research API loading, authentication,
+input validation and outdated-result handling. CI runs these tests and the build
+using the committed dependency lockfile.
+
+The dashboard includes a separate Binance Spot crypto ticker using the public
+exchange WebSocket. It displays prices only after fresh valid ticks arrive;
+closed or silent connections retry with bounded backoff. Network availability
+and exchange access determine whether it can connect. Other dashboard snapshots
+remain explicitly simulated; the ticker does not feed research or order routing.
 
 ## Shared data and API
 
