@@ -1867,7 +1867,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                             "observation_delivery_acknowledged recipient={} message_id={} envelope_sha256={} admission=validated_decrypted_replay_recorded",
                                             receipt.recipient_peer_id, receipt.message_id, receipt.envelope_sha256,
                                         ),
-                                        Err(reason) => emit!("observation_delivery_rejected peer={authenticated_source} reason={reason}"),
+                                        Err(reason) => emit!("delivery_receipt_rejected peer={authenticated_source} reason={reason}"),
                                     }
                                 }
                             }
