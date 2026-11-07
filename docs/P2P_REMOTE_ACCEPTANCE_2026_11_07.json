@@ -1,0 +1,30 @@
+{
+  "schema": "osiris.p2p.remote-acceptance-summary.v1",
+  "candidate_commit": "154a65111d92cbd344ad2cc1b49a80ed8f53cd28",
+  "scope": "independent-github-actions-runners-over-tailscale",
+  "two_host": {
+    "workflow_url": "https://github.com/Osiris6900/osiris-eye/actions/runs/42424830531",
+    "conclusion": "success",
+    "payload_sha256": "64fecd33f95d1b0f1cf9ef19a7449809587a25c70006e964799198fde0844246",
+    "marker": "CROSS_HOST_E2EE_RECIPIENT_DELIVERY=PASS"
+  },
+  "three_host": {
+    "workflow_url": "https://github.com/Osiris6900/osiris-eye/actions/runs/42424833409",
+    "conclusion": "success",
+    "host_a_peer_id": "12D3KooWJvSDpGz2LZPc53KPNFdpCQSE4K1PTrhut6uJrH6g6uBw",
+    "host_b_peer_id": "12D3KooWMCXh6nuo2whodG1VnLTceiZ2ZRFNyGmq79g6P4qecHfE",
+    "host_c_peer_id": "12D3KooWGGaGpF4gfEMXPNsPHy4ydqMYrSxBUqJQWmTm63qc9uax",
+    "recipient": "12D3KooWMCXh6nuo2whodG1VnLTceiZ2ZRFNyGmq79g6P4qecHfE",
+    "non_recipient": "12D3KooWGGaGpF4gfEMXPNsPHy4ydqMYrSxBUqJQWmTm63qc9uax",
+    "payload_sha256": "4dad8a0cdb02d97d285afc7bf340daa5d4964f23d3f9d8587f900a6125ae2b49 payload_bytes=69",
+    "marker": "THREE_HOST_E2EE_RECIPIENT_ONLY=PASS",
+    "observer_explicit_discard": true,
+    "recipient_exact_digest": true
+  },
+  "limitations": [
+    "Summary of workflow status and controller logs, not independently signed evidence or a cryptographic audit.",
+    "Temporary overlay runners do not establish public deployment, load capacity or uptime.",
+    "Later commits need their own release-candidate evidence; later Python retry reporting fix does not change the tested Rust node or SSH harness.",
+    "Binary hashes were not retained by these workflows."
+  ]
+}

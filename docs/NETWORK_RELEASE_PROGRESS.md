@@ -8,8 +8,8 @@ Status recorded 2026-11-07; no percentage-based completion claim is used.
 | Main CI | [Passed](https://github.com/Osiris6900/osiris-eye/actions/runs/42423590055) |
 | Cross-host transport delivery | [Passed](https://github.com/Osiris6900/osiris-eye/actions/runs/42423906183) |
 | Three-peer mesh/reconnect | [Passed](https://github.com/Osiris6900/osiris-eye/actions/runs/42423906170) |
-| Real two-host recipient E2EE | [Initial run on GitHub runners](https://github.com/Osiris6900/osiris-eye/actions/runs/42424456468); failed; harness remediation and candidate rerun required |
-| Real three-host recipient isolation | [Initial run on GitHub runners](https://github.com/Osiris6900/osiris-eye/actions/runs/42424459471); failed; harness remediation and candidate rerun required |
+| Real two-host recipient E2EE | [Passed at `154a651`](https://github.com/Osiris6900/osiris-eye/actions/runs/42424830531) |
+| Real three-host recipient isolation | [Passed at `154a651`](https://github.com/Osiris6900/osiris-eye/actions/runs/42424833409); B exact digest, C explicit discard |
 | Local modified API | 865 tests passed with Rust integration tests enabled |
 | Local relay E2EE | Passed; dirty checkout, single-host regression evidence only |
 | Python dependency audit | 0 known vulnerabilities after cryptography 50.0.2, pytest 9.2.0 and pip 26.3; local environment only |
@@ -51,5 +51,6 @@ Fixed-launcher remote acceptance reruns:
 - [Two hosts](https://github.com/Osiris6900/osiris-eye/actions/runs/42424830531)
 - [Three hosts](https://github.com/Osiris6900/osiris-eye/actions/runs/42424833409)
 
-Both target `154a65111d92cbd344ad2cc1b49a80ed8f53cd28`; results must be
-recorded before closing gates.
+Both target `154a65111d92cbd344ad2cc1b49a80ed8f53cd28`; both concluded success. The sanitized log/status summary is
+[P2P_REMOTE_ACCEPTANCE_2026_11_07.json](P2P_REMOTE_ACCEPTANCE_2026_11_07.json).
+Final release evidence still needs binary hashes and exact final-candidate runs.

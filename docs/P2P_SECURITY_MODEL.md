@@ -15,7 +15,8 @@ freshness, revocation/disconnect and signed receipt checks. At `974de9ce`,
 [Tailscale cross-host observation delivery](https://github.com/Osiris6900/osiris-eye/actions/runs/42421052643)
 also passed; that workflow does not enable recipient E2EE. Subsequent changes
 require their own test results. Two-host and three-host recipient E2EE harnesses
-and workflows exist; those independent-host E2EE gates remain open. See
+and workflows passed on separate GitHub runners at `154a651`; final-release
+candidate evidence, including binary hashes, remains required. See
 [release gates](P2P_RELEASE_GATES.md) for evidence boundaries. No
 independent cryptographic audit, public-fleet uptime or production certification
 is claimed.
@@ -26,7 +27,7 @@ is claimed.
 |---|---|---|
 | Identity | Persistent Ed25519 identity, signed GossipSub and operator-triggered rotation | PeerId ownership is not a trust grant |
 | Admission | Optional explicit trusted-PeerId allowlist; local and authority-signed revocations override trust | Configure allowlists and the authority key out of band; open mode exists |
-| Transport | TCP, authenticated Noise and Yamux; explicitly configured Circuit Relay v2 support in the core node | Relay selection and reservation are operator configured; no automatic NAT discovery or hole punching |
+| Transport | TCP, authenticated Noise and Yamux; explicitly configured Circuit Relay v2 support in the core node | Explicit relay-only acceptance disables hole punching; automatic NAT/relay behavior needs separate network acceptance |
 | Application encryption | Opt-in per-recipient X25519/HKDF-SHA256/ChaCha20-Poly1305 envelopes signed with Ed25519 | Every participating node must enable E2EE; metadata remains visible |
 | Key bindings | Signed PeerId/identity/key/epoch/expiry binding; verified remote bindings persisted in SQLite | Local epoch floors survive restart, not privileged rollback of all node state |
 | Replay | Durable node-local journal before acceptance; malformed/full state fails closed | No network-wide deduplication or consensus |
