@@ -64,6 +64,20 @@ carries that knowledge across restarts.
   guaranteed reachability can still run the standalone relay binary
   (`src/bin/relay.rs`) on any always-on machine — it remains fully supported.
 
+## Loopback quota regression
+
+Run the real libp2p transport integration tests with:
+
+```sh
+cargo test --manifest-path services/p2p-node/Cargo.toml --locked --test relay_quota
+```
+
+The tests configure zero reservation/circuit capacity and require both the
+relay's `ResourceLimitExceeded` event and the client's failed listener/dial.
+They also assert that no sender/receiver connection is established above the
+circuit quota. These are same-host protocol tests, not cross-network,
+independent-host, hostile-load or production-capacity evidence.
+
 ## Operating checklist
 
 - Leave `OSIRIS_UPNP_ENABLED=1` and `OSIRIS_AUTO_RELAY=1` on.
