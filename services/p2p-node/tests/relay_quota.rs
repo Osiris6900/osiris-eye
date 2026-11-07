@@ -258,7 +258,7 @@ async fn per_peer_circuit_quota_preserves_first_and_denies_second_dial() {
         let mut relay_swarm = build_relay(relay::Config {
             max_circuits: 8,
             max_circuits_per_peer: 1,
-            circuit_duration: Duration::from_secs(60),
+            max_circuit_duration: Duration::from_secs(60),
             reservation_duration: Duration::from_secs(60),
             ..relay::Config::default()
         });
