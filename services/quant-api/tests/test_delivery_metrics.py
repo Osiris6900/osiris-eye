@@ -19,7 +19,7 @@ from osiris_api.receipt_gated_retry import (
 from osiris_api.recipient_receipt_ledger import RecipientReceiptLedger
 
 NOW = 1_762_470_030
-CLOCK = datetime.fromtimestamp(NOW, UTC)
+CLOCK = datetime(2026, 11, 6, 23, 0, 30, tzinfo=UTC)
 RECIPIENT = "peer-b"
 DIGEST = "ab" * 32
 MESSAGE = "m" * 22
@@ -69,7 +69,7 @@ def test_aggregates_outbox_ledger_and_scheduler(components):
     outbox, ledger, scheduler = components
     outbox.enqueue(observation("one"))
     outbox.enqueue(observation("two"))
-    ledger.register(MESSAGE, RECIPIENT, DIGEST, now=NOW - 500)
+    ledger.register("n" * 22, RECIPIENT, DIGEST, now=NOW - 500)
     calls = []
     scheduler.schedule(observation(), RECIPIENT, now=NOW)
     scheduler.advance(
@@ -143,12 +143,13 @@ def test_outbox_backlog_and_quarantine_alerts(components, monkeypatch):
     report = collect_delivery_metrics(outbox=outbox, now=NOW)
     alerts = evaluate_operational_alerts(report, outbox_pending_threshold=2)
     assert [alert["alert"] for alert in alerts] == ["outbox_backlog"]
-    # Quarantine a stale row through a real drain.
+    # Quarantine a stale row through a real drain; the fixed clock keeps the
+    # three fresh rows deliverable while the 2020 row is quarantined.
     outbox.enqueue(observation("stale", when="2020-01-01T00:00:00Z"))
-    outbox.drain(lambda line: None, allowed_providers={"synthetic-retry"})
+    outbox.drain(lambda line: None, allowed_providers={"synthetic-retry"}, now=CLOCK)
     report = collect_delivery_metrics(outbox=outbox, now=NOW)
     assert report["outbox"]["quarantined"] == 1
-    assert report["outbox"]["pending"] == 3  # drained valid rows are delivered
+    assert report["outbox"]["pending"] == 0  # drained valid rows are delivered
     alerts = evaluate_operational_alerts(report, outbox_pending_threshold=100)
     assert [alert["alert"] for alert in alerts] == ["quarantined_observations"]
 
