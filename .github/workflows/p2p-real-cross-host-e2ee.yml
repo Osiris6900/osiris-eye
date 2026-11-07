@@ -2,6 +2,11 @@ name: P2P real cross-host recipient E2EE acceptance
 
 on:
   workflow_dispatch:
+    inputs:
+      soak:
+        description: Run the 100-peer / 10000-message / 900-second encrypted soak
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -19,7 +24,7 @@ jobs:
   host-a:
     name: Host A - E2EE sender and SSH controller
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
@@ -29,7 +34,7 @@ jobs:
           authkey: ${{ secrets.TS_AUTHKEY }}
           tags: tag:ci-p2p
       - name: Build P2P release binary
-        run: cargo build --release --manifest-path services/p2p-node/Cargo.toml
+        run: cargo build --locked --release --manifest-path services/p2p-node/Cargo.toml
       - name: Create ephemeral SSH client key and publish Host A endpoint
         run: |
           set -euo pipefail
@@ -63,6 +68,7 @@ jobs:
       - name: Pin Host B SSH host key and run real cross-host E2EE test
         env:
           RUNNER_TEMP: ${{ runner.temp }}
+          RUN_SOAK: ${{ inputs.soak || false }}
         run: |
           set -euo pipefail
           DIR="$RUNNER_TEMP/osiris-e2ee"
@@ -70,16 +76,43 @@ jobs:
           HOST_B_IP="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["ip"])' "$DIR/host-b.json")"
           python3 scripts/p2p_workflow_coordination.py known-hosts \
             --path "$DIR/known_hosts" --endpoint "$DIR/host-b.json"
-          python3 scripts/test_p2p_cross_host_e2ee_ssh.py \
-            --ssh-target "runner@$HOST_B_IP" \
-            --public-ip "$HOST_A_IP" \
-            --port 4001 \
-            --remote-binary "$GITHUB_WORKSPACE/target/release/osiris-p2p-node" \
-            --ssh-option=-i --ssh-option="$DIR/host-a" \
-            --ssh-option=-o --ssh-option=BatchMode=yes \
-            --ssh-option=-o --ssh-option=StrictHostKeyChecking=yes \
-            --ssh-option=-o --ssh-option="UserKnownHostsFile=$DIR/known_hosts" \
-            --ssh-option=-o --ssh-option=ConnectTimeout=15
+          if [ "$RUN_SOAK" = "true" ]; then
+            python3 scripts/run_p2p_soak.py \
+              --binary "$GITHUB_WORKSPACE/target/release/osiris-p2p-node" \
+              --remote-binary "$GITHUB_WORKSPACE/target/release/osiris-p2p-node" \
+              --remote-script "$GITHUB_WORKSPACE/scripts/run_p2p_soak.py" \
+              --ssh-target "runner@$HOST_B_IP" --host-b-ip "$HOST_B_IP" --port 4001 \
+              --peers 100 --messages 10000 --duration 900 \
+              --workflow-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+              --attempt "$GITHUB_RUN_ATTEMPT" --evidence "$DIR/soak-evidence.json" \
+              --ssh-option=-i --ssh-option="$DIR/host-a" \
+              --ssh-option=-o --ssh-option=BatchMode=yes \
+              --ssh-option=-o --ssh-option=StrictHostKeyChecking=yes \
+              --ssh-option=-o --ssh-option="UserKnownHostsFile=$DIR/known_hosts" \
+              --ssh-option=-o --ssh-option=ConnectTimeout=15
+            python3 scripts/check_p2p_load_acceptance.py "$DIR/soak-evidence.json" > "$DIR/soak-gate.json"
+          else
+            python3 scripts/test_p2p_cross_host_e2ee_ssh.py \
+              --ssh-target "runner@$HOST_B_IP" \
+              --public-ip "$HOST_A_IP" \
+              --port 4001 \
+              --remote-binary "$GITHUB_WORKSPACE/target/release/osiris-p2p-node" \
+              --ssh-option=-i --ssh-option="$DIR/host-a" \
+              --ssh-option=-o --ssh-option=BatchMode=yes \
+              --ssh-option=-o --ssh-option=StrictHostKeyChecking=yes \
+              --ssh-option=-o --ssh-option="UserKnownHostsFile=$DIR/known_hosts" \
+              --ssh-option=-o --ssh-option=ConnectTimeout=15
+          fi
+      - name: Retain sanitized soak measurements and gate result
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: soak-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/osiris-e2ee/soak-evidence.json
+            ${{ runner.temp }}/osiris-e2ee/soak-gate.json
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Record controller completion
         if: always()
         env:
@@ -115,7 +148,7 @@ jobs:
   host-b:
     name: Host B - Tailscale SSH receiver
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
@@ -125,7 +158,7 @@ jobs:
           authkey: ${{ secrets.TS_AUTHKEY }}
           tags: tag:ci-p2p
       - name: Build P2P release binary
-        run: cargo build --release --manifest-path services/p2p-node/Cargo.toml
+        run: cargo build --locked --release --manifest-path services/p2p-node/Cargo.toml
       - name: Wait for Host A public SSH key
         env:
           GH_TOKEN: ${{ github.token }}
@@ -175,7 +208,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           python3 scripts/p2p_workflow_coordination.py wait-artifact \
-            --name "e2ee-controller-finished-${{ github.run_id }}-${{ github.run_attempt }}" --timeout 900
+            --name "e2ee-controller-finished-${{ github.run_id }}-${{ github.run_attempt }}" --timeout 2400
       - name: Remove ephemeral SSH authorization
         if: always()
         run: rm -f "$HOME/.ssh/authorized_keys"
