@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Generate a deterministic CycloneDX SBOM for locked Rust and npm packages.
+"""Generate a deterministic CycloneDX SBOM for locked Rust, npm and Python packages.
 
 Exact-version crate license metadata is fetched from crates.io unless present in
-an offline cache. Python requirements are identified as unresolved: their version
-ranges are not represented as a resolved deployment environment.
+an offline cache. Python deployment dependencies come from the exact hashed
+pip-compile lock ``services/quant-api/requirements-deploy.lock``; development-only
+tooling is not part of the deployment environment.
 """
 from __future__ import annotations
 
@@ -13,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 from pathlib import Path
+import re
 import tomllib
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -127,6 +129,69 @@ def license_field(metadata: dict) -> list[dict]:
     return [{"license": {"name": f"SEE LICENSE IN {metadata['license_file']}"}}]
 
 
+PYPI_PIN_RE = re.compile(r"([A-Za-z0-9_.-]+?)(?:\[[A-Za-z0-9_,.\s-]*\])?==([A-Za-z0-9][A-Za-z0-9._!+-]*)")
+PYPI_HASH_RE = re.compile(r"--hash=sha256:([0-9a-f]{64})")
+
+
+def normalize_pypi_name(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def python_locked_packages(path: Path) -> list[dict]:
+    """Parse an exact, hashed pip-compile deployment lock, failing closed on drift.
+
+    Every entry must be a ``name[extras]==version`` pin whose continuation lines
+    carry at least one sha256 artifact hash. Direct references, editable installs
+    and unpinned lines are rejected rather than skipped.
+    """
+    lines = path.read_text().splitlines()
+    packages = []
+    seen = set()
+    index = 0
+    while index < len(lines):
+        stripped = lines[index].strip()
+        index += 1
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped.startswith("--index-url") or stripped.startswith("--extra-index-url"):
+            continue  # index hints are transport metadata; hashes anchor authenticity
+        continued = stripped.endswith("\\")
+        body = stripped[:-1].strip() if continued else stripped
+        match = PYPI_PIN_RE.fullmatch(body)
+        if not match:
+            raise ValueError(f"{path}: line {index} is not an exact name==version pin: {stripped!r}")
+        name = normalize_pypi_name(match.group(1))
+        version = match.group(2)
+        hashes = []
+        while continued and index < len(lines):
+            stripped = lines[index].strip()
+            index += 1
+            if not stripped or stripped.startswith("#"):
+                continue
+            continued = stripped.endswith("\\")
+            body = stripped[:-1].strip() if continued else stripped
+            hash_match = PYPI_HASH_RE.fullmatch(body)
+            if not hash_match:
+                raise ValueError(f"{path}: line {index} is not a sha256 hash continuation: {stripped!r}")
+            hashes.append(hash_match.group(1))
+        if continued:
+            raise ValueError(f"{path}: truncated continuation after {name}=={version}")
+        if not hashes:
+            raise ValueError(f"{path}: {name}=={version} has no sha256 artifact hash")
+        if name in seen:
+            raise ValueError(f"{path}: duplicate locked Python package {name}")
+        seen.add(name)
+        packages.append({
+            "ecosystem": "PyPI",
+            "name": name,
+            "version": version,
+            "hashes": sorted(set(hashes)),
+        })
+    if not packages:
+        raise ValueError(f"{path}: no locked Python packages found")
+    return sorted(packages, key=lambda package: (package["name"], package["version"]))
+
+
 def purl(ecosystem: str, name: str, version: str | None = None) -> str:
     if ecosystem == "npm" and name.startswith("@"):
         scope, separator, package = name.partition("/")
@@ -198,10 +263,11 @@ def application(
     return component
 
 
-def build_sbom(cargo_lock: Path, npm_lock: Path, pyproject: Path, cache: dict, offline: bool) -> dict:
+def build_sbom(cargo_lock: Path, npm_lock: Path, pyproject: Path, python_lock: Path, cache: dict, offline: bool) -> dict:
     local_cargo, registry_cargo = cargo_packages(cargo_lock)
     crate_metadata = resolve_crate_metadata(registry_cargo, cache, offline)
     npm_root, locked_npm = npm_packages(npm_lock)
+    locked_python = python_locked_packages(python_lock)
     python_project = tomllib.loads(pyproject.read_text()).get("project", {})
     python_name = python_project.get("name")
     python_version = python_project.get("version")
@@ -212,6 +278,7 @@ def build_sbom(cargo_lock: Path, npm_lock: Path, pyproject: Path, cache: dict, o
         "apps/web/package-lock.json": sha256_file(npm_lock),
         "services/p2p-node/Cargo.lock": sha256_file(cargo_lock),
         "services/quant-api/pyproject.toml": sha256_file(pyproject),
+        "services/quant-api/requirements-deploy.lock": sha256_file(python_lock),
     }
     serial_material = "\n".join(f"{key}:{value}" for key, value in sorted(lock_hashes.items()))
     components = []
@@ -221,7 +288,8 @@ def build_sbom(cargo_lock: Path, npm_lock: Path, pyproject: Path, cache: dict, o
     components.append(application(
         "generic", python_name, python_version,
         [
-            {"name": "osiris:dependency-resolution", "value": "unresolved"},
+            {"name": "osiris:dependency-resolution", "value": "resolved-hashed-lock"},
+            {"name": "osiris:deployment-lock", "value": "services/quant-api/requirements-deploy.lock"},
             {"name": "osiris:requires-python", "value": python_project.get("requires-python", "")},
             {
                 "name": "osiris:declared-dependencies",
@@ -260,6 +328,24 @@ def build_sbom(cargo_lock: Path, npm_lock: Path, pyproject: Path, cache: dict, o
             "hashes": [npm_hash(package["integrity"])],
             "externalReferences": [{"type": "distribution", "url": package["resolved"]}],
         })
+    for package in locked_python:
+        reference = purl("pypi", package["name"], package["version"])
+        components.append({
+            "type": "library",
+            "bom-ref": reference,
+            "name": package["name"],
+            "version": package["version"],
+            "scope": "required",
+            "purl": reference,
+            "hashes": [
+                {"alg": "SHA-256", "content": artifact_hash}
+                for artifact_hash in package["hashes"]
+            ],
+            "externalReferences": [{
+                "type": "distribution",
+                "url": f"https://pypi.org/project/{quote(package['name'], safe='')}/{quote(package['version'], safe='')}/",
+            }],
+        })
 
     references = [component["bom-ref"] for component in components]
     if len(references) != len(set(references)):
@@ -273,7 +359,7 @@ def build_sbom(cargo_lock: Path, npm_lock: Path, pyproject: Path, cache: dict, o
             "component": application("generic", "osiris-eye", None, [
                 {"name": f"osiris:input-sha256:{key}", "value": value}
                 for key, value in sorted(lock_hashes.items())
-            ] + [{"name": "osiris:python-deployment-resolution", "value": "unresolved"}]),
+            ] + [{"name": "osiris:python-deployment-resolution", "value": "resolved-hashed-lock"}]),
         },
         "components": components,
     }
@@ -295,6 +381,7 @@ def main() -> None:
             root / "services/p2p-node/Cargo.lock",
             root / "apps/web/package-lock.json",
             root / "services/quant-api/pyproject.toml",
+            root / "services/quant-api/requirements-deploy.lock",
             cache,
             args.offline,
         )
@@ -308,7 +395,7 @@ def main() -> None:
         raise SystemExit(str(error)) from error
     print(
         f"Wrote {args.output} with {len(sbom['components'])} components; "
-        "Python deployment dependencies remain unresolved"
+        "Python deployment dependencies resolved from the hashed lock"
     )
 
 
