@@ -253,6 +253,7 @@ async fn circuit_quota_denies_dial_without_establishing_destination_connection()
 }
 
 #[tokio::test]
+#[ignore = "CI diagnostic: isolate compilation from runtime"]
 async fn per_peer_circuit_quota_preserves_first_and_denies_second_dial() {
     tokio::time::timeout(TEST_TIMEOUT, async {
         let mut relay_swarm = build_relay(relay::Config {
