@@ -35,8 +35,8 @@ def artifact_exists(repository: str, run_id: str, name: str, *, timeout: float =
 
 
 def wait_for_artifact(repository: str, run_id: str, name: str, timeout: float) -> None:
-    if not 0 < timeout <= 1200:
-        raise ValueError("artifact timeout must be between 0 and 1200 seconds")
+    if not 0 < timeout <= 2700:
+        raise ValueError("artifact timeout must be between 0 and 2700 seconds")
     deadline = time.monotonic() + timeout
     while True:
         remaining = deadline - time.monotonic()

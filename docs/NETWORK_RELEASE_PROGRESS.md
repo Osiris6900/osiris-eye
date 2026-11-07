@@ -54,3 +54,19 @@ Fixed-launcher remote acceptance reruns:
 Both target `154a65111d92cbd344ad2cc1b49a80ed8f53cd28`; both concluded success. The sanitized log/status summary is
 [P2P_REMOTE_ACCEPTANCE_2026_11_07.json](P2P_REMOTE_ACCEPTANCE_2026_11_07.json).
 Final release evidence still needs binary hashes and exact final-candidate runs.
+
+## Measured soak work
+
+Candidate `976858e` added the opt-in collector and workflow. Local four-peer
+smoke delivered 30/30 messages with a sampled 6.8-second bootstrap recovery;
+this is single-machine regression evidence only. A 20-peer debug-build local
+scale smoke subsequently failed to observe delivery recovery within 60 seconds.
+That failure is retained as a scalability investigation, not acceptance.
+
+The [initial real soak attempt](https://github.com/Osiris6900/osiris-eye/actions/runs/42426248895)
+failed before traffic: the coordination helper rejected the workflow's longer
+receiver timeout. The helper now permits a bounded 2700-second wait, tested for
+the 2400-second soak setting and invalid/infinite limits. Sanitized per-host
+publish/decryption diagnostic counters were added to investigate scale failures.
+The 100-peer gate remains open until an actual measurement passes the unchanged
+policy; no successful load acceptance is claimed here.

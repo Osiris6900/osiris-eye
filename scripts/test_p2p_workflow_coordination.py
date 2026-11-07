@@ -18,6 +18,13 @@ PUBLIC_KEY = "ssh-ed25519 " + base64.b64encode(
 
 
 class CoordinationTests(unittest.TestCase):
+    def test_soak_receiver_can_wait_for_a_bounded_long_run(self):
+        with patch.object(coordination, 'artifact_exists', return_value=True):
+            coordination.wait_for_artifact('owner/repo', '123', 'soak-finished', 2400)
+        for value in (0, -1, 2701, float('inf'), float('nan')):
+            with self.assertRaises(ValueError):
+                coordination.wait_for_artifact('owner/repo', '123', 'soak-finished', value)
+
     def test_wait_retries_transient_api_error_then_observes_readiness(self):
         with patch.object(coordination, "artifact_exists", side_effect=[
             subprocess.TimeoutExpired("gh", 30), False, True

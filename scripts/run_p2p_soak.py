@@ -8,6 +8,7 @@ transport (a conservative upper bound, not synchronized host-clock latency).
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -59,6 +60,7 @@ class Agent:
         self.previous_cpu = {}
         self.previous_time = time.monotonic()
         self.cpu_seconds = 0.0
+        self.diagnostics = Counter()
         self.controllers = [os.getpid()]
         if args.controller_pid:
             self.controllers.append(args.controller_pid)
@@ -97,6 +99,13 @@ class Agent:
 
     def read_node(self, index, proc):
         for line in proc.stdout:
+            for prefix in ('encrypted_observation_published', 'encrypted_observation_deferred',
+                           'publish_rejected', 'publish_deferred', 'key_binding_rejected',
+                           'encrypted_message_rejected'):
+                if line.startswith(prefix + ' '):
+                    reason = re.search(r'\breason=([a-z_]{1,64})(?:\s|$)', line)
+                    with self.lock:
+                        self.diagnostics[prefix + (':' + reason[1] if reason else '')] += 1
             if len(line) > 32768:
                 self.emit('fatal', reason='oversized_node_output', node=index)
                 break
@@ -163,7 +172,8 @@ class Agent:
         self.disk_peak = max(self.disk_peak, disk)
         return {'rss_peak_bytes': self.rss_peak, 'cpu_percent': self.cpu_peak,
                 'disk_growth_bytes': self.disk_peak, 'cpu_seconds': self.cpu_seconds,
-                'logical_cpus': os.cpu_count() or 1, 'sampling_interval_seconds': 1}
+                'logical_cpus': os.cpu_count() or 1, 'sampling_interval_seconds': 1,
+                'diagnostic_counts': dict(self.diagnostics)}
 
     def monitor(self):
         while not self.done.wait(1):
@@ -451,6 +461,7 @@ def measure(args):
                 'resources': 'aggregate node and agent RSS; peak one-second CPU as share of host logical CPUs',
                 'controller_resources_included_on_host_a': True,
                 'workload_paused_during_outage': True, 'outage_probes_excluded_from_workload': True,
+                'diagnostic_counts': {h: c.metrics[h]['diagnostic_counts'] for h in c.metrics},
                 'state_preserved_across_sink_restart': True,
                 'rss_is_sampled_not_continuous': True,
                 'independent_host_fingerprints_distinct': independent,
