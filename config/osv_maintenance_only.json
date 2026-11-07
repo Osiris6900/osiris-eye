@@ -1,0 +1,8 @@
+{
+  "schema": "osiris.osv-maintenance-only.v1",
+  "advisories": {
+    "RUSTSEC-2024-0436": {
+      "reason": "The OSV record marks paste as unmaintained. This maintenance warning is not, by itself, evidence of an exploitable vulnerability."
+    }
+  }
+}
