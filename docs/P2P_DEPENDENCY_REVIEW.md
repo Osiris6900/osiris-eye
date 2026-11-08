@@ -39,28 +39,14 @@ The current hardening work does not require a cryptographic dependency migration
 Any future primitive or library migration needs compatibility vectors, adverse
 input tests and explicit protocol/version review before rollout.
 
-## Python deployment lock
+## Python resolution
 
-The supported Python deployment environment is now resolved and hashed in
-`services/quant-api/requirements-lock.txt` (schema
-`osiris.python-deployment-lock.v1`). It was generated on Python 3.11 — the
-supported deployment interpreter — by `scripts/resolve_python_lock.py`
-(pip-tools backtracking resolver) from `services/quant-api/pyproject.toml`
-with the supported `streams` extra, and contains 24 exactly pinned
-distributions, each carrying `--hash=sha256` artifact digests from the package
-index. The development ranges in `pyproject.toml` remain the compatibility
-declaration; the lock is the deployment evidence. The optional `ibkr` extra is
-deliberately outside the supported deployment set.
-
-`scripts/check_python_lock.py` is the offline gate: it fails closed unless
-every entry is pinned and hashed, the lock header matches the current
-`pyproject.toml` byte hash (staleness), every direct deployment requirement
-is present and in range, and every version is valid PEP 440. `pip install
---require-hashes -r services/quant-api/requirements-lock.txt` reproduces the
-environment on Python 3.11. The CycloneDX SBOM does not yet ingest this lock;
-extending `generate_dependency_sbom.py` with PyPI components is follow-up
-work and the SBOM must still not be represented as a whole-environment
-inventory until then.
+The API declares Python 3.11+ and bounded major versions in `pyproject.toml`,
+including `cryptography>=50.0.0,<51`, `fastapi>=0.110,<1`, `pydantic>=2.6,<3`,
+and `numpy>=1.26,<3`. Its development range includes `pytest>=9.0.3,<10`.
+These are version constraints, not a resolved, hashed Python lockfile. Retain
+the exact installed environment with each release's test evidence; results from
+dependencies outside the declared ranges do not validate the supported set.
 
 ## CycloneDX dependency inventory
 
@@ -78,13 +64,12 @@ regeneration; delete or refresh that cache when performing a new metadata
 review. Generation is deterministic across checkout paths and online/offline
 runs with the same inputs and cache.
 
-The three local applications include `osiris-quant-api`. Its dependency
-resolution is no longer `unresolved` — the exact deployment set lives in
-`services/quant-api/requirements-lock.txt` — but this SBOM generator does not
-ingest that lock yet, so version ranges from `pyproject.toml` are still
-recorded only as declarations, not as installed packages. The SBOM must not be
-represented as a whole-environment inventory until PyPI components from the
-lock are incorporated (follow-up work).
+The three local applications include `osiris-quant-api`, but its dependency
+resolution is explicitly `unresolved`. Version ranges from `pyproject.toml` are
+recorded only as declarations, not as installed packages. Therefore this SBOM
+does not complete the Python deployment inventory and must not be represented
+as a whole-environment SBOM until a supported resolved and hashed Python lock
+is incorporated.
 
 This inventory is not a license-compatibility or redistribution decision,
 provenance attestation, reproducible-build proof, or independent security
@@ -103,16 +88,13 @@ IDs/classifications or derived summary counts are stale or internally
 inconsistent. The checks derive expected counts from the current lock inputs;
 they do not require a fixed number of advisories after remediation.
 
-The live query at `2026-11-08T11:20:57Z` covered 544 packages at source commit
-`587dbc71e58de3e6dc88748814ab551641a359e0`: 388 crates.io, 132 npm and — for the
-first time — 24 PyPI packages from the hashed deployment lock. One raw match
-was normalized into one alias-aware maintenance-only advisory group affecting
-one Cargo package. No vulnerability group was returned in any ecosystem in this
-point-in-time query, and `--fail-on-vulnerability` exited 0. This is the
-post-remediation re-scan retained for issue #171: the Hickory and Yamux
-advisory groups from the pre-remediation scan no longer match the locked
-graph, and the Python deployment set is now inside the scanned coverage rather
-than reported as `unresolved`.
+The live query at `2026-11-08T08:28:37Z` covered 520 packages at source commit
+`93e1324e9135ccd121b485d6d25594e813159a3d`: 388 crates.io and 132 npm packages.
+One raw match was normalized into one alias-aware maintenance-only advisory group
+affecting one Cargo package. No vulnerability group or npm match was returned in
+this point-in-time query. This is the post-remediation re-scan retained for
+issue #171: the Hickory and Yamux advisory groups from the pre-remediation scan
+no longer match the locked graph.
 
 | Package | Classification | Advisory group IDs |
 |---|---|---|
@@ -132,39 +114,15 @@ libp2p-yamux 0.47 default selected Yamux 0.13 rather than its customized 0.12
 compatibility path. This is local configuration evidence, not an external
 exploitability audit.
 
-A historical local resolved-environment pip-audit scan is retained in
+The historical OSV report below leaves Python `unresolved`. A subsequent local
+resolved-environment pip-audit scan is retained in
 [PYTHON_DEPENDENCY_AUDIT.json](PYTHON_DEPENDENCY_AUDIT.json): no known
-advisories after upgrading cryptography, pytest and pip. It covered a
-development environment rather than the supported deployment lock and is
-superseded as advisory evidence by the combined OSV report above, which now
-queries the exact locked PyPI pins. OSV matching is point-in-time advisory
-evidence, not proof of exploitation, a universal vulnerability-free result,
-or an independent audit.
-
-## Python license and artifact provenance
-
-`scripts/check_license_provenance.py` gates license/redistribution metadata
-and artifact provenance for the Python lock, offline by default. Evidence
-lives in `docs/PYTHON_LICENSE_PROVENANCE.json` (schema
-`osiris.python-license-provenance.v1`): per distribution, the PyPI JSON API
-license expression, legacy field and license classifiers, refreshed
-2026-11-08 at source commit `587dbc71e58de3e6dc88748814ab551641a359e0`.
-The policy in `config/license_policy.json` allows permissive expressions
-(MIT, MIT-0, Apache-2.0, BSD-2/3-Clause, 0BSD, ISC, Zlib, CC0-1.0, PSF-2.0,
-Python-2.0, MPL-2.0); `OR` expressions pass when any branch is allowed, `AND`
-expressions (bundled subcomponents, e.g. numpy's
-`BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0`) require every branch.
-All 24 locked distributions pass with zero policy overrides. Copyleft and
-proprietary expressions are recognized explicitly so they are denied by name
-rather than as "unknown".
-
-Artifact provenance for Python is the lock itself: every distribution is
-pinned to an exact version with `--hash=sha256` digests recorded from the
-package index at resolution time, and installation with `--require-hashes`
-fails on any artifact substitution. The gate fails closed on missing
-evidence, version mismatch, stale evidence (lock byte hash), disallowed or
-unusable expressions, and evidence records absent from the lock. License
-metadata is maintainer-declared, not a source-text audit or legal advice.
+advisories after upgrading cryptography, pytest and pip. It includes development
+and scanner tooling, skips first-party source advisory matching and does not
+establish Python 3.11 or optional-extra dependency resolution. OSV matching is point-in-time advisory evidence, not proof of
+exploitation, a universal vulnerability-free result, or an independent audit.
+The broader dependency gate also remains open for Python resolution,
+license/redistribution and artifact-provenance review.
 
 ## CI action pinning ratchet
 
@@ -204,25 +162,18 @@ python scripts/generate_dependency_sbom.py --offline --output /tmp/osiris-eye-sb
 cmp /tmp/osiris-eye-sbom.json /tmp/osiris-eye-sbom-offline.json
 python scripts/test_scan_dependency_advisories.py
 python scripts/scan_dependency_advisories.py \
-  --source-commit 587dbc71e58de3e6dc88748814ab551641a359e0 \
+  --source-commit 93e1324e9135ccd121b485d6d25594e813159a3d \
   --output docs/P2P_DEPENDENCY_ADVISORIES.json
-python3.11 -m venv /tmp/lockenv && /tmp/lockenv/bin/pip install pip-tools
-/tmp/lockenv/bin/python scripts/resolve_python_lock.py
-python scripts/check_python_lock.py
-python scripts/test_check_python_lock.py
-python scripts/check_license_provenance.py
-python scripts/check_license_provenance.py --refresh --source-commit <full-sha>
-python scripts/test_check_license_provenance.py
 ```
 
 The preserved remediated files passed 165 Rust tests locally. Those same-host
 results do not establish independent-host, cross-network, hostile-load,
 production-capacity, external-audit, or exploitability evidence.
 
-Before a public release, refresh the combined advisory report, remediate its
-current findings, triage reachability, re-resolve and re-scan the Python lock
-after any `pyproject.toml` change, extend the SBOM with PyPI components, and
-record toolchain and artifact hashes. Complete the actual third-party CI action
+Before a public release, refresh the Cargo/npm advisory report, remediate its
+current findings, triage reachability, lock and scan the supported Python
+deployment environment, complete license/redistribution review, and record
+toolchain and artifact hashes. Complete the actual third-party CI action
 SHA/digest pinning and trust review before release; the ratchet alone does not
 clear that gate. `--fail-on-vulnerability` returns exit status 2 after writing a
 report when any vulnerability group remains, so it can gate a remediated tree.
