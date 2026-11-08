@@ -53,9 +53,16 @@ def validate(record, evidence_dir):
         if relative in used_artifacts:
             errors.append(f"{name}: evidence artifact reused across gates")
         used_artifacts.add(relative)
-        path = (root / relative).resolve()
+        raw_path = root / relative
+        if any(part.is_symlink() for part in (raw_path, *raw_path.parents) if part != root and root in part.parents):
+            errors.append(f"{name}: symlink in evidence path")
+            continue
+        path = raw_path.resolve()
         if not path.is_relative_to(root) or not path.is_file() or path.is_symlink():
             errors.append(f"{name}: artifact missing or unsafe")
+            continue
+        if path.stat().st_size == 0:
+            errors.append(f"{name}: empty evidence artifact")
             continue
         if path.stat().st_size > 10 * 1024 * 1024:
             errors.append(f"{name}: artifact exceeds 10 MiB limit")
