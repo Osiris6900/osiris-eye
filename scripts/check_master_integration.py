@@ -69,6 +69,31 @@ def validate(record, evidence_dir):
             continue
         if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
             errors.append(f"{name}: artifact digest mismatch")
+    # The security gate must contain a structured, independently attributable review.
+    # This checks completeness only; it does not authenticate the reviewer's identity.
+    security = gates.get("security_review")
+    if isinstance(security, dict):
+        relative = security.get("artifact")
+        if isinstance(relative, str) and relative and not Path(relative).is_absolute() and ".." not in Path(relative).parts:
+            path = root / relative
+            if path.is_file() and not path.is_symlink() and path.stat().st_size <= 10 * 1024 * 1024:
+                try:
+                    review = json.loads(path.read_text(encoding="utf-8"))
+                    if not isinstance(review, dict):
+                        raise ValueError("review must be an object")
+                    if review.get("decision") != "approved":
+                        errors.append("security_review: explicit approved decision required")
+                    if review.get("commit_sha") != sha:
+                        errors.append("security_review: reviewed commit mismatch")
+                    if review.get("independent") is not True:
+                        errors.append("security_review: independent review declaration required")
+                    for field in ("reviewer", "organization", "review_date", "report_reference", "scope"):
+                        if not isinstance(review.get(field), str) or not review[field].strip():
+                            errors.append(f"security_review: {field} required")
+                    if not isinstance(review.get("unresolved_critical_high"), int) or isinstance(review.get("unresolved_critical_high"), bool) or review["unresolved_critical_high"] != 0:
+                        errors.append("security_review: unresolved critical/high findings must be zero")
+                except (ValueError, UnicodeError, OSError):
+                    errors.append("security_review: valid JSON review report required")
     return errors
 
 def main():
