@@ -62,6 +62,8 @@ def test_position_limit_rejects_second_buy_and_keeps_one_fill(db):
     state = snapshot()
     assert state["fill_count"] == 1
     assert state["cash"] == "900"
+    assert [row["event"] for row in state["audit"]].count("fill_recorded") == 1
+    assert [row["event"] for row in state["audit"]].count("order_decided") == 2
     assert state["positions"] == [{"symbol": "BTC", "quantity": "1", "average_cost": "100"}]
     assert reconcile()["passed"] is True
 
@@ -129,7 +131,9 @@ def test_duplicate_client_order_id_after_restart_does_not_fill_again(db):
     assert replay["fill"]["seq"] == first["fill"]["seq"]
     after = snapshot()
     assert after["fill_count"] == 1
-    assert after["audit"] == before
+    assert after["audit"][:-1] == before
+    assert after["audit"][-1]["event"] == "idempotent_replay"
+    assert first["risk_decision_id"] in after["audit"][-1]["payload"]
     assert reconcile()["passed"] is True
 
 
@@ -139,7 +143,10 @@ def test_idempotency_conflict_preserves_original_audit(db):
     before = snapshot()["audit"]
     with pytest.raises(ValueError, match="idempotency_key_conflict"):
         _buy(quantity="2")
-    assert snapshot()["audit"] == before
+    after = snapshot()["audit"]
+    assert after[:-1] == before
+    assert after[-1]["event"] == "idempotency_conflict"
+    assert before[-1]["row_hash"] == after[-2]["row_hash"]
     assert snapshot()["fill_count"] == 1
 
 
@@ -237,6 +244,7 @@ def test_live_execution_request_and_env_are_refused(db, monkeypatch):
     _init()
     with pytest.raises(ValueError, match="live_execution_disabled"):
         _buy(live_execution=True)
+    assert snapshot()["audit"][-1]["event"] == "live_execution_refused"
     assert snapshot()["fill_count"] == 0
     monkeypatch.setenv("OSIRIS_ENABLE_LIVE_EXECUTION", "1")
     with pytest.raises(ValueError, match="live_execution_disabled"):

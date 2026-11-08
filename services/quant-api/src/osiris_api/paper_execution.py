@@ -28,12 +28,39 @@ router = APIRouter()
 _lock = Lock()
 
 
+def _audit_live_refusal() -> None:
+    """Record a refusal when an account exists. Never enables a broker path."""
+    path = os.getenv("OSIRIS_PAPER_EXECUTION_DB")
+    if not path or path == ":memory:":
+        return
+    with _lock:
+        conn = _connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            if conn.execute("SELECT 1 FROM paper_exec_meta WHERE id=1").fetchone() is None:
+                conn.rollback()
+                return
+            _verify_audit(conn)
+            if _reconcile_breaks(conn):
+                conn.rollback()
+                return
+            _append_audit(conn, "live_execution_refused", None, {
+                "live_execution": False, "broker_order_submitted": False,
+            })
+            conn.commit()
+        except Exception:
+            conn.rollback()
+        finally:
+            conn.close()
+
+
 def _refuse_live(live_execution: object) -> None:
     if (
         LIVE_EXECUTION_ENABLED is not False
         or live_execution is True
         or os.getenv("OSIRIS_ENABLE_LIVE_EXECUTION")
     ):
+        _audit_live_refusal()
         raise ValueError("live_execution_disabled")
 
 
@@ -380,6 +407,99 @@ def _fresh(account: sqlite3.Row, observed_at: object, now: object) -> bool:
     return -skew <= age <= max_age
 
 
+def _submit_new_order(
+    conn: sqlite3.Connection, *, key: str, symbol: str, side: str,
+    qty: Decimal, px: Decimal, cost: Decimal, qty_s: str, px_s: str, fee_s: str,
+    observed_at: object, now: object, risk_service_available: object,
+    kill_switch_active: object, simulate_crash: bool,
+) -> dict[str, Any]:
+    account = conn.execute("SELECT * FROM paper_exec_meta WHERE id=1").fetchone()
+    effective_kill = bool(account["kill_switch"]) or kill_switch_active is True
+    fresh = _fresh(account, observed_at, now)
+    position_notional, gross = _book(conn, symbol, px)
+    try:
+        approved, reason, limits_evaluated = check_execution(
+            side=side, quantity=_as_float(qty), price=_as_float(px),
+            current_position_notional=_as_float(position_notional),
+            current_gross_exposure=_as_float(gross),
+            daily_pnl=_as_float(Decimal(account["realized_pnl"])),
+            limits=_limits_from_row(account),
+            kill_switch_active=effective_kill, market_data_fresh=fresh,
+            risk_service_available=risk_service_available is True,
+        )
+    except Exception:
+        approved, reason, limits_evaluated = False, "risk_service_unavailable", False
+    status = "filled" if approved else "risk_rejected"
+    realized_delta = Decimal("0")
+    if approved:
+        cash = Decimal(account["cash"])
+        row = conn.execute(
+            "SELECT * FROM paper_exec_positions WHERE symbol=?", (symbol,)
+        ).fetchone()
+        held = Decimal(row["quantity"]) if row else Decimal("0")
+        avg = Decimal(row["average_cost"]) if row else Decimal("0")
+        applied = _apply(cash, held, avg, side, qty, px, cost)
+        if applied is None:
+            status = "execution_rejected"
+            reason = "insufficient_paper_cash" if side == "BUY" else "insufficient_paper_position"
+            if side == "SELL" and qty <= held and qty * px - cost < 0:
+                reason = "fee_exceeds_sell_proceeds"
+        else:
+            new_cash, new_qty, new_avg, realized_delta = applied
+            new_realized = Decimal(account["realized_pnl"]) + realized_delta
+            conn.execute(
+                "UPDATE paper_exec_meta SET cash=?, realized_pnl=? WHERE id=1",
+                (_canonical(new_cash), _canonical(new_realized)),
+            )
+            if new_qty == 0:
+                conn.execute("DELETE FROM paper_exec_positions WHERE symbol=?", (symbol,))
+            else:
+                conn.execute(
+                    """INSERT INTO paper_exec_positions(symbol, quantity, average_cost)
+                       VALUES (?,?,?) ON CONFLICT(symbol) DO UPDATE SET
+                       quantity=excluded.quantity, average_cost=excluded.average_cost""",
+                    (symbol, _canonical(new_qty), _canonical(new_avg)),
+                )
+    payload = {
+        "status": status, "reason": reason, "limits_evaluated": limits_evaluated,
+        "symbol": symbol, "side": side, "quantity": qty_s, "price": px_s, "fee": fee_s,
+        "live_execution": False, "broker_order_submitted": False,
+    }
+    audit_seq, digest = _append_audit(conn, "order_decided", key, payload)
+    if status == "filled":
+        conn.execute(
+            """INSERT INTO paper_exec_fills(
+                seq, client_order_id, symbol, side, quantity, price, fee, realized_pnl)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (audit_seq, key, symbol, side, qty_s, px_s, fee_s, _canonical(realized_delta)),
+        )
+        _append_audit(conn, "fill_recorded", key, {
+            "fill_seq": audit_seq, "risk_decision_id": digest,
+            "realized_pnl": _canonical(realized_delta), "quantity": qty_s, "price": px_s,
+            "live_execution": False, "broker_order_submitted": False,
+        })
+    created = now if isinstance(now, str) else ""
+    conn.execute(
+        """INSERT INTO paper_exec_orders(
+            client_order_id, symbol, side, quantity, price, fee, status, reason,
+            limits_evaluated, risk_decision_id, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+        (key, symbol, side, qty_s, px_s, fee_s, status, reason,
+         1 if limits_evaluated else 0, digest, created),
+    )
+    _assert_ready(conn)
+    if simulate_crash:
+        raise RuntimeError("simulated_crash_before_commit")
+    conn.commit()
+    stored = conn.execute(
+        "SELECT * FROM paper_exec_orders WHERE client_order_id=?", (key,)
+    ).fetchone()
+    stored_fill = conn.execute(
+        "SELECT * FROM paper_exec_fills WHERE client_order_id=?", (key,)
+    ).fetchone()
+    return _public(stored, stored_fill, replay=False)
+
+
 def submit_paper_order(
     *,
     client_order_id: Any,
@@ -415,6 +535,8 @@ def submit_paper_order(
     px = _number(price, positive=True)
     cost = _number(fee)
     qty_s, px_s, fee_s = _canonical(qty), _canonical(px), _canonical(cost)
+    conflict = False
+    result: dict[str, Any] | None = None
     with _lock:
         conn = _connect()
         try:
@@ -427,111 +549,41 @@ def submit_paper_order(
                 same = (
                     prior["symbol"], prior["side"], prior["quantity"], prior["price"], prior["fee"],
                 ) == (normalized_symbol, normalized_side, qty_s, px_s, fee_s)
-                if not same:
-                    raise ValueError("idempotency_key_conflict")
-                fill = conn.execute(
-                    "SELECT * FROM paper_exec_fills WHERE client_order_id=?", (key,)
-                ).fetchone()
-                result = _public(prior, fill, replay=True)
+                event = "idempotent_replay" if same else "idempotency_conflict"
+                _append_audit(conn, event, key, {
+                    "original_risk_decision_id": prior["risk_decision_id"],
+                    "original_status": prior["status"],
+                    "live_execution": False,
+                    "broker_order_submitted": False,
+                })
+                _assert_ready(conn)
                 conn.commit()
-                return result
-            account = conn.execute("SELECT * FROM paper_exec_meta WHERE id=1").fetchone()
-            effective_kill = bool(account["kill_switch"]) or kill_switch_active is True
-            fresh = _fresh(account, observed_at, now)
-            position_notional, gross = _book(conn, normalized_symbol, px)
-            try:
-                approved, reason, limits_evaluated = check_execution(
-                    side=normalized_side,
-                    quantity=_as_float(qty),
-                    price=_as_float(px),
-                    current_position_notional=_as_float(position_notional),
-                    current_gross_exposure=_as_float(gross),
-                    daily_pnl=_as_float(Decimal(account["realized_pnl"])),
-                    limits=_limits_from_row(account),
-                    kill_switch_active=effective_kill,
-                    market_data_fresh=fresh,
-                    risk_service_available=risk_service_available is True,
-                )
-            except Exception:
-                approved, reason, limits_evaluated = False, "risk_service_unavailable", False
-            status = "filled" if approved else "risk_rejected"
-            realized_delta = Decimal("0")
-            fill_seq = None
-            if approved:
-                cash = Decimal(account["cash"])
-                row = conn.execute(
-                    "SELECT * FROM paper_exec_positions WHERE symbol=?", (normalized_symbol,)
-                ).fetchone()
-                held = Decimal(row["quantity"]) if row else Decimal("0")
-                avg = Decimal(row["average_cost"]) if row else Decimal("0")
-                applied = _apply(cash, held, avg, normalized_side, qty, px, cost)
-                if applied is None:
-                    status = "execution_rejected"
-                    reason = (
-                        "insufficient_paper_cash" if normalized_side == "BUY"
-                        else "insufficient_paper_position"
-                    )
-                    if normalized_side == "SELL" and qty <= held and qty * px - cost < 0:
-                        reason = "fee_exceeds_sell_proceeds"
+                if not same:
+                    conflict = True
                 else:
-                    new_cash, new_qty, new_avg, realized_delta = applied
-                    new_realized = Decimal(account["realized_pnl"]) + realized_delta
-                    conn.execute(
-                        "UPDATE paper_exec_meta SET cash=?, realized_pnl=? WHERE id=1",
-                        (_canonical(new_cash), _canonical(new_realized)),
-                    )
-                    if new_qty == 0:
-                        conn.execute(
-                            "DELETE FROM paper_exec_positions WHERE symbol=?", (normalized_symbol,)
-                        )
-                    else:
-                        conn.execute(
-                            """INSERT INTO paper_exec_positions(symbol, quantity, average_cost)
-                               VALUES (?,?,?) ON CONFLICT(symbol) DO UPDATE SET
-                               quantity=excluded.quantity, average_cost=excluded.average_cost""",
-                            (normalized_symbol, _canonical(new_qty), _canonical(new_avg)),
-                        )
-            payload = {
-                "status": status, "reason": reason, "limits_evaluated": limits_evaluated,
-                "symbol": normalized_symbol, "side": normalized_side,
-                "quantity": qty_s, "price": px_s, "fee": fee_s,
-                "live_execution": False, "broker_order_submitted": False,
-            }
-            audit_seq, digest = _append_audit(conn, "order_decided", key, payload)
-            if status == "filled":
-                fill_seq = audit_seq
-                conn.execute(
-                    """INSERT INTO paper_exec_fills(
-                        seq, client_order_id, symbol, side, quantity, price, fee, realized_pnl)
-                       VALUES (?,?,?,?,?,?,?,?)""",
-                    (fill_seq, key, normalized_symbol, normalized_side, qty_s, px_s, fee_s,
-                     _canonical(realized_delta)),
+                    fill = conn.execute(
+                        "SELECT * FROM paper_exec_fills WHERE client_order_id=?", (key,)
+                    ).fetchone()
+                    result = _public(prior, fill, replay=True)
+            else:
+                result = _submit_new_order(
+                    conn, key=key, symbol=normalized_symbol, side=normalized_side,
+                    qty=qty, px=px, cost=cost, qty_s=qty_s, px_s=px_s, fee_s=fee_s,
+                    observed_at=observed_at, now=now,
+                    risk_service_available=risk_service_available,
+                    kill_switch_active=kill_switch_active,
+                    simulate_crash=simulate_crash,
                 )
-            created = now if isinstance(now, str) else ""
-            conn.execute(
-                """INSERT INTO paper_exec_orders(
-                    client_order_id, symbol, side, quantity, price, fee, status, reason,
-                    limits_evaluated, risk_decision_id, created_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-                (key, normalized_symbol, normalized_side, qty_s, px_s, fee_s, status, reason,
-                 1 if limits_evaluated else 0, digest, created),
-            )
-            _assert_ready(conn)
-            if simulate_crash:
-                raise RuntimeError("simulated_crash_before_commit")
-            conn.commit()
-            stored = conn.execute(
-                "SELECT * FROM paper_exec_orders WHERE client_order_id=?", (key,)
-            ).fetchone()
-            stored_fill = conn.execute(
-                "SELECT * FROM paper_exec_fills WHERE client_order_id=?", (key,)
-            ).fetchone()
-            return _public(stored, stored_fill, replay=False)
         except Exception:
             conn.rollback()
             raise
         finally:
             conn.close()
+    if conflict:
+        raise ValueError("idempotency_key_conflict")
+    if result is None:
+        raise RuntimeError("paper_order_result_missing")
+    return result
 
 
 def snapshot() -> dict[str, Any]:
