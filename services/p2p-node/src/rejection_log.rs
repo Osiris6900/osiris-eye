@@ -74,6 +74,29 @@ mod tests {
         assert_eq!(t.entries[&key].suppressed, 0);
     }
     #[test]
+    fn distinct_topics_and_reasons_are_not_silenced() {
+        let mut t = RejectionLogThrottle::default();
+        t.rejected("keys", "peer-a", "peer_not_allowed");
+        t.rejected("observations", "peer-a", "peer_not_allowed");
+        t.rejected("keys", "peer-a", "invalid_signature");
+        t.rejected("keys", "peer-a", "peer_not_allowed");
+        assert_eq!(t.entries.len(), 3);
+        assert_eq!(t.entries[&("keys".into(), "peer-a".into(), "peer_not_allowed".into())].suppressed, 1);
+        assert_eq!(t.entries[&("observations".into(), "peer-a".into(), "peer_not_allowed".into())].suppressed, 0);
+        assert_eq!(t.entries[&("keys".into(), "peer-a".into(), "invalid_signature".into())].suppressed, 0);
+    }
+
+    #[test]
+    fn suppressed_counter_saturates_without_overflow() {
+        let mut t = RejectionLogThrottle::default();
+        t.rejected("keys", "peer-a", "peer_not_allowed");
+        let key = ("keys".into(), "peer-a".into(), "peer_not_allowed".into());
+        t.entries.get_mut(&key).unwrap().suppressed = u64::MAX;
+        t.rejected("keys", "peer-a", "peer_not_allowed");
+        assert_eq!(t.entries[&key].suppressed, u64::MAX);
+    }
+
+    #[test]
     fn bounded_under_churn() {
         let mut t = RejectionLogThrottle::default();
         for i in 0..MAX_KEYS + 1 {
