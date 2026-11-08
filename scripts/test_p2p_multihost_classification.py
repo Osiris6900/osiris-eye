@@ -18,5 +18,12 @@ class HostClassificationTests(unittest.TestCase):
         self.assertEqual(measurement_class({"a": {"host_fingerprint": "one"}}, False),
                          "single_host_process_regression")
 
+    def test_missing_fingerprint_cannot_claim_multihost(self):
+        m = {"a": {"host_fingerprint": "host-one"}, "b": {}}
+        self.assertEqual(measurement_class(m, False), "single_host_process_regression")
+    def test_empty_fingerprint_cannot_claim_multihost(self):
+        m = {"a": {"host_fingerprint": "host-one"}, "b": {"host_fingerprint": " "}}
+        self.assertEqual(measurement_class(m, False), "single_host_process_regression")
+
 if __name__ == "__main__":
     unittest.main()
