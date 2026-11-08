@@ -740,6 +740,13 @@ mod tests {
         assert!(super::reconnect_backoff_active(&failures, &peer, 11));
         assert!(!super::reconnect_backoff_active(&failures, &peer, 12));
     }
+    #[test] fn kad_bootstrap_refresh_waits_while_every_down_peer_is_in_backoff() {
+        assert!(!super::bootstrap_refresh_blocked([]));
+        assert!(super::bootstrap_refresh_blocked([true]));
+        assert!(!super::bootstrap_refresh_blocked([false]));
+        assert!(!super::bootstrap_refresh_blocked([true, false]));
+        assert!(super::bootstrap_refresh_blocked([true, true]));
+    }
     #[test] fn reconnect_dial_budget_rotates_and_prefers_relays() {
         let relays = [PeerId::random(), PeerId::random()];
         let bootstraps = [PeerId::random(), PeerId::random(), PeerId::random()];
@@ -1198,6 +1205,18 @@ fn record_reconnect_failure(failures: &mut HashMap<PeerId, ReconnectFailure>, pe
 
 fn reconnect_backoff_active(failures: &HashMap<PeerId, ReconnectFailure>, peer: &PeerId, tick: u64) -> bool {
     failures.get(peer).is_some_and(|failure| tick <= failure.resume_after_tick)
+}
+
+/// Kademlia's bootstrap query dials peers on its own. Skip it only when
+/// every currently disconnected configured bootstrap is inside its skip
+/// window. An empty input means nobody is down, so the refresh may run.
+fn bootstrap_refresh_blocked(down_peers_in_backoff: impl IntoIterator<Item = bool>) -> bool {
+    let mut saw_down_peer = false;
+    for in_backoff in down_peers_in_backoff {
+        saw_down_peer = true;
+        if !in_backoff { return false; }
+    }
+    saw_down_peer
 }
 
 /// Choose which configured peers to dial on this reconnect tick.
@@ -2089,9 +2108,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     }
                 }
                 if !bootstrap_peers.is_empty() && trusted_peers.is_none() {
-                    match swarm.behaviour_mut().kademlia.bootstrap() {
-                        Ok(query_id) => emit!("dht_bootstrap_refresh={query_id:?}"),
-                        Err(error) => emit!("dht_bootstrap_refresh_skipped={error:?}"),
+                    if bootstrap_refresh_blocked(bootstrap_peers.iter().filter(|(peer, _)| !swarm.is_connected(peer)).map(|(peer, _)| {
+                        reconnect_backoff_active(&reconnect_failures, peer, reconnect_tick_count)
+                    })) {
+                        emit!("dht_bootstrap_refresh_skipped=reconnect_backoff");
+                    } else {
+                        match swarm.behaviour_mut().kademlia.bootstrap() {
+                            Ok(query_id) => emit!("dht_bootstrap_refresh={query_id:?}"),
+                            Err(error) => emit!("dht_bootstrap_refresh_skipped={error:?}"),
+                        }
                     }
                 }
             }
