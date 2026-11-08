@@ -51,10 +51,12 @@ def paper_gate(request: PaperGateRequest):
         reasons.append("timezone_required")
     else:
         age = (request.as_of - obs.available_at).total_seconds()
-        if obs.event_time > obs.available_at or age < 0:
+        if age < 0:
             reasons.append("point_in_time_violation")
         elif age > request.max_age_seconds:
             reasons.append("stale_observation")
+        elif obs.event_time > obs.available_at:
+            reasons.append("point_in_time_violation")
     if not intent.approved_for_paper:
         reasons.append("model_not_approved")
     if request.kill_switch:
