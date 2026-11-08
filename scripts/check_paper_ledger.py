@@ -49,7 +49,12 @@ def reconcile(data):
             errors.append(f"{oid}: overfilled")
     # Deterministic cash/position replay in fill order; no broker or network access.
     # All arithmetic uses Decimal, and every fill is linked to a validated order.
-    cash = positive(data.get("starting_cash", "100000"))
+    try:
+        cash = Decimal(str(data.get("starting_cash", "100000")))
+        if not cash.is_finite() or cash < 0:
+            cash = None
+    except (InvalidOperation, TypeError, ValueError):
+        cash = None
     if cash is None:
         errors.append("invalid starting cash")
         cash = Decimal("0")
