@@ -56,6 +56,21 @@ class MasterIntegrationTests(unittest.TestCase):
         self.record["gates"]["risk_limits"]["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
         self.assertTrue(validate(self.record, self.root))
 
+    def test_empty_evidence_fails(self):
+        path = self.root / "risk_limits.txt"
+        path.write_bytes(b"")
+        self.record["gates"]["risk_limits"]["sha256"] = hashlib.sha256(b"").hexdigest()
+        self.assertTrue(validate(self.record, self.root))
+
+    def test_symlinked_evidence_directory_fails(self):
+        target = self.root / "actual"
+        target.mkdir()
+        (target / "report.txt").write_text("evidence", encoding="utf-8")
+        (self.root / "linked").symlink_to(target, target_is_directory=True)
+        self.record["gates"]["risk_limits"]["artifact"] = "linked/report.txt"
+        self.record["gates"]["risk_limits"]["sha256"] = hashlib.sha256(b"evidence").hexdigest()
+        self.assertTrue(validate(self.record, self.root))
+
     def test_live_trading_fails(self):
         self.record["live_trading_enabled"] = True
         self.assertTrue(validate(self.record, self.root))
