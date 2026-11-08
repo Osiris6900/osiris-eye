@@ -742,6 +742,25 @@ mod tests {
         assert_eq!(attempts, u32::MAX);
         assert_eq!(delay, std::time::Duration::from_secs(8));
     }
+    #[test] fn reconnect_dial_budget_rotates_and_prefers_relays() {
+        let relays = [PeerId::random(), PeerId::random()];
+        let bootstraps = [PeerId::random(), PeerId::random(), PeerId::random()];
+        let (first, cursor) = super::schedule_reconnect_dials(&relays, &bootstraps, 2, 0);
+        assert_eq!(first, vec![relays[0], relays[1]]);
+        assert_eq!(cursor, 2);
+        let (second, cursor) = super::schedule_reconnect_dials(&relays, &bootstraps, 2, cursor);
+        assert_eq!(second, vec![bootstraps[0], bootstraps[1]]);
+        assert_eq!(cursor, 4);
+        let (wrapped, cursor) = super::schedule_reconnect_dials(&relays, &bootstraps, 2, cursor);
+        assert_eq!(wrapped, vec![bootstraps[2], relays[0]]);
+        assert_eq!(cursor, 1);
+        let (none, cursor) = super::schedule_reconnect_dials(&relays, &bootstraps, 0, 3);
+        assert!(none.is_empty());
+        assert_eq!(cursor, 0);
+        let shared = PeerId::random();
+        let (unique, _) = super::schedule_reconnect_dials(&[shared], &[shared, bootstraps[0]], 8, 0);
+        assert_eq!(unique, vec![shared, bootstraps[0]]);
+    }
     #[test] fn rejoin_plan_skips_self_bootstrap_relays_and_policy_blocked_peers() {
         let self_peer = PeerId::random();
         let bootstrap_peer = PeerId::random();
@@ -1104,6 +1123,7 @@ fn relay_readiness(relay_addresses: &[(PeerId, Multiaddr)], active: &HashSet<Pee
 
 const PENDING_DIAL_TTL: Duration = Duration::from_secs(60);
 const RELAY_RESERVATION_COOLDOWN: Duration = Duration::from_secs(30 * 60);
+const MAX_RECONNECT_DIALS_PER_TICK: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RelayMaintainAction { Dial, RequestReservation, Hold }
@@ -1169,6 +1189,21 @@ fn record_reconnect_failure(failures: &mut HashMap<PeerId, ReconnectFailure>, pe
 
 fn reconnect_backoff_active(failures: &HashMap<PeerId, ReconnectFailure>, peer: &PeerId, now: Instant) -> bool {
     failures.get(peer).is_some_and(|failure| now < failure.next_attempt)
+}
+
+/// Choose which configured peers to dial on this reconnect tick.
+/// Relays come before bootstrap peers. The cursor rotates so a full list
+/// cannot be starved by the peers at the front. `cap` zero dials nobody.
+fn schedule_reconnect_dials(relays: &[PeerId], bootstraps: &[PeerId], cap: usize, cursor: usize) -> (Vec<PeerId>, usize) {
+    let mut ordered = Vec::new();
+    for peer in relays.iter().chain(bootstraps.iter()) {
+        if !ordered.contains(peer) { ordered.push(*peer); }
+    }
+    if ordered.is_empty() || cap == 0 { return (Vec::new(), 0); }
+    let start = cursor % ordered.len();
+    let take = cap.min(ordered.len());
+    let selected = (0..take).map(|offset| ordered[(start + offset) % ordered.len()]).collect();
+    ((selected), (start + take) % ordered.len())
 }
 
 fn emit_diagnostic_lines(lines: Vec<String>) {
@@ -1595,6 +1630,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Per configured bootstrap/relay peer. Unconfigured discovery dials are
     // not stored, so the map cannot grow with DHT churn. A success clears it.
     let mut reconnect_failures: HashMap<PeerId, ReconnectFailure> = HashMap::new();
+    let mut reconnect_dial_cursor: usize = 0;
     let bootstrap_peers = parse_bootstrap_peers(read_peer_setting("OSIRIS_BOOTSTRAP_PEERS")?.as_deref())?;
     let trusted_peers = parse_trusted_peers(read_peer_setting("OSIRIS_TRUSTED_PEERS")?.as_deref())?;
     // Server-mode kademlia auto-bootstraps whenever the routing table gains
@@ -1925,6 +1961,36 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 relay_reservation_refused.retain(|_, refused_at| {
                     reconnect_now.saturating_duration_since(*refused_at) < RELAY_RESERVATION_COOLDOWN
                 });
+                let relay_dial_candidates: Vec<PeerId> = relay_addresses.iter().filter_map(|(relay_peer, _)| {
+                    let dial = relay_maintain_action(RelayLinkView {
+                        allowed: is_peer_allowed(relay_peer, &trusted_peers, &revoked_peers),
+                        connected: swarm.is_connected(relay_peer),
+                        pending_dial: pending_dials.contains_key(relay_peer),
+                        has_listener: relay_listeners.contains_key(relay_peer),
+                        reservation_refused: relay_reservation_refused.contains_key(relay_peer),
+                        hop_capable: relay_hop_capable.contains(relay_peer),
+                    }) == RelayMaintainAction::Dial
+                        && !reconnect_backoff_active(&reconnect_failures, relay_peer, reconnect_now);
+                    dial.then_some(*relay_peer)
+                }).collect();
+                let bootstrap_dial_candidates: Vec<PeerId> = bootstrap_peers.iter().filter_map(|(bootstrap_peer, _)| {
+                    let dial = is_peer_allowed(bootstrap_peer, &trusted_peers, &revoked_peers)
+                        && !swarm.is_connected(bootstrap_peer)
+                        && !pending_dials.contains_key(bootstrap_peer)
+                        && !reconnect_backoff_active(&reconnect_failures, bootstrap_peer, reconnect_now);
+                    dial.then_some(*bootstrap_peer)
+                }).collect();
+                let (scheduled_dials, next_cursor) = schedule_reconnect_dials(
+                    &relay_dial_candidates, &bootstrap_dial_candidates, MAX_RECONNECT_DIALS_PER_TICK, reconnect_dial_cursor,
+                );
+                reconnect_dial_cursor = next_cursor;
+                let scheduled_dials: HashSet<PeerId> = scheduled_dials.into_iter().collect();
+                let waiting = relay_dial_candidates.iter().chain(bootstrap_dial_candidates.iter())
+                    .filter(|peer| !scheduled_dials.contains(peer))
+                    .collect::<HashSet<_>>();
+                if !waiting.is_empty() {
+                    emit!("reconnect_dials_deferred selected={} waiting={}", scheduled_dials.len(), waiting.len());
+                }
                 for (relay_peer, address) in &relay_addresses {
                     match relay_maintain_action(RelayLinkView {
                         allowed: is_peer_allowed(relay_peer, &trusted_peers, &revoked_peers),
@@ -1935,7 +2001,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         hop_capable: relay_hop_capable.contains(relay_peer),
                     }) {
                         RelayMaintainAction::Hold => {}
-                        RelayMaintainAction::Dial if reconnect_backoff_active(&reconnect_failures, relay_peer, reconnect_now) => {}
+                        RelayMaintainAction::Dial if !scheduled_dials.contains(relay_peer) => {}
                         RelayMaintainAction::Dial => match swarm.dial(address.clone()) {
                             Ok(()) => {
                                 pending_dials.insert(*relay_peer, reconnect_now);
@@ -1984,7 +2050,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     if is_peer_allowed(bootstrap_peer, &trusted_peers, &revoked_peers)
                         && !swarm.is_connected(bootstrap_peer)
                         && !pending_dials.contains_key(bootstrap_peer)
-                        && !reconnect_backoff_active(&reconnect_failures, bootstrap_peer, reconnect_now) {
+                        && scheduled_dials.contains(bootstrap_peer) {
                         match swarm.dial(address.clone()) {
                             Ok(()) => {
                                 pending_dials.insert(*bootstrap_peer, reconnect_now);
