@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Generate a deterministic CycloneDX SBOM for locked Rust and npm packages.
+"""Generate a deterministic CycloneDX SBOM for locked Rust, npm, and Python packages.
 
 Exact-version crate license metadata is fetched from crates.io unless present in
-an offline cache. Python requirements are identified as unresolved: their version
-ranges are not represented as a resolved deployment environment.
+an offline cache. When the hashed Python deployment lock is supplied, each pin
+becomes a PyPI component carrying the lock's sha256 artifact digests and the
+checked-in license expression. Those digests are copied from the lock; the
+artifact bytes are not downloaded again. Without the lock, Python stays an
+explicitly unresolved application.
 """
 from __future__ import annotations
 
@@ -18,8 +21,12 @@ from urllib.parse import quote
 from urllib.request import Request, urlopen
 import uuid
 
+from check_license_provenance import best_expression
+from python_lock import LOCK_RELATIVE_PATH, parse_hashed_lock
+
 CARGO_REGISTRY = "registry+https://github.com/rust-lang/crates.io-index"
 CACHE_SCHEMA = "osiris.crate-license-cache.v1"
+PYPI_LICENSE_SCHEMA = "osiris.python-license-provenance.v1"
 USER_AGENT = "osiris-eye-dependency-sbom (https://github.com/Osiris6900/osiris-eye)"
 
 
@@ -198,7 +205,80 @@ def application(
     return component
 
 
-def build_sbom(cargo_lock: Path, npm_lock: Path, pyproject: Path, cache: dict, offline: bool) -> dict:
+def pypi_license_map(evidence_path: Path, lock_path: Path) -> dict[tuple[str, str], str]:
+    """Return (normalized name, version) -> SPDX expression for the lock."""
+    document = json.loads(evidence_path.read_text())
+    if not isinstance(document, dict) or document.get("schema") != PYPI_LICENSE_SCHEMA:
+        raise ValueError(f"{evidence_path}: unsupported Python license evidence")
+    recorded = document.get("lock", {}).get("sha256") if isinstance(document.get("lock"), dict) else None
+    if recorded != sha256_file(lock_path):
+        raise ValueError(f"{evidence_path}: license evidence does not match {lock_path}")
+    packages = document.get("packages")
+    if not isinstance(packages, list):
+        raise ValueError(f"{evidence_path}: packages must be a list")
+    found: dict[tuple[str, str], str] = {}
+    for record in packages:
+        if not isinstance(record, dict):
+            raise ValueError(f"{evidence_path}: license evidence record is not an object")
+        name, version = record.get("normalized_name"), record.get("version")
+        if not isinstance(name, str) or not isinstance(version, str):
+            raise ValueError(f"{evidence_path}: license evidence record is missing name or version")
+        expression = record.get("resolved_expression")
+        if not isinstance(expression, str) or not expression.strip():
+            expression = best_expression(record)
+        if not isinstance(expression, str) or not expression.strip():
+            raise ValueError(f"{evidence_path}: license expression missing for {name}=={version}")
+        key = (name, version)
+        if key in found:
+            raise ValueError(f"{evidence_path}: duplicate license evidence for {name}=={version}")
+        found[key] = expression.strip()
+    return found
+
+
+def pypi_component(entry, expression: str) -> dict:
+    reference = purl("pypi", entry.normalized_name, entry.version)
+    properties = [
+        {"name": "osiris:hash-source", "value": LOCK_RELATIVE_PATH},
+        {
+            "name": "osiris:artifact-sha256",
+            "value": " ".join(entry.hashes),
+        },
+        {
+            "name": "osiris:hash-meaning",
+            "value": "each digest is one locked distribution artifact; bytes were not re-fetched",
+        },
+    ]
+    if entry.marker:
+        properties.append({"name": "osiris:environment-marker", "value": entry.marker})
+    return {
+        "type": "library",
+        "bom-ref": reference,
+        "name": entry.normalized_name,
+        "version": entry.version,
+        "scope": "required",
+        "purl": reference,
+        "licenses": [{"expression": expression}],
+        "hashes": [{"alg": "SHA-256", "content": digest} for digest in entry.hashes],
+        "properties": properties,
+        "externalReferences": [{
+            "type": "distribution",
+            "url": (
+                "https://pypi.org/pypi/"
+                f"{quote(entry.normalized_name, safe='')}/{quote(entry.version, safe='')}/json"
+            ),
+        }],
+    }
+
+
+def build_sbom(
+    cargo_lock: Path,
+    npm_lock: Path,
+    pyproject: Path,
+    cache: dict,
+    offline: bool,
+    python_lock: Path | None = None,
+    pypi_licenses: dict[tuple[str, str], str] | None = None,
+) -> dict:
     local_cargo, registry_cargo = cargo_packages(cargo_lock)
     crate_metadata = resolve_crate_metadata(registry_cargo, cache, offline)
     npm_root, locked_npm = npm_packages(npm_lock)
@@ -208,27 +288,48 @@ def build_sbom(cargo_lock: Path, npm_lock: Path, pyproject: Path, cache: dict, o
     if not isinstance(python_name, str) or not isinstance(python_version, str):
         raise ValueError(f"{pyproject}: Python project name/version missing")
 
+    pypi_entries = []
+    python_resolution = "unresolved"
+    if python_lock is not None:
+        if pypi_licenses is None:
+            raise ValueError("hashed Python lock requires license evidence for every pin")
+        pypi_entries = parse_hashed_lock(python_lock)
+        expected = {(entry.normalized_name, entry.version) for entry in pypi_entries}
+        extra = sorted(set(pypi_licenses) - expected)
+        if extra:
+            raise ValueError(f"license evidence is not in the deployment lock: {extra[0][0]}=={extra[0][1]}")
+        missing = [entry for entry in pypi_entries if (entry.normalized_name, entry.version) not in pypi_licenses]
+        if missing:
+            entry = missing[0]
+            raise ValueError(f"license evidence missing for {entry.normalized_name}=={entry.version}")
+        python_resolution = "hashed-deployment-lock"
+    elif pypi_licenses is not None:
+        raise ValueError("Python license evidence requires the hashed deployment lock")
+
     lock_hashes = {
         "apps/web/package-lock.json": sha256_file(npm_lock),
         "services/p2p-node/Cargo.lock": sha256_file(cargo_lock),
         "services/quant-api/pyproject.toml": sha256_file(pyproject),
     }
+    if python_lock is not None:
+        lock_hashes[LOCK_RELATIVE_PATH] = sha256_file(python_lock)
     serial_material = "\n".join(f"{key}:{value}" for key, value in sorted(lock_hashes.items()))
+    python_properties = [
+        {"name": "osiris:dependency-resolution", "value": python_resolution},
+        {"name": "osiris:requires-python", "value": python_project.get("requires-python", "")},
+        {
+            "name": "osiris:declared-dependencies",
+            "value": json.dumps(python_project.get("dependencies", []), separators=(",", ":")),
+        },
+    ]
+    if python_lock is not None:
+        python_properties.append({"name": "osiris:python-lock", "value": LOCK_RELATIVE_PATH})
+        python_properties.append({"name": "osiris:locked-distributions", "value": str(len(pypi_entries))})
     components = []
     for package in local_cargo:
         components.append(application("generic", package["name"], package["version"]))
     components.append(application("npm", npm_root["name"], npm_root["version"]))
-    components.append(application(
-        "generic", python_name, python_version,
-        [
-            {"name": "osiris:dependency-resolution", "value": "unresolved"},
-            {"name": "osiris:requires-python", "value": python_project.get("requires-python", "")},
-            {
-                "name": "osiris:declared-dependencies",
-                "value": json.dumps(python_project.get("dependencies", []), separators=(",", ":")),
-            },
-        ],
-    ))
+    components.append(application("generic", python_name, python_version, python_properties))
 
     for package in sorted(registry_cargo, key=lambda p: (p["name"], p["version"])):
         key = f"{package['name']}@{package['version']}"
@@ -260,6 +361,11 @@ def build_sbom(cargo_lock: Path, npm_lock: Path, pyproject: Path, cache: dict, o
             "hashes": [npm_hash(package["integrity"])],
             "externalReferences": [{"type": "distribution", "url": package["resolved"]}],
         })
+    for entry in pypi_entries:
+        expression = pypi_licenses[(entry.normalized_name, entry.version)]
+        if not isinstance(expression, str) or not expression.strip():
+            raise ValueError(f"license evidence missing for {entry.normalized_name}=={entry.version}")
+        components.append(pypi_component(entry, expression.strip()))
 
     references = [component["bom-ref"] for component in components]
     if len(references) != len(set(references)):
@@ -273,7 +379,7 @@ def build_sbom(cargo_lock: Path, npm_lock: Path, pyproject: Path, cache: dict, o
             "component": application("generic", "osiris-eye", None, [
                 {"name": f"osiris:input-sha256:{key}", "value": value}
                 for key, value in sorted(lock_hashes.items())
-            ] + [{"name": "osiris:python-deployment-resolution", "value": "unresolved"}]),
+            ] + [{"name": "osiris:python-deployment-resolution", "value": python_resolution}]),
         },
         "components": components,
     }
@@ -288,8 +394,16 @@ def main() -> None:
         default=Path.home() / ".cache/osiris-eye/crate-license-cache.json",
     )
     parser.add_argument("--offline", action="store_true")
+    parser.add_argument("--python-lock", type=Path, default=root / LOCK_RELATIVE_PATH)
+    parser.add_argument(
+        "--license-evidence",
+        type=Path,
+        default=root / "docs/PYTHON_LICENSE_PROVENANCE.json",
+    )
     args = parser.parse_args()
     try:
+        if not args.python_lock.is_file():
+            raise ValueError(f"missing {args.python_lock}; the deployment lock is required")
         cache = load_cache(args.crate_cache)
         sbom = build_sbom(
             root / "services/p2p-node/Cargo.lock",
@@ -297,6 +411,8 @@ def main() -> None:
             root / "services/quant-api/pyproject.toml",
             cache,
             args.offline,
+            args.python_lock,
+            pypi_license_map(args.license_evidence, args.python_lock),
         )
         serialized = json.dumps(sbom, indent=2, sort_keys=True) + "\n"
         args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -306,9 +422,10 @@ def main() -> None:
             args.crate_cache.write_text(json.dumps(cache, indent=2, sort_keys=True) + "\n")
     except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
         raise SystemExit(str(error)) from error
+    pypi_count = sum(component["purl"].startswith("pkg:pypi/") for component in sbom["components"])
     print(
-        f"Wrote {args.output} with {len(sbom['components'])} components; "
-        "Python deployment dependencies remain unresolved"
+        f"Wrote {args.output} with {len(sbom['components'])} components, "
+        f"including {pypi_count} hashed Python deployment distributions"
     )
 
 

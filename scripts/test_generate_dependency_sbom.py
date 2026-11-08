@@ -12,8 +12,10 @@ from generate_dependency_sbom import (
     build_sbom,
     empty_cache,
     npm_hash,
+    pypi_license_map,
     purl,
 )
+from python_lock import LOCK_RELATIVE_PATH, parse_hashed_lock
 
 
 class DependencySbomTests(unittest.TestCase):
@@ -138,6 +140,80 @@ dependencies = ["fastapi>=0.110,<1"]
     def test_scoped_npm_purl_requires_a_package_name(self):
         with self.assertRaisesRegex(ValueError, "invalid scoped npm package"):
             purl("npm", "@scope", "1.0.0")
+
+    def write_lock(self, text):
+        path = self.root / "requirements-lock.txt"
+        path.write_text(text)
+        return path
+
+    def test_hashed_python_lock_adds_exact_pins_and_artifact_digests(self):
+        first = "ab" * 32
+        second = "cd" * 32
+        lock = self.write_lock(
+            "Foo_Bar==1.2.3 \\\n"
+            f"    --hash=sha256:{second} \\\n"
+            f"    --hash=sha256:{first}\n"
+        )
+        licenses = {("foo-bar", "1.2.3"): "MIT"}
+        sbom = build_sbom(
+            self.cargo, self.npm, self.python, copy.deepcopy(self.cache), True, lock, licenses,
+        )
+        component = next(item for item in sbom["components"] if item["name"] == "foo-bar")
+        self.assertEqual(component["purl"], "pkg:pypi/foo-bar@1.2.3")
+        self.assertEqual(component["version"], "1.2.3")
+        self.assertEqual(component["licenses"], [{"expression": "MIT"}])
+        self.assertEqual(
+            component["hashes"],
+            [{"alg": "SHA-256", "content": first}, {"alg": "SHA-256", "content": second}],
+        )
+        properties = {item["name"]: item["value"] for item in component["properties"]}
+        self.assertEqual(properties["osiris:artifact-sha256"], f"{first} {second}")
+        self.assertEqual(properties["osiris:hash-source"], LOCK_RELATIVE_PATH)
+        python = next(item for item in sbom["components"] if item["name"] == "osiris-quant-api")
+        resolution = {item["name"]: item["value"] for item in python["properties"]}
+        self.assertEqual(resolution["osiris:dependency-resolution"], "hashed-deployment-lock")
+        metadata = {
+            item["name"]: item["value"] for item in sbom["metadata"]["component"]["properties"]
+        }
+        self.assertEqual(metadata["osiris:python-deployment-resolution"], "hashed-deployment-lock")
+        self.assertIn(f"osiris:input-sha256:{LOCK_RELATIVE_PATH}", metadata)
+
+    def test_python_lock_without_license_evidence_fails_closed(self):
+        lock = self.write_lock("demo==1.0.0 --hash=sha256:" + ("aa" * 32) + "\n")
+        with self.assertRaisesRegex(ValueError, "license evidence"):
+            build_sbom(self.cargo, self.npm, self.python, copy.deepcopy(self.cache), True, lock, {})
+
+    def test_stale_license_evidence_fails_closed(self):
+        lock = self.write_lock("demo==1.0.0 --hash=sha256:" + ("aa" * 32) + "\n")
+        evidence = self.root / "evidence.json"
+        evidence.write_text(json.dumps({
+            "schema": "osiris.python-license-provenance.v1",
+            "lock": {"sha256": "0" * 64},
+            "packages": [],
+        }))
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            pypi_license_map(evidence, lock)
+
+    def test_repository_deployment_lock_is_represented_exactly(self):
+        root = Path(__file__).resolve().parents[1]
+        lock = root / LOCK_RELATIVE_PATH
+        evidence = root / "docs/PYTHON_LICENSE_PROVENANCE.json"
+        licenses = pypi_license_map(evidence, lock)
+        entries = parse_hashed_lock(lock)
+        sbom = build_sbom(
+            self.cargo, self.npm, self.python, copy.deepcopy(self.cache), True, lock, licenses,
+        )
+        pinned = [item for item in sbom["components"] if item["purl"].startswith("pkg:pypi/")]
+        self.assertEqual(len(pinned), len(entries))
+        by_purl = {item["purl"]: item for item in pinned}
+        for entry in entries:
+            component = by_purl[purl("pypi", entry.normalized_name, entry.version)]
+            properties = {item["name"]: item["value"] for item in component["properties"]}
+            self.assertEqual(properties["osiris:artifact-sha256"].split(), list(entry.hashes))
+            self.assertEqual(
+                component["licenses"],
+                [{"expression": licenses[(entry.normalized_name, entry.version)]}],
+            )
 
 
 if __name__ == "__main__":

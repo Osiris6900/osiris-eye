@@ -57,20 +57,23 @@ every entry is pinned and hashed, the lock header matches the current
 `pyproject.toml` byte hash (staleness), every direct deployment requirement
 is present and in range, and every version is valid PEP 440. `pip install
 --require-hashes -r services/quant-api/requirements-lock.txt` reproduces the
-environment on Python 3.11. The CycloneDX SBOM does not yet ingest this lock;
-extending `generate_dependency_sbom.py` with PyPI components is follow-up
-work and the SBOM must still not be represented as a whole-environment
-inventory until then.
+environment on Python 3.11. `scripts/generate_dependency_sbom.py` now adds one
+CycloneDX component per pin in that lock. The optional `ibkr` extra and
+development installs from version ranges stay outside that set, so the SBOM
+is still not a whole-environment inventory.
 
 ## CycloneDX dependency inventory
 
 `scripts/generate_dependency_sbom.py` generates deterministic CycloneDX 1.5 JSON
-from the exact Cargo and npm lockfiles. For the reviewed inputs, the SBOM has
-523 components: three local applications, 388 crates.io libraries and 132 npm
-libraries. Cargo SHA-256 checksums, npm integrity hashes, distribution URLs,
-license metadata and npm development scope are included. Duplicate SBOM
-references, unsupported Cargo sources, missing licenses/integrity data and
-crate checksum mismatches fail closed.
+from the Cargo lock, the npm lock, and the hashed Python deployment lock. The
+Cargo and npm portions are three local applications, 388 crates.io libraries
+and 132 npm libraries. Each of the 24 deployment pins is an additional library
+whose `pkg:pypi` purl, version, license expression, and every `--hash=sha256`
+digest come from the lock and `docs/PYTHON_LICENSE_PROVENANCE.json`. Those
+digests are copied from the lock; the wheel and sdist bytes are not downloaded
+again. Duplicate SBOM references, unsupported Cargo sources, missing
+licenses/integrity data, a license record that does not match the lock hash,
+and crate checksum mismatches fail closed.
 
 Crates.io exact-version API responses supply crate license metadata and are
 checked against the lockfile checksum. The local cache permits later offline
@@ -78,13 +81,11 @@ regeneration; delete or refresh that cache when performing a new metadata
 review. Generation is deterministic across checkout paths and online/offline
 runs with the same inputs and cache.
 
-The three local applications include `osiris-quant-api`. Its dependency
-resolution is no longer `unresolved` — the exact deployment set lives in
-`services/quant-api/requirements-lock.txt` — but this SBOM generator does not
-ingest that lock yet, so version ranges from `pyproject.toml` are still
-recorded only as declarations, not as installed packages. The SBOM must not be
-represented as a whole-environment inventory until PyPI components from the
-lock are incorporated (follow-up work).
+The three local applications include `osiris-quant-api`. With the deployment
+lock present, its resolution property is `hashed-deployment-lock`, and the
+version ranges from `pyproject.toml` remain recorded as declarations beside
+the pinned components. The optional `ibkr` extra is not in the lock, so those
+pins are not a whole-environment inventory.
 
 This inventory is not a license-compatibility or redistribution decision,
 provenance attestation, reproducible-build proof, or independent security
@@ -262,8 +263,8 @@ hostile-load, production-capacity, external-audit, or exploitability evidence.
 
 Before a public release, refresh the combined advisory report, remediate its
 current findings, triage reachability, re-resolve and re-scan the Python lock
-after any `pyproject.toml` change, extend the SBOM with PyPI components, and
-record toolchain and artifact hashes. Complete the actual third-party CI action
+after any `pyproject.toml` change, regenerate the SBOM so its Python pins match
+the lock, and record toolchain and artifact hashes. Complete the actual third-party CI action
 SHA/digest pinning and trust review before release; the ratchet alone does not
 clear that gate. `--fail-on-vulnerability` returns exit status 2 after writing a
 report when any vulnerability group remains, so it can gate a remediated tree.
