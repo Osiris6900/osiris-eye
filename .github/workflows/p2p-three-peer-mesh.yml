@@ -127,7 +127,9 @@ jobs:
           kill "$A_PID" 2>/dev/null || true
           stopped=0
           for _ in $(seq 1 15); do
-            if ! kill -0 "$A_PID" 2>/dev/null; then stopped=1; break; fi
+            # A terminated child may remain as a zombie until wait reaps it.
+            state="$(ps -o stat= -p "$A_PID" 2>/dev/null || true)"
+            if [[ -z "$state" || "$state" == Z* ]]; then stopped=1; break; fi
             sleep 1
           done
           if [ "$stopped" -ne 1 ]; then
