@@ -845,7 +845,7 @@ from .paper_observation_bridge import evaluate_stored_observation
 @app.post("/paper/workflow/from-observation")
 def evaluate_stored_observation_endpoint(p: dict[str, Any] = Body(...)):
     """Evaluate an already-ingested observation; persist paper intent only."""
-    return guarded(
+    result = guarded(
         evaluate_stored_observation,
         store,
         record_key=p.get("record_key", ""),
@@ -861,6 +861,8 @@ def evaluate_stored_observation_endpoint(p: dict[str, Any] = Body(...)):
         max_future_skew_seconds=p.get("max_future_skew_seconds", 60.0),
         require_feed_admission=p.get("require_feed_admission", False) is True,
     )
+    record_paper_workflow(result)
+    return result
 
 
 from .durable_paper_ledger import router as durable_paper_ledger_router
