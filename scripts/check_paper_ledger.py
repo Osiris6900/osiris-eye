@@ -19,6 +19,14 @@ def reconcile(data):
     errors, orders, filled, fill_ids = [], {}, {}, set()
     if not isinstance(data, dict) or not isinstance(data.get("orders"), list) or not isinstance(data.get("fills"), list):
         return {"passed": False, "errors": ["orders and fills arrays required"]}
+    # Global paper execution gates: a disabled feed or operator kill switch
+    # blocks every new fill, regardless of the rest of the ledger's validity.
+    if data.get("kill_switch_active") is True and data["fills"]:
+        return {"passed": False, "errors": ["kill switch active: paper fills blocked"]}
+    if data.get("market_data_fresh") is False and data["fills"]:
+        return {"passed": False, "errors": ["stale market data: paper fills blocked"]}
+    if data.get("kill_switch_active", False) not in (True, False) or data.get("market_data_fresh", True) not in (True, False):
+        return {"passed": False, "errors": ["invalid execution gate configuration"]}
     for order in data["orders"]:
         if not isinstance(order, dict):
             errors.append("invalid order object"); continue
