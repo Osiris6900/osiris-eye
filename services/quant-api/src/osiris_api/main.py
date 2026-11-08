@@ -863,3 +863,7 @@ def evaluate_stored_observation_endpoint(p: dict[str, Any] = Body(...)):
     )
     record_paper_workflow(result)
     return result
+
+
+from .durable_paper_ledger import router as durable_paper_ledger_router
+app.include_router(durable_paper_ledger_router)
