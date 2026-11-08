@@ -24,7 +24,9 @@ def evaluate_paper_workflow(
     limits: RiskLimits = RiskLimits(),
 ) -> dict[str, Any]:
     """Backtest a candidate signal stream and risk-gate one paper order intent."""
-    normalized_symbol = str(symbol).strip().upper()
+    if not isinstance(symbol, str):
+        raise ValueError("invalid_symbol")
+    normalized_symbol = symbol.strip().upper()
     if not normalized_symbol or len(normalized_symbol) > 64:
         raise ValueError("invalid_symbol")
     numeric = (quantity, price, current_position_notional, daily_pnl,
