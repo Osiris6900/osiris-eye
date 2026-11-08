@@ -21,7 +21,7 @@ class MasterIntegrationTests(unittest.TestCase):
                     "independent": True, "reviewer": "Example external reviewer",
                     "organization": "Example audit firm", "review_date": "2026-11-08",
                     "report_reference": "example-report-001", "scope": "P2P and risk",
-                    "unresolved_critical_high": 0}), encoding="utf-8")
+                    "unresolved_critical_high": 0, "findings": []}), encoding="utf-8")
             else:
                 path.write_text(f"independent evidence for {name}", encoding="utf-8")
             digest = hashlib.sha256(path.read_bytes()).hexdigest()
@@ -99,6 +99,22 @@ class MasterIntegrationTests(unittest.TestCase):
         path = self.root / "security_review.txt"
         review = json.loads(path.read_text())
         review["unresolved_critical_high"] = 1
+        path.write_text(json.dumps(review))
+        self.record["gates"]["security_review"]["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+        self.assertTrue(validate(self.record, self.root))
+
+    def test_security_review_open_high_finding_fails(self):
+        path = self.root / "security_review.txt"
+        review = json.loads(path.read_text())
+        review["findings"] = [{"id": "SEC-1", "severity": "high", "status": "open"}]
+        path.write_text(json.dumps(review))
+        self.record["gates"]["security_review"]["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+        self.assertTrue(validate(self.record, self.root))
+
+    def test_security_review_invalid_date_fails(self):
+        path = self.root / "security_review.txt"
+        review = json.loads(path.read_text())
+        review["review_date"] = "not-a-date"
         path.write_text(json.dumps(review))
         self.record["gates"]["security_review"]["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
         self.assertTrue(validate(self.record, self.root))
