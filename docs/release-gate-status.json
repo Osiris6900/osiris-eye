@@ -32,7 +32,7 @@
         "services/quant-api/requirements-lock.txt"
       ],
       "evidence_commits": ["5176eae8843a1e5144ac903f37843fe9bb46cdd9"],
-      "open_prs": [],
+      "open_prs": [276],
       "blocker": "paste 1.0.15 (RUSTSEC-2024-0436) remains; CycloneDX SBOM still marks Python deployment resolution unresolved; license provenance checker is not a Dependency Security Audit step; #171 text is stale."
     },
     {
@@ -61,6 +61,7 @@
       "evidence": [
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42424830531",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42424833409",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42430583187",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42430580795",
         "docs/P2P_REMOTE_ACCEPTANCE_2026_11_07.json"
       ],
@@ -81,7 +82,7 @@
         "https://github.com/Osiris6900/osiris-eye/pull/259"
       ],
       "evidence_commits": ["5176eae8843a1e5144ac903f37843fe9bb46cdd9"],
-      "open_prs": [269],
+      "open_prs": [269, 279],
       "blocker": "100-peer independent-host soak with distinct host fingerprints, binary hashes, latency, and loss is not retained. Checked-in soak summaries set independent_hosts_verified to false."
     },
     {
@@ -205,7 +206,7 @@
         "services/quant-api/tests/test_paper_risk_acceptance_179.py"
       ],
       "evidence_commits": ["5176eae8843a1e5144ac903f37843fe9bb46cdd9"],
-      "open_prs": [268],
+      "open_prs": [268, 277],
       "blocker": "Simulation risk limits are tested in CI. No independent risk-budget governance signoff is attached."
     },
     {
@@ -221,8 +222,8 @@
         "services/quant-api/tests/test_durable_paper_ledger.py"
       ],
       "evidence_commits": ["305ceb1d4d4c6f3d649cb58ee2c82eedb3818644", "5176eae8843a1e5144ac903f37843fe9bb46cdd9"],
-      "open_prs": [265],
-      "blocker": "Broker OMS reconciliation is missing. The durable ledger is synthetic and idempotent; it does not reconcile broker state. The offline journal in scripts/paper_order_journal.py is not a CI step."
+      "open_prs": [265, 277],
+      "blocker": "Broker OMS reconciliation is missing. The durable ledger is synthetic and idempotent; it does not reconcile broker state. The offline journal in scripts/paper_order_journal.py is not a CI step. PR #277 adds an internal paper reconcile and still sets broker_order_submitted false."
     },
     {
       "id": "T15",
@@ -235,7 +236,7 @@
         "services/quant-api/tests/test_durable_paper_ledger.py"
       ],
       "evidence_commits": ["5176eae8843a1e5144ac903f37843fe9bb46cdd9"],
-      "open_prs": [265],
+      "open_prs": [265, 277, 278],
       "blocker": "CI covers synthetic cash, position, and realized P&L. Margin and realistic market fills are not evidenced."
     },
     {
@@ -251,7 +252,7 @@
         "scripts/test_paper_order_journal.py"
       ],
       "evidence_commits": ["0a610db74cac5381ebbb4abe358286a80a6e6298"],
-      "open_prs": [265, 268],
+      "open_prs": [265, 268, 277],
       "blocker": "Admin and ingestion kill-switch tests run in pytest. evaluate_paper_workflow does not consult a kill switch or feed freshness. The paper-journal stale-feed test is not a CI step."
     },
     {
@@ -268,7 +269,7 @@
         "services/quant-api/src/osiris_api/admin_centre.py"
       ],
       "evidence_commits": ["0a610db74cac5381ebbb4abe358286a80a6e6298", "5176eae8843a1e5144ac903f37843fe9bb46cdd9"],
-      "open_prs": [271],
+      "open_prs": [271, 278],
       "blocker": "RBAC dashboard tests passed in CI. Peer telemetry against a running p2p-node is not in those runs. #180 remains open."
     },
     {
