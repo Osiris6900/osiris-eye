@@ -1,4 +1,5 @@
 import hashlib
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,7 +16,14 @@ class MasterIntegrationTests(unittest.TestCase):
         for name in GATES:
             artifact = f"{name}.txt"
             path = self.root / artifact
-            path.write_text(f"independent evidence for {name}", encoding="utf-8")
+            if name == "security_review":
+                path.write_text(json.dumps({"decision": "approved", "commit_sha": SHA,
+                    "independent": True, "reviewer": "Example external reviewer",
+                    "organization": "Example audit firm", "review_date": "2026-11-08",
+                    "report_reference": "example-report-001", "scope": "P2P and risk",
+                    "unresolved_critical_high": 0}), encoding="utf-8")
+            else:
+                path.write_text(f"independent evidence for {name}", encoding="utf-8")
             digest = hashlib.sha256(path.read_bytes()).hexdigest()
             gates[name] = {"passed": True, "commit_sha": SHA,
                            "artifact": artifact, "sha256": digest}
@@ -69,6 +77,30 @@ class MasterIntegrationTests(unittest.TestCase):
         (self.root / "linked").symlink_to(target, target_is_directory=True)
         self.record["gates"]["risk_limits"]["artifact"] = "linked/report.txt"
         self.record["gates"]["risk_limits"]["sha256"] = hashlib.sha256(b"evidence").hexdigest()
+        self.assertTrue(validate(self.record, self.root))
+
+    def test_unapproved_security_review_fails(self):
+        path = self.root / "security_review.txt"
+        review = json.loads(path.read_text())
+        review["decision"] = "pending"
+        path.write_text(json.dumps(review))
+        self.record["gates"]["security_review"]["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+        self.assertTrue(validate(self.record, self.root))
+
+    def test_security_review_wrong_commit_fails(self):
+        path = self.root / "security_review.txt"
+        review = json.loads(path.read_text())
+        review["commit_sha"] = "b" * 40
+        path.write_text(json.dumps(review))
+        self.record["gates"]["security_review"]["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+        self.assertTrue(validate(self.record, self.root))
+
+    def test_security_review_high_findings_fail(self):
+        path = self.root / "security_review.txt"
+        review = json.loads(path.read_text())
+        review["unresolved_critical_high"] = 1
+        path.write_text(json.dumps(review))
+        self.record["gates"]["security_review"]["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
         self.assertTrue(validate(self.record, self.root))
 
     def test_live_trading_fails(self):
