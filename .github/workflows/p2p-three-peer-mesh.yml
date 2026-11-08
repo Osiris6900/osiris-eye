@@ -122,8 +122,21 @@ jobs:
           echo "THREE_PEER_GOSSIP_PROPAGATION=PASS"
 
           # Restart the bootstrap node with the same persistent identity and address.
-          kill "$A_PID"
+          # Bound shutdown: a stalled child must not consume the whole CI job timeout.
+          echo "RESTART: stopping bootstrap node A pid=$A_PID"
+          kill "$A_PID" 2>/dev/null || true
+          stopped=0
+          for _ in $(seq 1 15); do
+            if ! kill -0 "$A_PID" 2>/dev/null; then stopped=1; break; fi
+            sleep 1
+          done
+          if [ "$stopped" -ne 1 ]; then
+            echo "RESTART: bootstrap A did not stop within 15 seconds; sending SIGKILL"
+            kill -KILL "$A_PID" 2>/dev/null || true
+          fi
+          # Reap the child only after it is confirmed terminated.
           wait "$A_PID" || true
+          echo "RESTART: bootstrap node A stopped"
           wait_for "Host B detected bootstrap disconnect" "$TMP/b.log" "peer_disconnected=$A_PEER" 30
           wait_for "Host C detected bootstrap disconnect" "$TMP/c.log" "peer_disconnected=$A_PEER" 30
           start_a
