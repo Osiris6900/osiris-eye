@@ -49,6 +49,22 @@ class PaperOrderJournalTests(unittest.TestCase):
             apply_command(state, fill)
         self.assertEqual(state["fills"], [])
 
+    def test_kill_switch_after_fill_blocks_new_commands(self):
+        state, _ = apply_command(self.initial(), self.order())
+        state, _ = apply_command(state, self.fill())
+        state["kill_switch"] = True
+        with self.assertRaises(ValueError):
+            apply_command(state, {"command_id": "c3", "type": "order",
+                                  "order": {"id": "o2", "symbol": "BTC", "side": "buy", "quantity": "1"}})
+
+    def test_stale_feed_after_fill_blocks_new_commands(self):
+        state, _ = apply_command(self.initial(), self.order())
+        state, _ = apply_command(state, self.fill())
+        state["market_data_fresh"] = False
+        with self.assertRaises(ValueError):
+            apply_command(state, {"command_id": "c3", "type": "order",
+                                  "order": {"id": "o2", "symbol": "BTC", "side": "buy", "quantity": "1"}})
+
     def test_corrupt_restart_snapshot_rejected(self):
         state, _ = apply_command(self.initial(), self.order())
         state["commands"]["c1"]["command"]["command_id"] = "tampered"
