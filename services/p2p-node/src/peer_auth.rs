@@ -23,7 +23,12 @@ fn parse_peer_set(raw: Option<&str>, setting: &str) -> Result<Option<HashSet<Pee
         return Err(format!("{setting} exceeds maximum peer configuration size").into());
     }
     let mut peers = HashSet::new();
-    for entry in raw.split(',').map(str::trim).filter(|entry| !entry.is_empty()) {
+    for entry in raw.split(',').map(str::trim) {
+        // Reject malformed separators instead of silently dropping empty entries.
+        // A partially malformed operator allowlist must never be accepted.
+        if entry.is_empty() {
+            return Err(format!("{setting} contains an empty peer ID").into());
+        }
         if entry.len() > MAX_PEER_ID_BYTES {
             return Err(format!("{setting} contains an oversized peer ID").into());
         }
@@ -95,8 +100,71 @@ mod tests {
     }
 
     #[test]
+    fn rejects_partially_malformed_allowlist_without_silently_ignoring_entries() {
+        let peer = PeerId::random();
+        for raw in [format!("{peer},"), format!(",{peer}"), format!("{peer}, ,{peer}")] {
+            assert!(parse_trusted_peers(Some(&raw)).is_err());
+            assert!(parse_revoked_peers(Some(&raw)).is_err());
+        }
+    }
+
+    #[test]
     fn rejects_invalid_peer_id() {
         assert!(parse_trusted_peers(Some("not-a-peer-id")).is_err());
+    }
+
+    #[test]
+    fn malformed_separators_fail_closed_for_both_peer_sets() {
+        let peer = PeerId::random();
+        for raw in ["", " ", ",", ",,", " , , "] {
+            assert!(parse_trusted_peers(Some(raw)).is_err());
+            assert!(parse_revoked_peers(Some(raw)).is_err());
+        }
+        for raw in [format!("{peer},,"), format!(",,{peer}")] {
+            assert!(parse_trusted_peers(Some(&raw)).is_err());
+            assert!(parse_revoked_peers(Some(&raw)).is_err());
+        }
+    }
+
+    #[test]
+    fn revocation_blocks_peer_even_in_open_network_mode() {
+        let peer = PeerId::random();
+        let revoked = Some([peer].into_iter().collect());
+        assert!(!is_peer_allowed(&peer, &None, &revoked));
+        let mut entered = false;
+        assert!(run_if_peer_allowed(&peer, &None, &revoked, || { entered = true; }).is_err());
+        assert!(!entered);
+    }
+
+    #[test]
+    fn authorization_denies_revoked_peer_without_executing_callback() {
+        use std::cell::Cell;
+        let peer = PeerId::random();
+        let revoked = Some([peer].into_iter().collect());
+        let calls = Cell::new(0);
+        for _ in 0..3 {
+            assert!(run_if_peer_allowed(&peer, &None, &revoked, || {
+                calls.set(calls.get() + 1);
+            }).is_err());
+        }
+        assert_eq!(calls.get(), 0);
+    }
+
+    #[test]
+    fn authorization_allows_only_configured_peer_and_executes_once() {
+        use std::cell::Cell;
+        let allowed = PeerId::random();
+        let other = PeerId::random();
+        let trusted = Some([allowed].into_iter().collect());
+        let calls = Cell::new(0);
+        assert!(run_if_peer_allowed(&other, &trusted, &None, || {
+            calls.set(calls.get() + 1);
+        }).is_err());
+        assert_eq!(calls.get(), 0);
+        assert!(run_if_peer_allowed(&allowed, &trusted, &None, || {
+            calls.set(calls.get() + 1);
+        }).is_ok());
+        assert_eq!(calls.get(), 1);
     }
 
     #[test]

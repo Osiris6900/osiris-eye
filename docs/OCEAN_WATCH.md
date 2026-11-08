@@ -15,6 +15,7 @@ every other observation on the mesh.
 | `noaa-ndbc` | NOAA NDBC `realtime2` buoy files | Newest observation per offshore buoy: wind, gust, wave height, pressure, water temperature | keyless |
 | `noaa-coops` | NOAA CO-OPS datagetter | Latest water level (MSL datum) at reference tide stations | keyless |
 | `nws-alerts` | NWS `api.weather.gov` | Active US marine/coastal alerts (tsunami, hurricane, storm, coastal flood, special marine) | keyless |
+| `jma-bulletins` | JMA eqvol Atom feed | Japan tsunami/eruption/ashfall/earthquake bulletins (northwest Pacific) | keyless |
 
 ### Shipping chokepoints (marine provider)
 
@@ -76,9 +77,9 @@ fabricated.
 - Coverage is *measured points* (chokepoints, buoys, tide stations, US
   alerts), not a synthetic global ocean picture; unmeasured seas are
   unreported, not interpolated.
-- NWS alerts cover US waters; non-US tsunami/marine warning agencies are
-  not yet wired (follow-up: INCOIS, JMA, PTWC feeds if keyless endpoints
-  hold up).
+- NWS alerts cover US waters; JMA bulletins add the northwest Pacific.
+  INCOIS (India) was probed and is not reachable as a stable keyless
+  endpoint — deferred, not wired. PTWC/others remain a follow-up.
 - Buoy text files are ~45-day rolling windows; gaps mean a dead station,
   reported as a source error, never filled in.
 - `observed_at` is collection time; the measurement's own time stays in

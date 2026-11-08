@@ -20,6 +20,7 @@ export type PaperPipelineStatus = {
 export function PaperPipelinePanel() {
   const [status, setStatus] = useState<PaperPipelineStatus | null>(null);
   const [error, setError] = useState('');
+  const [ledger, setLedger] = useState<{ initialized: boolean; cash: string | null; fill_count?: number; positions: Array<{ symbol: string; quantity: string; average_cost: string }>; pnl: { realized: string; unrealized: string | null; equity: string | null } | null } | null>(null);
   useEffect(() => {
     let active = true;
     const controller = new AbortController();
@@ -29,9 +30,12 @@ export function PaperPipelinePanel() {
         if (!response.ok) throw new Error('backend unavailable');
         const data = await response.json() as PaperPipelineStatus;
         if (data.mode !== 'offline-paper') throw new Error('invalid mode');
-        if (active) { setStatus(data); setError(''); }
+        const ledgerResponse = await fetch('/api/paper/ledger/snapshot', { signal: controller.signal });
+        if (!ledgerResponse.ok) throw new Error('paper ledger unavailable');
+        const ledgerData = await ledgerResponse.json() as typeof ledger;
+        if (active) { setStatus(data); setLedger(ledgerData); setError(''); }
       } catch {
-        if (active && !controller.signal.aborted) { setStatus(null); setError('Backend unavailable or authorization required'); }
+        if (active && !controller.signal.aborted) { setStatus(null); setLedger(null); setError('Backend unavailable or authorization required'); }
       }
     };
     void refresh();
@@ -56,7 +60,11 @@ export function PaperPipelinePanel() {
       </div>)}
     </div>}
     {status?.intent && <p>Paper intent: {status.intent.side || '—'} {status.intent.quantity ?? '—'} @ {status.intent.reference_price ?? '—'} · {status.intent.status || '—'}</p>}
-    <p style={{ color: '#91a4bf' }}>Positions, cash and P&amp;L: NOT AVAILABLE (no execution ledger connected)</p>
+    {ledger?.initialized ? <div role="group" aria-label="Synthetic paper ledger">
+      <p>Paper cash: {ledger.cash} · Synthetic fills: {ledger.fill_count ?? 0} · Realized P&amp;L: {ledger.pnl?.realized ?? '—'}</p>
+      <p>Unrealized P&amp;L: {ledger.pnl?.unrealized ?? 'Unavailable without marks'} · Equity: {ledger.pnl?.equity ?? 'Unavailable without marks'}</p>
+      {ledger.positions.map(position => <p key={position.symbol}>{position.symbol}: {position.quantity} units · average cost {position.average_cost}</p>)}
+    </div> : <p style={{ color: '#91a4bf' }}>Paper ledger not initialized · cash, positions and P&amp;L unavailable</p>}
     <p style={{ color: '#91a4bf' }}>Instrument: {status?.instrument || '—'} · Source: {status?.source || 'unavailable'}</p>
   </section>;
 }

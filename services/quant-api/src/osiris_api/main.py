@@ -55,6 +55,10 @@ async def require_api_token(request: Request, call_next):
     """Protect API routes when configured; production fails closed without a token."""
     if request.url.path == "/health":
         return await call_next(request)
+    if request.url.path.startswith("/admin/"):
+        # The admin router enforces its own fail-closed RBAC and audit (#180);
+        # exempt it here so its 401/403/503 semantics are not masked.
+        return await call_next(request)
 
     configured_token = os.getenv("OSIRIS_API_TOKEN", "")
     production = os.getenv("OSIRIS_ENV", "development").lower() in {"production", "prod"}
@@ -863,3 +867,10 @@ def evaluate_stored_observation_endpoint(p: dict[str, Any] = Body(...)):
     )
     record_paper_workflow(result)
     return result
+
+
+from .durable_paper_ledger import router as durable_paper_ledger_router
+app.include_router(durable_paper_ledger_router)
+
+from .admin_routes import router as admin_router
+app.include_router(admin_router)
