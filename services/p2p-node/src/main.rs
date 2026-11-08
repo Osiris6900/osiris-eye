@@ -318,7 +318,7 @@ mod tests {
         let relay = PeerId::random();
         let direct: Multiaddr = "/ip4/127.0.0.1/tcp/4001".parse().unwrap();
         assert_eq!(super::local_listen_address(direct.clone(), local).to_string(), format!("{direct}/p2p/{local}"));
-        let circuit: Multiaddr = format!("{direct}/p2p/{relay}/p2p-circuit/p2p/{local}").parse().unwrap();
+        let circuit: Multiaddr = format!("/ip4/127.0.0.1/tcp/4001/p2p/{relay}/p2p-circuit/p2p/{local}").parse().unwrap();
         assert_eq!(super::local_listen_address(circuit.clone(), local), circuit);
     }
 
@@ -1095,7 +1095,7 @@ fn parse_flag(raw: Option<&str>, setting: &str, default: bool) -> Result<bool, B
         None => Ok(default),
         Some("1") => Ok(true),
         Some("0") => Ok(false),
-        _ => Err(format!("{setting} must be 0 or 1").into()),
+        _ => Err(format!("{setting} must be 0 or 1".into())),
     }
 }
 
@@ -1288,7 +1288,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut local_key_binding = create_key_binding(&key, &transport_key.public_key, transport_key_epoch, now, now + 30 * 24 * 60 * 60)?;
 
     let gossipsub_config = gossipsub::ConfigBuilder::default()
-        .heartbeat_interval(Duration::from_secs(10))
+        .heartbeat_interval(Duration::from_secs(1))
+        // Bounded-degree meshes leave most subscribers of a large cohort
+        // reliant on IHAVE/IWANT gossip. Three samples per heartbeat cannot
+        // distribute control-plane bindings to ~100 peers within startup
+        // deadlines; widen lazy gossip so re-announcements converge quickly.
+        .gossip_lazy(25)
         .max_transmit_size(2 * 1024 * 1024)
         .validation_mode(gossipsub::ValidationMode::Strict)
         .build()?;
@@ -1352,7 +1357,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 .with_max_established(Some(256)),
         ),
     };
-    behaviour.kademlia.set_mode(Some(kad::Mode::Server));
     behaviour.gossipsub.subscribe(&topic)?;
     behaviour.gossipsub.subscribe(&revocation_topic)?;
     behaviour.gossipsub.subscribe(&key_binding_topic)?;
@@ -1398,8 +1402,29 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
     let mut relay_listeners: HashMap<PeerId, libp2p::core::transport::ListenerId> = HashMap::new();
     let mut active_relay_reservations: HashSet<PeerId> = HashSet::new();
+    // Peers that answered a reservation request with Unsupported. Retrying
+    // every reconnect tick opens a fresh connection per attempt; cool down
+    // for 30 minutes instead. A peer that enables relay later is retried.
+    let mut relay_reservation_refused: HashMap<PeerId, Instant> = HashMap::new();
+    // Peers whose Identify exchange advertised the circuit-relay hop
+    // protocol. Reservation dials open a second, lingering connection, so
+    // they are only justified against peers that can actually serve relay.
+    let mut relay_hop_capable: HashSet<PeerId> = HashSet::new();
+    // Peers with a dial currently in flight. The reconnect tick fires
+    // immediately at startup and races the initial dial; without this guard
+    // every reconnect opens a second connection per peer, and the duplicates
+    // linger until they exhaust the peer's inbound capacity.
+    let mut pending_dials: HashSet<PeerId> = HashSet::new();
     let bootstrap_peers = parse_bootstrap_peers(read_peer_setting("OSIRIS_BOOTSTRAP_PEERS")?.as_deref())?;
     let trusted_peers = parse_trusted_peers(read_peer_setting("OSIRIS_TRUSTED_PEERS")?.as_deref())?;
+    // Server-mode kademlia auto-bootstraps whenever the routing table gains
+    // entries, and its internal query dials bypass the allowlist: every
+    // discovered peer gets dialed and then disconnected by policy. In
+    // allowlist mode the DHT cannot admit new peers, so leave kad in client
+    // mode and skip bootstrap/walk queries entirely.
+    if trusted_peers.is_none() {
+        swarm.behaviour_mut().kademlia.set_mode(Some(kad::Mode::Server));
+    }
     let mut revoked_peer_set = parse_revoked_peers(read_peer_setting("OSIRIS_REVOKED_PEERS")?.as_deref())?
         .unwrap_or_default();
     let authority_key = read_peer_setting("OSIRIS_REVOCATION_AUTHORITY_PUBLIC_KEY")?;
@@ -1453,6 +1478,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             return Err("configured relay is not allowed by local trust/revocation policy".into());
         }
         swarm.dial(address.clone())?;
+        pending_dials.insert(*relay_peer);
         emit!("relay_configured peer={relay_peer} address={address}");
     }
     if relay_addresses.len() > 1 {
@@ -1462,8 +1488,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     for (bootstrap_peer, address) in &bootstrap_peers {
         swarm.behaviour_mut().kademlia.add_address(bootstrap_peer, address.clone());
         swarm.dial(address.clone())?;
+        pending_dials.insert(*bootstrap_peer);
     }
-    if !bootstrap_peers.is_empty() { let _ = swarm.behaviour_mut().kademlia.bootstrap(); }
+    if !bootstrap_peers.is_empty() && trusted_peers.is_none() { let _ = swarm.behaviour_mut().kademlia.bootstrap(); }
     // A revoked peer must never come back through the restart-rejoin path.
     if let Some(revoked) = &revoked_peers {
         for revoked_peer in revoked {
@@ -1552,6 +1579,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut binding_announcements = announcement::AnnouncementGate::new(Instant::now());
     let mut announcement_tick = tokio::time::interval(Duration::from_millis(250));
     announcement_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // Peers currently subscribed to the key-binding topic. A single
+    // rate-bounded announcement cannot reliably reach every subscriber
+    // through a bounded-degree mesh, so re-announce on a slow cadence while
+    // anyone is listening; each round covers newly grafted/gossiped peers.
+    let mut key_binding_subscribers: std::collections::HashSet<PeerId> = std::collections::HashSet::new();
+    let mut binding_reannounce_tick = tokio::time::interval(Duration::from_secs(5));
+    binding_reannounce_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     health_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let started_at = Instant::now();
     let health_address: SocketAddr = env::var("OSIRIS_HEALTH_HTTP_ADDR")
@@ -1650,6 +1684,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     }
                 }
             }
+            _ = binding_reannounce_tick.tick() => {
+                // Re-announce only while at least one subscriber has not yet
+                // sent us a verified binding: that peer may still be missing
+                // ours. Once every subscriber is known, silence; a late
+                // joiner re-arms the cadence until its binding arrives.
+                let any_subscriber_unbound = key_binding_subscribers.iter().any(|subscriber| {
+                    matches!(peer_key_store.get(&subscriber.to_string()), Ok(None))
+                });
+                if any_subscriber_unbound {
+                    binding_announcements.request(Instant::now());
+                }
+            }
             _ = health_tick.tick() => {
                 let snapshot = build_health_snapshot(&peer_id, started_at, &swarm, &bootstrap_peers, relay_readiness(&relay_addresses, &active_relay_reservations), relay_addresses.len(), active_relay_reservations.len());
                 let connected_peers = snapshot.connected_peers;
@@ -1675,11 +1721,22 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
             _ = reconnect_tick.tick() => {
+                let reconnect_now = Instant::now();
+                relay_reservation_refused.retain(|_, refused_at| reconnect_now.duration_since(*refused_at) < Duration::from_secs(30 * 60));
                 for (relay_peer, address) in &relay_addresses {
                     if is_peer_allowed(relay_peer, &trusted_peers, &revoked_peers)
-                        && !swarm.is_connected(relay_peer) {
+                        && !swarm.is_connected(relay_peer)
+                        && !pending_dials.contains(relay_peer) {
                         match swarm.dial(address.clone()) {
-                            Ok(()) => emit!("relay_reconnect_attempt peer={relay_peer}"),
+                            Ok(()) => { pending_dials.insert(*relay_peer); emit!("relay_reconnect_attempt peer={relay_peer}"); }
+                            Err(error) => emit!("relay_reconnect_error peer={relay_peer} error={error}"),
+                        }
+                    } else if swarm.is_connected(relay_peer) && !relay_listeners.contains_key(relay_peer)
+                        && !relay_reservation_refused.contains_key(relay_peer)
+                        && relay_hop_capable.contains(relay_peer)
+                        && is_peer_allowed(relay_peer, &trusted_peers, &revoked_peers) {
+                        match swarm.dial(address.clone()) {
+                            Ok(()) => { pending_dials.insert(*relay_peer); emit!("relay_reconnect_attempt peer={relay_peer}"); }
                             Err(error) => emit!("relay_reconnect_error peer={relay_peer} error={error}"),
                         }
                     } else if swarm.is_connected(relay_peer) && !relay_listeners.contains_key(relay_peer)
@@ -1697,7 +1754,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     for (bootstrap_peer, address) in &bootstrap_peers {
                         if auto_relay_requests >= 2 { break; }
                         if relay_listeners.contains_key(bootstrap_peer)
-                            || active_relay_reservations.contains(bootstrap_peer) { continue; }
+                            || active_relay_reservations.contains(bootstrap_peer)
+                            || relay_reservation_refused.contains_key(bootstrap_peer)
+                            || !relay_hop_capable.contains(bootstrap_peer) { continue; }
                         if !swarm.is_connected(bootstrap_peer)
                             || !is_peer_allowed(bootstrap_peer, &trusted_peers, &revoked_peers) { continue; }
                         match swarm.listen_on(address.clone().with(libp2p::multiaddr::Protocol::P2pCircuit)) {
@@ -1712,23 +1771,26 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
                 for (bootstrap_peer, address) in &bootstrap_peers {
                     if is_peer_allowed(bootstrap_peer, &trusted_peers, &revoked_peers)
-                        && !swarm.is_connected(bootstrap_peer) {
+                        && !swarm.is_connected(bootstrap_peer)
+                        && !pending_dials.contains(bootstrap_peer) {
                         match swarm.dial(address.clone()) {
-                            Ok(()) => emit!("bootstrap_reconnect_attempt peer={bootstrap_peer}"),
+                            Ok(()) => { pending_dials.insert(*bootstrap_peer); emit!("bootstrap_reconnect_attempt peer={bootstrap_peer}"); }
                             Err(error) => emit!("bootstrap_reconnect_error peer={bootstrap_peer} error={error}"),
                         }
                     }
                 }
-                if !bootstrap_peers.is_empty() {
+                if !bootstrap_peers.is_empty() && trusted_peers.is_none() {
                     match swarm.behaviour_mut().kademlia.bootstrap() {
                         Ok(query_id) => emit!("dht_bootstrap_refresh={query_id:?}"),
                         Err(error) => emit!("dht_bootstrap_refresh_skipped={error:?}"),
                     }
                 }
             }
-            _ = dht_walk_tick.tick() => {
+            _ = dht_walk_tick.tick(), if trusted_peers.is_none() => {
                 // Random-target walk: over time this visits the whole DHT and
-                // surfaces peers the node has never seen before.
+                // surfaces peers the node has never seen before. Skipped in
+                // allowlist mode: query dials would only reach peers the
+                // policy then disconnects.
                 let query = swarm.behaviour_mut().kademlia.get_closest_peers(PeerId::random());
                 emit!("dht_walk_started query={query:?}");
             }
@@ -1778,12 +1840,26 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         .map(|(peer, _)| *peer) {
                         relay_listeners.remove(&relay_peer);
                         active_relay_reservations.remove(&relay_peer);
+                        // A peer that cannot serve reservations must not be
+                        // re-dialed every reconnect tick: each attempt opens a
+                        // fresh connection, and the churn can starve the
+                        // peer's inbound capacity for real subscribers.
+                        if format!("{reason:?}").contains("Unsupported") {
+                            relay_reservation_refused.insert(relay_peer, Instant::now());
+                            emit!("relay_reservation_refused relay_peer={relay_peer} cooldown_seconds=1800");
+                        }
                     }
                 }
                 SwarmEvent::Dialing { peer_id: target, connection_id } => {
+                    if let Some(target_peer) = target {
+                        pending_dials.insert(target_peer);
+                    }
                     emit!("outgoing_dial_started peer={target:?} connection={connection_id:?}");
                 }
                 SwarmEvent::OutgoingConnectionError { peer_id: target, connection_id, error } => {
+                    if let Some(target_peer) = target {
+                        pending_dials.remove(&target_peer);
+                    }
                     emit!("outgoing_connection_error peer={target:?} connection={connection_id:?} error={error}");
                 }
                 SwarmEvent::IncomingConnectionError { connection_id, local_addr, send_back_addr, error, peer_id: denied_peer } => {
@@ -1795,6 +1871,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     emit!("incoming_connection_error connection={connection_id:?} local={local_addr} remote={send_back_addr} error={error}");
                 }
                 SwarmEvent::ConnectionEstablished { peer_id, endpoint, connection_id, num_established, .. } => {
+                    pending_dials.remove(&peer_id);
                     emit!("connection_established_detail peer={peer_id} endpoint={endpoint:?} connection={connection_id:?} total={num_established}");
                     if !is_peer_allowed(&peer_id, &trusted_peers, &revoked_peers) {
                         emit!("peer_rejected={peer_id} reason=not_in_trusted_peer_allowlist");
@@ -1840,9 +1917,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         let discovered_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
                         let _ = peer_cache.remember(&peer.to_string(), &[address.to_string()], "mdns", discovered_at);
                         swarm.behaviour_mut().kademlia.add_address(&peer, address.clone());
-                        if !swarm.is_connected(&peer) {
+                        if !swarm.is_connected(&peer) && !pending_dials.contains(&peer) {
                             match swarm.dial(address) {
-                                Ok(()) => emit!("mdns_peer_dial_started={peer}"),
+                                Ok(()) => { pending_dials.insert(peer); emit!("mdns_peer_dial_started={peer}"); }
                                 Err(error) => emit!("mdns_peer_dial_error peer={peer} error={error}"),
                             }
                         }
@@ -1864,6 +1941,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     // One connection subscribes to several topics. Announcing
                     // on each event floods all subscribers during cohort startup.
                     if topic.as_str() == KEY_BINDING_TOPIC_NAME {
+                        key_binding_subscribers.insert(subscribed_peer_id);
                         binding_announcements.request(Instant::now());
                     }
                     if topic.as_str() == REVOCATION_TOPIC_NAME && revocation_registry.is_some() {
@@ -1871,6 +1949,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         remember_revocation_request(&mut pending_revocation_requests, request_id.clone());
                         let request = serde_json::to_vec(&RevocationSyncMessage::SyncRequestPageV2 { request_id, requester_peer_id: peer_id.to_string(), after_peer_id: None })?;
                         let _ = swarm.behaviour_mut().gossipsub.publish(revocation_topic.clone(), request);
+                    }
+                }
+                SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Unsubscribed { peer_id: unsubscribed_peer_id, topic })) => {
+                    if topic.as_str() == KEY_BINDING_TOPIC_NAME {
+                        key_binding_subscribers.remove(&unsubscribed_peer_id);
                     }
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message {
@@ -2262,7 +2345,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     let mut dialed = 0usize;
                     for peer_info in &found.peers {
                         let discovered = peer_info.peer_id;
-                        if discovered == peer_id || swarm.is_connected(&discovered) { continue; }
+                        if discovered == peer_id || swarm.is_connected(&discovered) || pending_dials.contains(&discovered) { continue; }
                         if !is_peer_allowed(&discovered, &trusted_peers, &revoked_peers) {
                             emit!("dht_peer_ignored peer={discovered} reason=not_in_trusted_peer_allowlist");
                             continue;
@@ -2279,7 +2362,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                             .addresses(peer_info.addrs.clone())
                             .build();
                         match swarm.dial(dial) {
-                            Ok(()) => { dialed += 1; emit!("dht_peer_dial_started peer={discovered}"); }
+                            Ok(()) => { dialed += 1; pending_dials.insert(discovered); emit!("dht_peer_dial_started peer={discovered}"); }
                             Err(error) => emit!("dht_peer_dial_skipped peer={discovered} error={error}"),
                         }
                     }
@@ -2304,7 +2387,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     let identified_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
                     let cache_addresses: Vec<String> = info.listen_addrs.iter().take(8).map(ToString::to_string).collect();
                     let _ = peer_cache.remember(&identified_peer.to_string(), &cache_addresses, "identify", identified_at);
-                    emit!("identify_received peer={identified_peer} agent={} dht_addrs_added={added}", info.agent_version);
+                    let advertises_relay_hop = info.protocols.iter()
+                        .any(|protocol| *protocol == libp2p::relay::HOP_PROTOCOL_NAME);
+                    if advertises_relay_hop {
+                        relay_hop_capable.insert(identified_peer);
+                    } else {
+                        relay_hop_capable.remove(&identified_peer);
+                    }
+                    emit!("identify_received peer={identified_peer} agent={} dht_addrs_added={added} relay_hop={advertises_relay_hop}", info.agent_version);
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Identify(event)) => {
                     println!("identify_event={event:?}");
