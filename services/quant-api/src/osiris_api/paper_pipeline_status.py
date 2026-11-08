@@ -27,6 +27,10 @@ def record_paper_workflow(result: dict) -> None:
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "source": "in-process-paper-workflow",
         "detail": "Paper evaluation only; no broker orders or fills.",
+        "intent": dict(result.get("paper_order_intent", {})),
+        "positions": None,
+        "cash": None,
+        "pnl": None,
     }
     with _lock:
         _latest = snapshot
@@ -46,5 +50,9 @@ def get_paper_pipeline_status():
                 "timestamp": "",
                 "source": "unavailable",
                 "detail": "No paper workflow evaluation has run in this process.",
+                "intent": None,
+                "positions": None,
+                "cash": None,
+                "pnl": None,
             }
         return dict(_latest)
