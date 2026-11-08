@@ -17,15 +17,14 @@ from .adapters.ultra_fast_feed import UltraFastMarketFeed
 
 def simulate_network_traffic(ticks: int = 1_000_000, *, buffer_size: int = 65_536,
                              batch_size: int = 1_000) -> dict:
-    if ticks < 0 or batch_size <= 0:
-        raise ValueError("ticks must be nonnegative and batch_size positive")
+    if ticks < 0 or batch_size <= 0 or batch_size > buffer_size:
+        raise ValueError("ticks must be nonnegative; batch_size in 1..buffer_size")
     feed = UltraFastMarketFeed(buffer_size=buffer_size, max_age_ns=30_000_000_000)
     symbols = ("BTC-USDT", "ETH-USDT", "SOL-USDT")
     start = time.perf_counter_ns()
-    base_ts = time.time_ns()
     for i in range(ticks):
         symbol = symbols[i % len(symbols)]
-        packet = struct.pack("<QddI", base_ts, 50_000.0 + i % 100, 1.5, i)
+        packet = struct.pack("<QddI", time.time_ns(), 50_000.0 + i % 100, 1.5, i)
         if not feed.ingest_binary(packet, symbol):
             raise RuntimeError(f"synthetic ingestion rejected at tick {i}: {feed.stats()}")
         # Drain periodically: bounded buffering, no silent overwrites.
