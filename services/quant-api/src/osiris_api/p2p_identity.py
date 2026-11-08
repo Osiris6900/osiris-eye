@@ -41,7 +41,7 @@ def _verify(public_key_b64: str, signature_b64: str, challenge_id: str, nonce: s
     try:
         Ed25519PublicKey.from_public_bytes(_dec(public_key_b64)).verify(_dec(signature_b64), _message(challenge_id, nonce, node_id))
         return True
-    except (InvalidSignature, ValueError, TypeError):
+    except (InvalidSignature, ValueError, TypeError, binascii.Error):
         return False
 
 class P2PIdentityRegistry:
