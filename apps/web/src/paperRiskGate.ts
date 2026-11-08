@@ -4,6 +4,7 @@ export type PaperLimits = { maxOrderNotional: number; maxQuantity: number; killS
 export type GateResult = { allowed: true; notional: number } | { allowed: false; reason: string };
 
 export function validatePaperOrder(order: PaperOrder, limits: PaperLimits): GateResult {
+  if (!order || !limits || typeof order.symbol !== 'string' || typeof order.orderId !== 'string' || typeof limits.killSwitch !== 'boolean') return { allowed: false, reason: 'invalid_input' };
   if (limits.killSwitch) return { allowed: false, reason: 'kill_switch' };
   if (!order.symbol || !/^[A-Z0-9._:-]{1,32}$/.test(order.symbol) || !order.orderId.trim()) return { allowed: false, reason: 'invalid_identity' };
   const numbers = [order.quantity, order.price, limits.maxOrderNotional, limits.maxQuantity, limits.dataTimestampMs, limits.nowMs, limits.maxDataAgeMs];
