@@ -82,7 +82,7 @@
         "https://github.com/Osiris6900/osiris-eye/pull/259"
       ],
       "evidence_commits": ["5176eae8843a1e5144ac903f37843fe9bb46cdd9"],
-      "open_prs": [269, 279, 280],
+      "open_prs": [269, 279, 280, 283],
       "blocker": "100-peer independent-host soak with distinct host fingerprints, binary hashes, latency, and loss is not retained. Checked-in soak summaries set independent_hosts_verified to false."
     },
     {
