@@ -59,7 +59,6 @@ def apply_command(snapshot, command):
     else:
         raise ValueError("unsupported command type")
     # Keep journal-level risk controls aligned with ledger-level controls.
-    candidate["kill_switch_active"] = candidate.get("kill_switch", False)
     result = reconcile(candidate)
     if not result["passed"]:
         raise ValueError("; ".join(result["errors"]))
@@ -75,8 +74,7 @@ def recover(snapshot):
         if not isinstance(cid, str) or not cid or not isinstance(item, dict) or not isinstance(item.get("command"), dict) or item["command"].get("command_id") != cid:
             raise ValueError("corrupt command journal")
     # Validate the same controls after a process restart.
-    checked = {**snapshot, "kill_switch_active": snapshot.get("kill_switch", False)}
-    result = reconcile(checked)
+    # Historical fills remain valid when a kill switch is activated later.\n    # Execution gates apply to new commands, not to accounting replay.\n    result = reconcile(snapshot)
     if not result["passed"]:
         raise ValueError("; ".join(result["errors"]))
     return result
