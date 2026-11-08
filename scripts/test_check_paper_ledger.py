@@ -31,4 +31,31 @@ class LedgerTests(unittest.TestCase):
         self.assertTrue(reconcile(d)["passed"])
         self.assertEqual(reconcile(d)["cash"], "0")
 
+    def test_restart_replay_is_deterministic(self):
+        import json
+        d = self.data()
+        d["orders"].append({"id": "o2", "symbol": "BTC", "side": "sell", "quantity": "1"})
+        d["fills"].append({"id": "f2", "order_id": "o2", "quantity": "0.4", "price": "120"})
+        first = reconcile(d)
+        restarted = reconcile(json.loads(json.dumps(d)))
+        self.assertEqual(first, restarted)
+        self.assertTrue(first["passed"])
+        self.assertEqual(first["cash"], "99948.0")
+        self.assertEqual(first["positions"]["BTC"], "0.6")
+
+    def test_duplicate_order_id_fails_closed(self):
+        d = self.data()
+        d["orders"].append(dict(d["orders"][0]))
+        self.assertFalse(reconcile(d)["passed"])
+
+    def test_invalid_starting_cash_fails_closed(self):
+        d = self.data()
+        d["starting_cash"] = "NaN"
+        self.assertFalse(reconcile(d)["passed"])
+
+    def test_negative_starting_cash_fails_closed(self):
+        d = self.data()
+        d["starting_cash"] = "-1"
+        self.assertFalse(reconcile(d)["passed"])
+
 if __name__=="__main__": unittest.main()
