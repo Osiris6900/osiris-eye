@@ -10,6 +10,10 @@ export type PaperPipelineStatus = {
   timestamp: string;
   source?: string;
   detail?: string;
+  intent?: { side?: string; quantity?: number; reference_price?: number; status?: string } | null;
+  positions?: null;
+  cash?: null;
+  pnl?: null;
 };
 
 /** Read-only backend state, not a live broker or exchange connection. */
@@ -51,6 +55,8 @@ export function PaperPipelinePanel() {
         <span>{label}</span><strong>{value.toUpperCase()}</strong>
       </div>)}
     </div>}
+    {status?.intent && <p>Paper intent: {status.intent.side || '—'} {status.intent.quantity ?? '—'} @ {status.intent.reference_price ?? '—'} · {status.intent.status || '—'}</p>}
+    <p style={{ color: '#91a4bf' }}>Positions, cash and P&amp;L: NOT AVAILABLE (no execution ledger connected)</p>
     <p style={{ color: '#91a4bf' }}>Instrument: {status?.instrument || '—'} · Source: {status?.source || 'unavailable'}</p>
   </section>;
 }
