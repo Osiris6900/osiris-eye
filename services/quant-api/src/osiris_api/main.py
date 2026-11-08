@@ -872,5 +872,8 @@ def evaluate_stored_observation_endpoint(p: dict[str, Any] = Body(...)):
 from .durable_paper_ledger import router as durable_paper_ledger_router
 app.include_router(durable_paper_ledger_router)
 
+from .paper_execution import router as paper_execution_router
+app.include_router(paper_execution_router)
+
 from .admin_routes import router as admin_router
 app.include_router(admin_router)
