@@ -123,14 +123,48 @@ an unmaintained-package warning. It is retained as maintenance evidence rather
 than counted as proof of an exploitable vulnerability. Unknown or unclassified
 records default to the vulnerability classification; they are not suppressed.
 
-The coordinated libp2p 0.57.1 remediation resolves to Hickory 0.26.3 and Yamux
-0.14.1 and removes Yamux 0.12.1 and 0.13.10 from the lock graph. The five
-vulnerability groups in the preceding report no longer match this remediated
-graph. That result does not prove the old Yamux compatibility path was
-reachable: OSIRIS call sites use `yamux::Config::default()`, and the reviewed
-libp2p-yamux 0.47 default selected Yamux 0.13 rather than its customized 0.12
-compatibility path. This is local configuration evidence, not an external
-exploitability audit.
+The libp2p 0.57.1 remediation is already on `main` via PR #173
+(`974de9ce04585e1d38824136514325f231b2bdaf`). At baseline
+`5176eae8843a1e5144ac903f37843fe9bb46cdd9`, `services/p2p-node/Cargo.lock`
+resolves hickory-proto, hickory-resolver, and hickory-net 0.26.3 and a single
+yamux 0.14.1 through libp2p-yamux 0.48.0. A live OSV `querybatch` repeated at
+`2026-11-08T16:09:48Z` against that same lock (544 packages: 388 crates.io,
+132 npm, 24 PyPI) returned the same summary as the retained report: 0
+vulnerability groups and 1 maintenance-only group. `--fail-on-vulnerability`
+exited 0. Cargo.lock is unchanged by the regression gate below.
+
+`cargo metadata --manifest-path services/p2p-node/Cargo.toml --locked
+--format-version 1` records the enabled libp2p features `autonat`, `dcutr`,
+`gossipsub`, `identify`, `kad`, `macros`, `mdns`, `noise`, `relay`, `tcp`,
+`tokio`, `upnp`, and `yamux`. `cargo tree --locked` shows hickory-proto 0.26.3
+required by libp2p-mdns 0.49.0 and yamux 0.14.1 required by libp2p-yamux 0.48.0.
+OSIRIS call sites pass `yamux::Config::default()`. The `dns` feature is absent
+from that feature list. Cargo still locks the optional libp2p-dns 0.45.0 /
+hickory-resolver 0.26.3 edge, and libp2p-quic / libp2p-metrics, because the
+lock records optional dependencies as well as enabled ones. Those locked
+copies are already on the patched Hickory line. They were left in the lock.
+
+`paste` 1.0.15 remains on an enabled Linux path. `cargo tree --locked` shows
+the proc-macro required by netlink-packet-core 0.8.2, required by if-watch
+3.2.2, required by both libp2p-tcp 0.45.0 and libp2p-mdns 0.49.0. The OSV
+record for `RUSTSEC-2024-0436` is informational (`unmaintained`), covers every
+paste release, and names no fixed version. crates.io still lists paste 1.0.15
+as the newest release. netlink-packet-core 0.9.0 (published 2026-08-18) drops
+paste by removing the `buffer!` macros, and that release notes the removal as
+breaking. if-watch 3.2.2 requires `netlink-packet-core` `^0.8.1`; 3.2.2 is the
+newest if-watch release, and libp2p 0.57.1 (also the newest libp2p release)
+depends on it. No semver-compatible bump removes paste. The minimal next step
+is an upstream if-watch release on the netlink-packet-core 0.9 line, then a
+libp2p release that consumes it. Until that exists, the maintenance finding
+stays, separate from the vulnerability gate.
+
+`scripts/check_p2p_known_vulnerable_locks.py` rejects any locked
+hickory-proto below 0.26.1, hickory-resolver below 0.26.2, hickory-net below
+0.26.1, or yamux below 0.13.10, including when a patched copy is locked beside
+an older one. paste is printed as `REVIEW` and does not fail the command.
+Dependency-security CI runs the gate on every pull request. The gate is
+regression protection for versions already on main. It is not a new upgrade
+and it does not clear license, provenance, or a universal vulnerability claim.
 
 A historical local resolved-environment pip-audit scan is retained in
 [PYTHON_DEPENDENCY_AUDIT.json](PYTHON_DEPENDENCY_AUDIT.json): no known
@@ -202,6 +236,8 @@ python scripts/test_generate_dependency_sbom.py
 python scripts/generate_dependency_sbom.py --output /tmp/osiris-eye-sbom.json
 python scripts/generate_dependency_sbom.py --offline --output /tmp/osiris-eye-sbom-offline.json
 cmp /tmp/osiris-eye-sbom.json /tmp/osiris-eye-sbom-offline.json
+python scripts/check_p2p_known_vulnerable_locks.py services/p2p-node/Cargo.lock
+python scripts/test_check_p2p_known_vulnerable_locks.py
 python scripts/test_scan_dependency_advisories.py
 python scripts/scan_dependency_advisories.py \
   --source-commit 587dbc71e58de3e6dc88748814ab551641a359e0 \

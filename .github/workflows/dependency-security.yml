@@ -20,6 +20,8 @@ jobs:
         run: |
           python scripts/check_dependency_inventory.py
           python -m unittest discover -s scripts -p 'test_check_dependency_inventory.py' -v
+          python scripts/check_p2p_known_vulnerable_locks.py services/p2p-node/Cargo.lock
+          python -m unittest discover -s scripts -p 'test_check_p2p_known_vulnerable_locks.py' -v
 
   python-audit:
     runs-on: ubuntu-latest
