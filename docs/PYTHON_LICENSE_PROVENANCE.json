@@ -1,0 +1,249 @@
+{
+  "limitations": [
+    "License metadata is maintainer-declared PyPI metadata, not a source-text audit.",
+    "Artifact provenance is the sha256 hash set pinned in the deployment lock, fetched from the recorded package index."
+  ],
+  "lock": {
+    "path": "services/quant-api/requirements-lock.txt",
+    "sha256": "a433be3be7d659874116c1c9ba877ad05d80d9fb7b5afffa4ab80d8236f3017d"
+  },
+  "metadata": {
+    "queried_at": "2026-11-08T11:17:11Z",
+    "service": "PyPI JSON API",
+    "url_template": "https://pypi.org/pypi/{name}/{version}/json"
+  },
+  "packages": [
+    {
+      "license_classifiers": [],
+      "license_expression": "MIT",
+      "license_legacy": null,
+      "name": "annotated-doc",
+      "normalized_name": "annotated-doc",
+      "resolved_expression": "MIT",
+      "version": "0.0.5"
+    },
+    {
+      "license_classifiers": [
+        "MIT License"
+      ],
+      "license_expression": "MIT",
+      "license_legacy": null,
+      "name": "annotated-types",
+      "normalized_name": "annotated-types",
+      "resolved_expression": "MIT",
+      "version": "0.8.0"
+    },
+    {
+      "license_classifiers": [],
+      "license_expression": "MIT",
+      "license_legacy": null,
+      "name": "anyio",
+      "normalized_name": "anyio",
+      "resolved_expression": "MIT",
+      "version": "4.16.0"
+    },
+    {
+      "license_classifiers": [],
+      "license_expression": "MIT-0",
+      "license_legacy": null,
+      "name": "cffi",
+      "normalized_name": "cffi",
+      "resolved_expression": null,
+      "version": "2.1.1"
+    },
+    {
+      "license_classifiers": [],
+      "license_expression": "BSD-3-Clause",
+      "license_legacy": null,
+      "name": "click",
+      "normalized_name": "click",
+      "resolved_expression": "BSD-3-Clause",
+      "version": "8.5.1"
+    },
+    {
+      "license_classifiers": [],
+      "license_expression": "Apache-2.0 OR BSD-3-Clause",
+      "license_legacy": null,
+      "name": "cryptography",
+      "normalized_name": "cryptography",
+      "resolved_expression": "Apache-2.0 OR BSD-3-Clause",
+      "version": "50.0.2"
+    },
+    {
+      "license_classifiers": [],
+      "license_expression": "MIT",
+      "license_legacy": null,
+      "name": "fastapi",
+      "normalized_name": "fastapi",
+      "resolved_expression": "MIT",
+      "version": "0.162.2"
+    },
+    {
+      "license_classifiers": [
+        "MIT License"
+      ],
+      "license_expression": null,
+      "license_legacy": "MIT",
+      "name": "h11",
+      "normalized_name": "h11",
+      "resolved_expression": "MIT",
+      "version": "0.16.0"
+    },
+    {
+      "license_classifiers": [],
+      "license_expression": "MIT",
+      "license_legacy": null,
+      "name": "httptools",
+      "normalized_name": "httptools",
+      "resolved_expression": "MIT",
+      "version": "0.9.0"
+    },
+    {
+      "license_classifiers": [],
+      "license_expression": "BSD-3-Clause",
+      "license_legacy": null,
+      "name": "idna",
+      "normalized_name": "idna",
+      "resolved_expression": "BSD-3-Clause",
+      "version": "3.20"
+    },
+    {
+      "license_classifiers": [],
+      "license_expression": "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0",
+      "license_legacy": null,
+      "name": "numpy",
+      "normalized_name": "numpy",
+      "resolved_expression": null,
+      "version": "2.4.6"
+    },
+    {
+      "license_classifiers": [],
+      "license_expression": "Apache-2.0",
+      "license_legacy": null,
+      "name": "opentelemetry-api",
+      "normalized_name": "opentelemetry-api",
+      "resolved_expression": "Apache-2.0",
+      "version": "1.45.2"
+    },
+    {
+      "license_classifiers": [],
+      "license_expression": "BSD-3-Clause",
+      "license_legacy": null,
+      "name": "pycparser",
+      "normalized_name": "pycparser",
+      "resolved_expression": "BSD-3-Clause",
+      "version": "3.12"
+    },
+    {
+      "license_classifiers": [],
+      "license_expression": "MIT",
+      "license_legacy": null,
+      "name": "pydantic",
+      "normalized_name": "pydantic",
+      "resolved_expression": "MIT",
+      "version": "2.14.3"
+    },
+    {
+      "license_classifiers": [],
+      "license_expression": "MIT",
+      "license_legacy": null,
+      "name": "pydantic-core",
+      "normalized_name": "pydantic-core",
+      "resolved_expression": "MIT",
+      "version": "2.50.4"
+    },
+    {
+      "license_classifiers": [],
+      "license_expression": null,
+      "license_legacy": "BSD-3-Clause",
+      "name": "python-dotenv",
+      "normalized_name": "python-dotenv",
+      "resolved_expression": "BSD-3-Clause",
+      "version": "1.2.4"
+    },
+    {
+      "license_classifiers": [
+        "MIT License"
+      ],
+      "license_expression": null,
+      "license_legacy": "MIT",
+      "name": "pyyaml",
+      "normalized_name": "pyyaml",
+      "resolved_expression": "MIT",
+      "version": "6.0.3"
+    },
+    {
+      "license_classifiers": [],
+      "license_expression": "BSD-3-Clause",
+      "license_legacy": null,
+      "name": "starlette",
+      "normalized_name": "starlette",
+      "resolved_expression": "BSD-3-Clause",
+      "version": "1.10.0"
+    },
+    {
+      "license_classifiers": [],
+      "license_expression": "PSF-2.0",
+      "license_legacy": null,
+      "name": "typing-extensions",
+      "normalized_name": "typing-extensions",
+      "resolved_expression": "PSF-2.0",
+      "version": "4.16.0"
+    },
+    {
+      "license_classifiers": [],
+      "license_expression": "MIT",
+      "license_legacy": null,
+      "name": "typing-inspection",
+      "normalized_name": "typing-inspection",
+      "resolved_expression": "MIT",
+      "version": "0.4.5"
+    },
+    {
+      "license_classifiers": [],
+      "license_expression": "BSD-3-Clause",
+      "license_legacy": null,
+      "name": "uvicorn",
+      "normalized_name": "uvicorn",
+      "resolved_expression": "BSD-3-Clause",
+      "version": "0.54.0"
+    },
+    {
+      "license_classifiers": [
+        "Apache Software License",
+        "MIT License"
+      ],
+      "license_expression": null,
+      "license_legacy": "MIT License",
+      "name": "uvloop",
+      "normalized_name": "uvloop",
+      "resolved_expression": "MIT License",
+      "version": "0.23.0"
+    },
+    {
+      "license_classifiers": [
+        "MIT License"
+      ],
+      "license_expression": null,
+      "license_legacy": "MIT",
+      "name": "watchfiles",
+      "normalized_name": "watchfiles",
+      "resolved_expression": "MIT",
+      "version": "1.3.0"
+    },
+    {
+      "license_classifiers": [],
+      "license_expression": "BSD-3-Clause",
+      "license_legacy": null,
+      "name": "websockets",
+      "normalized_name": "websockets",
+      "resolved_expression": "BSD-3-Clause",
+      "version": "17.4"
+    }
+  ],
+  "schema": "osiris.python-license-provenance.v1",
+  "source": {
+    "commit": "587dbc71e58de3e6dc88748814ab551641a359e0",
+    "repository": "Osiris6900/osiris-eye"
+  }
+}

@@ -1,0 +1,59 @@
+name: Dependency Security Audit
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-inventory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Validate lockfile inputs
+        run: |
+          python scripts/check_dependency_inventory.py
+          python -m unittest discover -s scripts -p 'test_check_dependency_inventory.py' -v
+
+  python-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+      - name: Audit resolved Python environment
+        run: |
+          python -m pip install "pip-audit>=2.7,<3"
+          python scripts/check_python_lock.py
+          python -m pip_audit --strict --no-deps --disable-pip -r services/quant-api/requirements-lock.txt
+
+  npm-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+      - name: Audit locked npm graph
+        working-directory: apps/web
+        run: npm audit --audit-level=high --omit=dev
+
+  rust-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Audit Rust lockfile
+        run: cargo audit --file services/p2p-node/Cargo.lock

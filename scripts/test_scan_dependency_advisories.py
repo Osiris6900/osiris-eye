@@ -193,6 +193,83 @@ dependencies = ["fastapi>=0.110,<1"]
         with self.assertRaisesRegex(ValueError, "matched IDs are inconsistent"):
             scan.validate_report(report, self.cargo, self.npm, self.pyproject)
 
+
+PYTHON_LOCK_TEXT = """# schema: osiris.python-deployment-lock.v1
+# generated_by: scripts/resolve_python_lock.py
+# generator: pip-compile (pip-tools) --resolver=backtracking --generate-hashes
+# python_version: 3.11
+# pyproject_sha256: unused-in-scanner-tests
+# generated_at: 2026-11-08T00:00:00Z
+
+fastapi==0.115.0 \\
+    --hash=sha256:{digest}
+pydantic==2.9.2 \\
+    --hash=sha256:{digest}
+""".format(digest="d" * 64)
+
+
+class PythonLockScanTests(AdvisoryScanTests):
+    def setUp(self):
+        super().setUp()
+        self.python_lock = self.root / "requirements-lock.txt"
+        self.python_lock.write_text(PYTHON_LOCK_TEXT)
+        self.pypi_package = {"ecosystem": "PyPI", "name": "fastapi", "version": "0.115.0"}
+
+    def build_python(self, client, maintenance=None):
+        return scan.build_report(
+            self.cargo,
+            self.npm,
+            self.pyproject,
+            maintenance or {},
+            "212cad687b69ed421c0778699e451955576739c9",
+            client,
+            queried_at="2026-11-08T00:00:00Z",
+            batch_size=2,
+            python_lock=self.python_lock,
+        )
+
+    def test_pypi_pins_are_scanned_and_validated(self):
+        report = self.build_python(FakeClient())
+        self.assertEqual(report["coverage"]["PyPI"]["status"], "scanned")
+        self.assertEqual(report["coverage"]["PyPI"]["packages"], 2)
+        self.assertEqual(report["coverage"]["PyPI"]["lock"], scan.LOCK_RELATIVE_PATH)
+        self.assertEqual(report["summary"]["queried_packages"], 4)
+        self.assertEqual(report["query"]["batches"], 2)
+        self.assertIn(
+            scan.LOCK_RELATIVE_PATH, report["source"]["inputs"]
+        )
+        self.assertNotIn("remain unresolved", report["limitations"][2])
+        scan.validate_report(report, self.cargo, self.npm, self.pyproject, self.python_lock)
+
+    def test_pypi_findings_flow_through_grouping(self):
+        records = {"GHSA-py": advisory("GHSA-py", ["CVE-py"])}
+        client = FakeClient([(self.pypi_package, "GHSA-py")], records)
+        report = self.build_python(client)
+        self.assertEqual(report["summary"]["vulnerability_groups"], 1)
+        self.assertEqual(report["findings"][0]["ecosystem"], "PyPI")
+        scan.validate_report(report, self.cargo, self.npm, self.pyproject, self.python_lock)
+
+    def test_stale_python_lock_fails_closed(self):
+        report = self.build_python(FakeClient())
+        self.python_lock.write_text(self.python_lock.read_text() + "# changed\n")
+        with self.assertRaisesRegex(ValueError, "stale"):
+            scan.validate_report(report, self.cargo, self.npm, self.pyproject, self.python_lock)
+
+    def test_scanned_report_rejected_without_python_lock(self):
+        report = self.build_python(FakeClient())
+        with self.assertRaisesRegex(ValueError, "unscanned"):
+            scan.validate_report(report, self.cargo, self.npm, self.pyproject)
+
+    def test_unresolved_report_rejected_with_python_lock(self):
+        report = self.build(FakeClient())
+        with self.assertRaisesRegex(ValueError, "stale for services/quant-api/requirements-lock.txt"):
+            scan.validate_report(report, self.cargo, self.npm, self.pyproject, self.python_lock)
+
+    def test_unparseable_python_lock_fails_closed(self):
+        self.python_lock.write_text("fastapi>=0.110\n")
+        with self.assertRaisesRegex(ValueError, "exactly pinned"):
+            self.build_python(FakeClient())
+
     def test_checked_in_report_matches_current_lock_inputs(self):
         root = Path(__file__).resolve().parents[1]
         report_path = root / "docs/P2P_DEPENDENCY_ADVISORIES.json"
@@ -203,10 +280,12 @@ dependencies = ["fastapi>=0.110,<1"]
             root / "services/p2p-node/Cargo.lock",
             root / "apps/web/package-lock.json",
             root / "services/quant-api/pyproject.toml",
+            root / scan.LOCK_RELATIVE_PATH,
         )
         packages = scan.locked_packages(
             root / "services/p2p-node/Cargo.lock",
             root / "apps/web/package-lock.json",
+            root / scan.LOCK_RELATIVE_PATH,
         )
         findings = report["findings"]
         self.assertEqual(report["summary"], {

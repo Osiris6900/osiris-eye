@@ -1,0 +1,25 @@
+{
+  "schema": "osiris.license-policy.v1",
+  "allowed_expressions": [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "0BSD",
+    "ISC",
+    "Zlib",
+    "CC0-1.0",
+    "PSF-2.0",
+    "Python-2.0",
+    "MPL-2.0"
+  ],
+  "overrides": {},
+  "notes": [
+    "Permissive licenses compatible with the AGPL-3.0 project distribution; MPL-2.0 is file-level weak copyleft and compatible when files are kept separate.",
+    "MIT-0, 0BSD, Zlib and CC0-1.0 are public-domain-equivalent or permissive; they appear in AND expressions for bundled subcomponents (e.g. numpy).",
+    "OR expressions pass when any branch is allowed (recipient may choose); AND expressions require every branch.",
+    "Overrides require an explicit reason and are only for packages whose PyPI metadata is missing or ambiguous; each override must be justified with upstream evidence in docs/P2P_DEPENDENCY_REVIEW.md.",
+    "This policy gates declared license metadata; it is not legal advice."
+  ]
+}
