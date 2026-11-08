@@ -42,8 +42,8 @@ input tests and explicit protocol/version review before rollout.
 ## Python resolution
 
 The API declares Python 3.11+ and bounded major versions in `pyproject.toml`,
-including `cryptography>=42,<47`, `fastapi>=0.110,<1`, `pydantic>=2.6,<3`,
-and `numpy>=1.26,<3`. Its development range includes `pytest>=8,<9`.
+including `cryptography>=50.0.0,<51`, `fastapi>=0.110,<1`, `pydantic>=2.6,<3`,
+and `numpy>=1.26,<3`. Its development range includes `pytest>=9.0.3,<10`.
 These are version constraints, not a resolved, hashed Python lockfile. Retain
 the exact installed environment with each release's test evidence; results from
 dependencies outside the declared ranges do not validate the supported set.
@@ -88,11 +88,13 @@ IDs/classifications or derived summary counts are stale or internally
 inconsistent. The checks derive expected counts from the current lock inputs;
 they do not require a fixed number of advisories after remediation.
 
-The live query at `2026-11-07T22:29:10Z` covered 520 packages at source commit
-`974de9ce04585e1d38824136514325f231b2bdaf`: 388 crates.io and 132 npm packages.
+The live query at `2026-11-08T08:28:37Z` covered 520 packages at source commit
+`93e1324e9135ccd121b485d6d25594e813159a3d`: 388 crates.io and 132 npm packages.
 One raw match was normalized into one alias-aware maintenance-only advisory group
 affecting one Cargo package. No vulnerability group or npm match was returned in
-this point-in-time query.
+this point-in-time query. This is the post-remediation re-scan retained for
+issue #171: the Hickory and Yamux advisory groups from the pre-remediation scan
+no longer match the locked graph.
 
 | Package | Classification | Advisory group IDs |
 |---|---|---|
@@ -160,7 +162,7 @@ python scripts/generate_dependency_sbom.py --offline --output /tmp/osiris-eye-sb
 cmp /tmp/osiris-eye-sbom.json /tmp/osiris-eye-sbom-offline.json
 python scripts/test_scan_dependency_advisories.py
 python scripts/scan_dependency_advisories.py \
-  --source-commit 974de9ce04585e1d38824136514325f231b2bdaf \
+  --source-commit 93e1324e9135ccd121b485d6d25594e813159a3d \
   --output docs/P2P_DEPENDENCY_ADVISORIES.json
 ```
 

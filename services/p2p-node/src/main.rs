@@ -1,3 +1,4 @@
+mod rejection_log;
 mod peer_auth;
 mod revocation;
 mod e2ee;
@@ -7,6 +8,7 @@ mod observation_policy;
 mod announcement;
 
 use revocation::{RevocationRegistry, RevocationSyncMessage};
+use rejection_log::RejectionLogThrottle;
 use e2ee::{create_key_binding, decrypt_for_recipient, encrypt_for_recipient, verify_key_binding, EncryptedEnvelope, KeyBindingRecord, TransportKeyPair};
 use peer_auth::{is_peer_allowed, parse_revoked_peers, parse_trusted_peers, read_peer_setting, run_if_peer_allowed};
 use peer_cache::{CachedPeer, PeerCache};
@@ -1634,6 +1636,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     emit!("delivery_receipts_enabled={delivery_receipts_enabled} receipt_topic={RECEIPT_TOPIC}");
     emit!("verified_receipt_bridge={}", if receipt_bridge.is_some() { "enabled" } else { "disabled" });
 
+    let mut rejection_log_throttle = RejectionLogThrottle::default();
     loop {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
@@ -2040,7 +2043,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
                     if message.topic.as_str() == KEY_BINDING_TOPIC_NAME {
                         if !is_peer_allowed(&authenticated_source, &trusted_peers, &revoked_peers) {
-                            emit!("key_binding_rejected peer={authenticated_source} reason=peer_not_allowed");
+                            rejection_log_throttle.rejected(KEY_BINDING_TOPIC_NAME, &authenticated_source.to_string(), "peer_not_allowed");
                             continue;
                         }
                         match serde_json::from_slice::<KeyBindingRecord>(&message.data) {
@@ -2075,7 +2078,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         ) {
                             Ok(parsed) => parsed,
                             Err(()) => {
-                                emit!("encrypted_message_rejected peer={authenticated_source} reason=peer_not_allowed");
+                                rejection_log_throttle.rejected(ENCRYPTED_TOPIC_NAME, &authenticated_source.to_string(), "peer_not_allowed");
                                 continue;
                             }
                         };
@@ -2155,7 +2158,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     if message.topic.as_str() == REVOCATION_TOPIC_NAME {
                         let authenticated_source = message.source.unwrap_or(propagation_source);
                         if !is_peer_allowed(&authenticated_source, &trusted_peers, &revoked_peers) {
-                            emit!("revocation_sync_message_rejected peer={propagation_source} reason=peer_not_allowed");
+                            rejection_log_throttle.rejected(REVOCATION_TOPIC_NAME, &authenticated_source.to_string(), "peer_not_allowed");
                             continue;
                         }
                         let Some(registry) = revocation_registry.as_mut() else {

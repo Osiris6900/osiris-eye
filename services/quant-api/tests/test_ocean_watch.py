@@ -9,6 +9,7 @@ from osiris_api.event_market_impact import match_event_exposure
 from osiris_api.ocean_watch import (
     DEFAULT_OCEAN_WATCHLIST,
     PROVIDER_COOPS,
+    PROVIDER_JMA,
     PROVIDER_MARINE,
     PROVIDER_NDBC,
     PROVIDER_NWS,
@@ -265,5 +266,5 @@ def test_exposure_rules_route_ocean_events():
 
 def test_default_watchlist_is_all_keyless_sources():
     assert set(DEFAULT_OCEAN_WATCHLIST) == {
-        PROVIDER_MARINE, PROVIDER_NDBC, PROVIDER_COOPS, PROVIDER_NWS,
+        PROVIDER_MARINE, PROVIDER_NDBC, PROVIDER_COOPS, PROVIDER_NWS, PROVIDER_JMA,
     }
