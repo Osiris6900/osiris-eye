@@ -74,7 +74,20 @@ def recover(snapshot):
         if not isinstance(cid, str) or not cid or not isinstance(item, dict) or not isinstance(item.get("command"), dict) or item["command"].get("command_id") != cid:
             raise ValueError("corrupt command journal")
     # Validate the same controls after a process restart.
-    # Historical fills remain valid when a kill switch is activated later.\n    # Execution gates apply to new commands, not to accounting replay.\n    result = reconcile(snapshot)
+    # Historical fills remain valid when a kill switch is activated later.\n    # Execution gates apply to new commands, not to accounting replay.\n    # Verify that every persisted order and fill is backed by the command log.
+    # This rejects injected or modified ledger entries on restart.
+    logged_orders, logged_fills = [], []
+    for item in snapshot["commands"].values():
+        command = item["command"]
+        if command.get("type") == "order" and isinstance(command.get("order"), dict):
+            logged_orders.append(command["order"])
+        elif command.get("type") == "fill" and isinstance(command.get("fill"), dict):
+            logged_fills.append(command["fill"])
+        else:
+            raise ValueError("corrupt command type or payload")
+    if logged_orders != snapshot.get("orders") or logged_fills != snapshot.get("fills"):
+        raise ValueError("persisted ledger differs from command journal")
+    result = reconcile(snapshot)
     if not result["passed"]:
         raise ValueError("; ".join(result["errors"]))
     return result
