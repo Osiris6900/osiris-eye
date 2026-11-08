@@ -78,7 +78,7 @@ def synthetic_fill(key: str, symbol: str, side: str, quantity: Any, price: Any,
     if side not in ("BUY", "SELL"):
         raise ValueError("invalid_side")
     qty, px, cost = _number(quantity, positive=True), _number(price, positive=True), _number(fee)
-    if not symbol.isascii() or any(ch.isspace() or ord(ch) < 33 for ch in symbol):
+    if not symbol.isascii() or any(ch not in "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:/-" for ch in symbol):
         raise ValueError("invalid_symbol")
     with _lock, _connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
