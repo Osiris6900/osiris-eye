@@ -68,7 +68,9 @@ async def require_api_token(request: Request, call_next):
 
     supplied = request.headers.get("authorization", "")
     expected = f"Bearer {configured_token}"
-    if not hmac.compare_digest(supplied, expected):
+    # compare_digest rejects non-ASCII strings. Compare bytes so malformed
+    # header text remains an authentication failure instead of raising a 500.
+    if not hmac.compare_digest(supplied.encode("utf-8"), expected.encode("utf-8")):
         return JSONResponse(status_code=401, content={"detail": "Invalid or missing bearer token"})
     return await call_next(request)
 

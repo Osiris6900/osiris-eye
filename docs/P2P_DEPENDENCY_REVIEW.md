@@ -112,41 +112,37 @@ libp2p-yamux 0.47 default selected Yamux 0.13 rather than its customized 0.12
 compatibility path. This is local configuration evidence, not an external
 exploitability audit.
 
-Python remains explicitly `unresolved` and was not queried as a resolved PyPI
-environment. OSV matching is point-in-time advisory evidence, not proof of
+The historical OSV report below leaves Python `unresolved`. A subsequent local
+resolved-environment pip-audit scan is retained in
+[PYTHON_DEPENDENCY_AUDIT.json](PYTHON_DEPENDENCY_AUDIT.json): no known
+advisories after upgrading cryptography, pytest and pip. It includes development
+and scanner tooling, skips first-party source advisory matching and does not
+establish Python 3.11 or optional-extra dependency resolution. OSV matching is point-in-time advisory evidence, not proof of
 exploitation, a universal vulnerability-free result, or an independent audit.
 The broader dependency gate also remains open for Python resolution,
 license/redistribution and artifact-provenance review.
 
 ## CI action pinning ratchet
 
-The workflow review found 59 remote `uses` references across eight workflow
-files, all using mutable tags instead of immutable commit SHAs. The checked-in
-`config/ci_action_pin_baseline.json` records this existing debt; it is not an
-approval of the referenced actions or evidence that their tags are trustworthy.
+The 59 remote `uses` references across eight workflows are now pinned to full
+commit SHAs resolved through GitHub on 2026-11-07. The ratchet baseline is empty,
+so new mutable references fail closed. Reviewed reference resolution:
 
-| Mutable reference | Existing occurrences |
-|---|---:|
-| `actions/checkout@v4` | 14 |
-| `actions/upload-artifact@v4` | 14 |
-| `dtolnay/rust-toolchain@stable` | 11 |
-| `actions/download-artifact@v4` | 8 |
-| `tailscale/github-action@v3` | 7 |
-| `actions/setup-python@v5` | 4 |
-| `actions/setup-node@v4` | 1 |
+| Previous reference | Resolved commit |
+|---|---|
+| `actions/checkout@v4` | `11d5960a326750d5838078e36cf38b85af677262` |
+| `actions/download-artifact@v4` | `d3f86a106a0bac45b974a628896c90dbdf5c8093` |
+| `actions/setup-node@v4` | `49933ea5288caeca8642d1e84afbd3f7d6820020` |
+| `actions/setup-python@v5` | `a26af69be951a213d495a4c3e4e4022e16d87065` |
+| `actions/upload-artifact@v4` | `ea165f8d65b6e75b540449e92b4886f43607fa02` |
+| `dtolnay/rust-toolchain@stable` | `b725eda525362e7cf34af9a7243cac1e3f01a7ec` |
+| `tailscale/github-action@v3` | `6cae46e2d796f265265cfcf628b72a32b4d7cade` |
 
-The existing Python CI entry point runs `scripts/check_p2p_workflows.py` and its
-regression tests. The offline audit covers step-level actions and job-level
-reusable workflows. Repository-local actions are allowed, remote GitHub actions
-require a full 40-character commit SHA, and Docker actions require a SHA-256
-image digest. A new mutable reference, a changed tag, or an occurrence count
-above its per-reference baseline fails closed. Reducing or eliminating baseline
-debt passes without requiring a baseline update.
-
-Actual pinning and review of all 59 references remain outstanding. The current
-GitHub token cannot modify workflow files; this limitation must not be bypassed.
-The ratchet is change control, not an advisory scan, provenance check, action
-trust review, or independent security assessment.
+The offline checker validates workflow YAML, embedded shell syntax and immutable
+references. Pinning prevents a moved tag from silently changing the selected
+action; it does not audit action source, attest release artifacts or replace an
+independent security review. Workflow permission is required to publish these
+changes; local validation alone does not establish deployment.
 
 ## Reproduce and remaining checks
 

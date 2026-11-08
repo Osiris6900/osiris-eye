@@ -1,0 +1,363 @@
+{
+  "measurement_class": "single_host_process_regression",
+  "commit_sha": "82600fb05bcc516822d3d0db2eadadf5d10463db",
+  "clean_worktree": false,
+  "workload": {
+    "peers": 100,
+    "messages": 200,
+    "fanout": 1,
+    "duration_seconds": 30.639452
+  },
+  "delivery": {
+    "sent": 200,
+    "delivered": 200,
+    "lost": 0,
+    "rejected": 0,
+    "pending": 0
+  },
+  "latency_ms": {
+    "count": 200,
+    "p50": 3.815029000179493,
+    "p95": 11.52626400016743,
+    "p99": 259.87609300045733,
+    "max": 413.1535950000398
+  },
+  "hosts": [
+    {
+      "host_id": "host-b",
+      "binary_sha256": "abeca671d59d4cd1b0476c444019f281aa442176bf5108834896e6b902582db5",
+      "rss_peak_bytes": 342601728,
+      "cpu_percent": 19.265174801691238,
+      "disk_growth_bytes": 6563660
+    },
+    {
+      "host_id": "host-c",
+      "binary_sha256": "abeca671d59d4cd1b0476c444019f281aa442176bf5108834896e6b902582db5",
+      "rss_peak_bytes": 328413184,
+      "cpu_percent": 14.955294705829841,
+      "disk_growth_bytes": 3495300
+    },
+    {
+      "host_id": "host-a",
+      "binary_sha256": "abeca671d59d4cd1b0476c444019f281aa442176bf5108834896e6b902582db5",
+      "rss_peak_bytes": 340393984,
+      "cpu_percent": 19.408487750482955,
+      "disk_growth_bytes": 3499420
+    },
+    {
+      "host_id": "host-d",
+      "binary_sha256": "abeca671d59d4cd1b0476c444019f281aa442176bf5108834896e6b902582db5",
+      "rss_peak_bytes": 324702208,
+      "cpu_percent": 6.1561513057611075,
+      "disk_growth_bytes": 3499420
+    }
+  ],
+  "outage": {
+    "kind": "bootstrap",
+    "outage_start_ms": 15003,
+    "samples": [
+      {
+        "elapsed_ms": 1,
+        "connected": false,
+        "delivered": false
+      },
+      {
+        "elapsed_ms": 9,
+        "connected": true,
+        "delivered": true
+      },
+      {
+        "elapsed_ms": 1005,
+        "connected": false,
+        "delivered": false
+      },
+      {
+        "elapsed_ms": 1008,
+        "connected": true,
+        "delivered": true
+      },
+      {
+        "elapsed_ms": 2005,
+        "connected": false,
+        "delivered": false
+      },
+      {
+        "elapsed_ms": 2009,
+        "connected": true,
+        "delivered": true
+      },
+      {
+        "elapsed_ms": 3009,
+        "connected": false,
+        "delivered": false
+      },
+      {
+        "elapsed_ms": 3012,
+        "connected": true,
+        "delivered": true
+      },
+      {
+        "elapsed_ms": 4009,
+        "connected": false,
+        "delivered": false
+      },
+      {
+        "elapsed_ms": 4012,
+        "connected": true,
+        "delivered": true
+      },
+      {
+        "elapsed_ms": 5013,
+        "connected": false,
+        "delivered": false
+      },
+      {
+        "elapsed_ms": 5016,
+        "connected": true,
+        "delivered": true
+      },
+      {
+        "elapsed_ms": 6014,
+        "connected": false,
+        "delivered": false
+      },
+      {
+        "elapsed_ms": 6018,
+        "connected": true,
+        "delivered": true
+      },
+      {
+        "elapsed_ms": 7017,
+        "connected": false,
+        "delivered": false
+      },
+      {
+        "elapsed_ms": 7021,
+        "connected": true,
+        "delivered": true
+      },
+      {
+        "elapsed_ms": 8021,
+        "connected": false,
+        "delivered": false
+      },
+      {
+        "elapsed_ms": 8025,
+        "connected": true,
+        "delivered": true
+      },
+      {
+        "elapsed_ms": 9154,
+        "connected": false,
+        "delivered": false
+      },
+      {
+        "elapsed_ms": 9157,
+        "connected": true,
+        "delivered": true
+      },
+      {
+        "elapsed_ms": 10158,
+        "connected": false,
+        "delivered": false
+      },
+      {
+        "elapsed_ms": 10161,
+        "connected": true,
+        "delivered": true
+      },
+      {
+        "elapsed_ms": 11162,
+        "connected": false,
+        "delivered": false
+      },
+      {
+        "elapsed_ms": 11165,
+        "connected": true,
+        "delivered": true
+      },
+      {
+        "elapsed_ms": 12167,
+        "connected": false,
+        "delivered": false
+      },
+      {
+        "elapsed_ms": 12171,
+        "connected": true,
+        "delivered": true
+      },
+      {
+        "elapsed_ms": 13168,
+        "connected": false,
+        "delivered": false
+      },
+      {
+        "elapsed_ms": 13171,
+        "connected": true,
+        "delivered": true
+      },
+      {
+        "elapsed_ms": 14173,
+        "connected": false,
+        "delivered": false
+      },
+      {
+        "elapsed_ms": 14175,
+        "connected": true,
+        "delivered": true
+      },
+      {
+        "elapsed_ms": 15018,
+        "connected": false,
+        "delivered": false
+      },
+      {
+        "elapsed_ms": 20020,
+        "connected": false,
+        "delivered": false
+      },
+      {
+        "elapsed_ms": 21021,
+        "connected": false,
+        "delivered": false
+      },
+      {
+        "elapsed_ms": 22022,
+        "connected": false,
+        "delivered": false
+      },
+      {
+        "elapsed_ms": 23025,
+        "connected": false,
+        "delivered": false
+      },
+      {
+        "elapsed_ms": 24030,
+        "connected": false,
+        "delivered": false
+      },
+      {
+        "elapsed_ms": 24033,
+        "connected": true,
+        "delivered": true
+      },
+      {
+        "elapsed_ms": 25047,
+        "connected": false,
+        "delivered": false
+      },
+      {
+        "elapsed_ms": 25193,
+        "connected": true,
+        "delivered": true
+      },
+      {
+        "elapsed_ms": 26052,
+        "connected": false,
+        "delivered": false
+      },
+      {
+        "elapsed_ms": 26055,
+        "connected": true,
+        "delivered": true
+      },
+      {
+        "elapsed_ms": 27056,
+        "connected": false,
+        "delivered": false
+      },
+      {
+        "elapsed_ms": 27059,
+        "connected": true,
+        "delivered": true
+      },
+      {
+        "elapsed_ms": 28060,
+        "connected": false,
+        "delivered": false
+      },
+      {
+        "elapsed_ms": 28063,
+        "connected": true,
+        "delivered": true
+      },
+      {
+        "elapsed_ms": 29064,
+        "connected": false,
+        "delivered": false
+      },
+      {
+        "elapsed_ms": 29067,
+        "connected": true,
+        "delivered": true
+      },
+      {
+        "elapsed_ms": 30068,
+        "connected": false,
+        "delivered": false
+      },
+      {
+        "elapsed_ms": 30074,
+        "connected": true,
+        "delivered": true
+      }
+    ]
+  },
+  "measurement_notes": {
+    "latency": "controller monotonic write-to-observed-decryption, includes SSH observer transport",
+    "resources": "aggregate node and agent RSS; peak one-second CPU as share of host logical CPUs",
+    "controller_resources_included_on_host_a": true,
+    "workload_paused_during_outage": true,
+    "outage_probes_excluded_from_workload": true,
+    "workload_drained_before_outage": true,
+    "all_publishers_decryption_rechecked_before_resuming": true,
+    "diagnostic_counts": {
+      "host-b": {
+        "incoming_connection_error": 92,
+        "bootstrap_reconnect_attempt": 72,
+        "outgoing_connection_error": 78,
+        "key_binding_rejected:peer_not_allowed": 948,
+        "key_binding_accepted": 441,
+        "key_binding_refreshed": 57,
+        "encrypted_observation_published": 96,
+        "encrypted_message_rejected:peer_not_allowed": 1881,
+        "encrypted_message_rejected:replay_detected": 240
+      },
+      "host-c": {
+        "bootstrap_reconnect_attempt": 75,
+        "outgoing_connection_error": 77,
+        "key_binding_refreshed": 50,
+        "key_binding_rejected:peer_not_allowed": 1077,
+        "key_binding_accepted": 153,
+        "encrypted_observation_published": 101,
+        "encrypted_message_rejected:peer_not_allowed": 2376
+      },
+      "host-a": {
+        "bootstrap_reconnect_attempt": 74,
+        "outgoing_connection_error": 68,
+        "key_binding_rejected:peer_not_allowed": 849,
+        "key_binding_refreshed": 50,
+        "key_binding_accepted": 151,
+        "key_binding_refresh_deferred": 5,
+        "encrypted_observation_published": 122,
+        "encrypted_message_rejected:peer_not_allowed": 2128,
+        "encrypted_observation_deferred": 4
+      },
+      "host-d": {
+        "bootstrap_reconnect_attempt": 74,
+        "outgoing_connection_error": 82,
+        "key_binding_rejected:peer_not_allowed": 847,
+        "key_binding_accepted": 154,
+        "key_binding_refreshed": 50,
+        "key_binding_refresh_deferred": 1,
+        "encrypted_observation_published": 101,
+        "encrypted_message_rejected:peer_not_allowed": 1544
+      }
+    },
+    "state_preserved_across_sink_restart": true,
+    "topology": "recipient-bootstrap star; publishers trust only recipient",
+    "open_mesh_capacity_tested": false,
+    "rss_is_sampled_not_continuous": true,
+    "independent_host_fingerprints_distinct": false
+  }
+}

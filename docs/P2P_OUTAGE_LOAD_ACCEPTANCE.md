@@ -80,3 +80,76 @@ authenticity. `independent_hosts_verified`, `continuous_availability_verified`
 and `production_readiness_evidence` remain false. The release gate stays open
 until an actual final-candidate run and its sanitized retained artifact exist;
 no such run is created by this offline checker.
+
+## Run the encrypted soak on GitHub runners
+
+The existing two-host E2EE workflow has an opt-in `soak` input:
+
+```bash
+gh workflow run p2p-real-cross-host-e2ee.yml --repo Osiris6900/osiris-eye \
+  --ref REVIEWED_CANDIDATE_BRANCH -f soak=true
+```
+
+`TS_AUTHKEY` and the existing SSH/Tailscale setup are reused. The candidate must
+contain the collector on both clean checkouts. Both hosts build with `--locked`.
+The workflow retains only sanitized `soak-evidence.json` and `soak-gate.json`,
+including failed outcomes; private node state and SSH keys are never uploaded.
+Inspect the artifact and exact revision before promotion.
+
+The declared topology has 25 peers on each of four independent runners: 99
+encrypted publishers and one recipient/bootstrap on host B. Publishers admit
+only the recipient PeerId so automatic discovery cannot silently expand the
+declared star into a full mesh. This is not an open-mesh capacity test.
+The direct-only experiment disables automatic relay reservations, seed fetches
+and cached-peer rejoin dials, and uses one established connection per peer.
+Default production connection limits are unchanged. Every publisher must deliver an encrypted
+warmup before measurement. Workload messages rotate through all 99 publishers;
+about three quarters cross host boundaries, and the remainder exercise B-to-B
+paths. Each
+retained delivery record identifies its source/recipient host and digest.
+This is not a 100-host test or a claim that every message crosses machines.
+
+At the midpoint, previously submitted workload is drained with a bounded
+30-second wait. A drain failure fails the measurement rather than hiding loss.
+The recipient/bootstrap then stops for five seconds and restarts
+using the same identity, replay and key state. Stale subscriptions are cleared
+and new encrypted-topic subscriptions are observed before recovery warmup. Cross-host probes measure loss
+and recovery; scheduled workload pauses until every publisher reconnects, subscribes and
+delivers a fresh encrypted recovery warmup. This tests
+recovery, not in-flight durability or continued delivery through an outage.
+Probes and warmup are excluded from workload counts and latency percentiles.
+Outstanding probes remain observable after the next sampling tick; a delayed
+valid post-restart delivery can still establish sampled recovery.
+
+Latency uses the controller's single monotonic clock from write to observed
+recipient decryption, including SSH event transport. It is an observation upper
+bound, not host-clock-synchronized wire latency. One-second resource snapshots
+aggregate node/agent RSS and CPU (plus the controller on A), normalize CPU to
+logical host cores and retain peak state-file size before cleanup. OS, SSH
+daemon and unrelated host processes are not included. Sampling can miss spikes.
+Node exits, invalid event streams and missing measurements invalidate the run.
+Binary hashes and exact source revisions are retained; local-agent smoke mode
+is explicitly rejected by the real multi-host evidence checker.
+
+For a local collector regression, with a built binary:
+
+```bash
+python scripts/run_p2p_soak.py --binary /absolute/path/to/osiris-p2p-node \
+  --local-agents --peers 4 --messages 30 --duration 30 --port 19401 \
+  --evidence /tmp/osiris-soak-smoke.json
+python scripts/test_run_p2p_soak.py
+```
+
+A local smoke cannot close the release gate. The committed acceptance policy is
+never relaxed by this runner; the full real-host evidence checker determines
+whether the numerical gate passes.
+
+## Scale remediation under review
+
+The initial two-runner/100-peer attempt timed out before workload traffic, with
+about 3.5–3.9 GiB aggregate RSS per host. The candidate now coalesces key-binding
+announcements across subscription bursts, announces only for key-topic
+subscriptions, and avoids rewriting byte-identical verified key bindings.
+Signature, epoch, rollback and corrupt-index checks remain enforced. Distribution
+to four runners changes the declared topology, not the numerical policy. Exact
+source/binary hashes and the new run result are still required before promotion.

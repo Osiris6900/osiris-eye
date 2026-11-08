@@ -344,12 +344,37 @@ def test_unavailable_receipt_channel_does_not_write(gate):
     assert scheduler.snapshot(key_for(), RECIPIENT)["attempts"] == 0
 
 
-def test_concurrent_claims_publish_once(gate):
+def test_concurrent_claims_publish_once(gate, monkeypatch):
     from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier, Event, Lock
 
     scheduler, _ledger = gate
     scheduler.schedule(observation(), RECIPIENT, now=NOW)
     calls = []
+
+    # Both workers read the scheduled row before either claims it. Force the
+    # second claim to occur after the first publication commits, so a stale
+    # worker cannot report that publication as its own work.
+    ready = Barrier(2)
+    finished = Event()
+    lock = Lock()
+    arrivals = []
+    attempt = scheduler._attempt
+
+    def ordered_attempt(*args, **kwargs):
+        with lock:
+            first = not arrivals
+            arrivals.append(True)
+        ready.wait(timeout=10)
+        if not first:
+            assert finished.wait(timeout=10)
+            return attempt(*args, **kwargs)
+        try:
+            return attempt(*args, **kwargs)
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(scheduler, "_attempt", ordered_attempt)
 
     def publish(payload, recipient):
         calls.append(recipient)

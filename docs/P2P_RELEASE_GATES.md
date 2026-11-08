@@ -13,27 +13,42 @@ test, a cross-host passing run and an independent audit are separate evidence.
 
 ## Evidence and remaining gates
 
-The [baseline main CI run](https://github.com/Osiris6900/osiris-eye/actions/runs/41748810081)
-at commit `48755ef3d1c7a9f3fd3cbbb309d4f052ec06010b` passed its existing local tests.
-It does not verify the subsequent hardening changes. The current branch's
-integrated results must be recorded against its final commit before promotion.
+The [main CI run](https://github.com/Osiris6900/osiris-eye/actions/runs/42423590055)
+at commit `ce16dbde1e7b2377c82e5f14622238e60c04ff07` passed its Python, web and
+Rust jobs on 2026-11-07. The Rust job also passed the core relay E2EE,
+observation freshness, restart, revocation and signed delivery-receipt process
+checks. This establishes integrated local acceptance for that commit only;
+subsequent changes require their own results before promotion.
+
+At `154a65111d92cbd344ad2cc1b49a80ed8f53cd28`, both
+[two-host recipient E2EE](https://github.com/Osiris6900/osiris-eye/actions/runs/42424830531)
+and [three-host recipient isolation](https://github.com/Osiris6900/osiris-eye/actions/runs/42424833409)
+passed on separate GitHub runners over Tailscale. Controller logs confirm the
+exact recipient payload digest and explicit non-recipient discard. A sanitized
+[summary](P2P_REMOTE_ACCEPTANCE_2026_11_07.json) records the run URLs, candidate
+and payload digests. These workflows did not retain binary hashes; retain them
+for final release evidence. Later Python retry-reporting changes do not alter
+the tested Rust/SSH code, but are not covered by those source revisions.
+These runs do not establish public deployment, sustained load or an independent
+audit.
 
 | Gate | Acceptance criterion | Current evidence boundary |
 |---|---|---|
-| Crypto and input validation | Unit/adversarial suites reject modified signatures, ciphertext, wrong recipients, low-order keys, malformed metadata and expired envelopes | Implemented suites; hardening branch requires integrated run |
-| Core relay E2EE | Relay plus two core nodes exchange the exact recipient payload digest with mDNS disabled and both peer paths reported as relayed | Process harness implemented; retain passing result for final commit |
-| Observation freshness | Configured receiver rejects malformed, stale and future event times and continues accepting a fresh encrypted observation | Timestamp policy and process harness implemented; integrated verification required |
-| Replay and durable keys | Restart retains accepted message IDs and key-epoch floors; malformed, replaced or exhausted state fails closed | Tests implemented; final-commit results required; each state path supports one writer |
+| Crypto and input validation | Unit/adversarial suites reject modified signatures, ciphertext, wrong recipients, low-order keys, malformed metadata and expired envelopes | Passed in integrated CI at `ce16dbde`; later candidates require rerun |
+| Core relay E2EE | Relay plus two core nodes exchange the exact recipient payload digest with mDNS disabled and both peer paths reported as relayed | Passed in integrated CI at `ce16dbde`; core relay evidence upload also passed |
+| Observation freshness | Configured receiver rejects malformed, stale and future event times and continues accepting a fresh encrypted observation | Passed in integrated CI at `ce16dbde`; later candidates require rerun |
+| Replay and durable keys | Restart retains accepted message IDs and key-epoch floors; malformed, replaced or exhausted state fails closed | Local suites passed at `ce16dbde`; each state path supports one writer; later candidates require rerun |
 | Revocation and rotation | Signed revocation persists, disconnects a live peer and blocks reconnect/message admission; operator rotation preserves epoch rules across restart | Local tests and rotation runbook exist; operational recovery exercise still required |
-| Two independent hosts | Same-commit binaries on separate machines establish authenticated connectivity and deliver the exact encrypted recipient observation | SSH harness/workflow implemented; passing final-commit cross-host E2EE evidence outstanding |
-| Three independent hosts | A encrypts only for B; B reports exact decrypted digest; excluded C reports recipient-gated discard without plaintext identifiers | Harness/workflow implemented; passing run outstanding; primitive wrong-key tests cover decryption failure separately |
+| Two independent hosts | Same-commit binaries on separate machines establish authenticated connectivity and deliver the exact encrypted recipient observation | Passed on separate GitHub runners at `154a651`; final release candidate and binary hashes still require retained evidence |
+| Three independent hosts | A encrypts only for B; B reports exact decrypted digest; excluded C reports recipient-gated discard without plaintext identifiers | Passed on three separate GitHub runners at `154a651`; final release candidate and binary hashes still require retained evidence |
 | Outage and load | Record recovery time, latency distribution, loss/rejection counts, RSS, CPU and disk growth for a declared peer/message workload, including relay/bootstrap outage | [Numerical policy and fail-closed evidence checker](P2P_OUTAGE_LOAD_ACCEPTANCE.md) implemented; actual final-candidate multi-host soak and retained passing artifact outstanding |
 | Public operations | Operator-controlled endpoints pass the intended networks' connectivity, health, restart and monitoring checks | Configuration/profile exists; deployment, uptime and live peer count are not established |
 | Feed provenance | Each admitted feed has an authorized source, permitted redistribution, availability timestamps and independently checked quality | Fail-closed operator policy and durable attestation implemented; actual rights, entitlements and independent quality evidence remain required |
 | Independent assurance | External reviewers assess protocol, implementation and operator lifecycle; findings are remediated and retested | Internal reviews/tests do not constitute an independent cryptographic audit |
 
-Explicit relay configuration does not implement automatic relay selection,
-AutoNAT or hole punching. E2EE does not hide routing metadata and has no ratchet
+Relay-only acceptance disables automatic hole punching. Automatic relay/NAT
+behavior needs separate acceptance on the intended networks. E2EE does not
+hide routing metadata and has no ratchet
 guarantee against later compromise of a recipient's static transport key.
 Replay journals and registry snapshots require a single writer per state path;
 multiple processes must use separate state. Do not clear replay history to make

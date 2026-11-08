@@ -4,6 +4,7 @@ mod e2ee;
 mod peer_key_store;
 mod peer_cache;
 mod observation_policy;
+mod announcement;
 
 use revocation::{RevocationRegistry, RevocationSyncMessage};
 use e2ee::{create_key_binding, decrypt_for_recipient, encrypt_for_recipient, verify_key_binding, EncryptedEnvelope, KeyBindingRecord, TransportKeyPair};
@@ -25,7 +26,7 @@ macro_rules! emit {
 
 use futures::StreamExt;
 use libp2p::{
-    autonat, connection_limits, dcutr, gossipsub, identify, identity, relay, upnp,
+    allow_block_list, autonat, connection_limits, dcutr, gossipsub, identify, identity, relay, upnp,
     core::{transport::OrTransport, upgrade, Transport},
     kad::{self, store::MemoryStore},
     mdns, noise,
@@ -713,11 +714,39 @@ mod tests {
         assert!(!super::parse_flag(Some("0"), "X", true).unwrap());
         assert!(super::parse_flag(Some("true"), "X", true).is_err());
     }
+
+    #[test] fn per_peer_limit_is_bounded_and_defaults_to_existing_policy() {
+        assert_eq!(super::parse_per_peer_limit(None).unwrap(), 4);
+        for value in ["1", "2", "3", "4"] {
+            assert_eq!(super::parse_per_peer_limit(Some(value)).unwrap(), value.parse::<u32>().unwrap());
+        }
+        for value in ["", "0", "5", "256", "-1", "1.0", " 1", "01"] {
+            assert!(super::parse_per_peer_limit(Some(value)).is_err());
+        }
+    }
+
+    #[test]
+    fn discovery_dials_are_denied_before_transport_for_non_allowlisted_peers() {
+        use libp2p::swarm::{ConnectionId, NetworkBehaviour};
+        use libp2p::core::Endpoint;
+        use std::collections::HashSet;
+        let trusted = PeerId::random();
+        let unknown = PeerId::random();
+        let mut policy = super::connection_allowlist(&Some(HashSet::from([trusted])));
+        let dial = |p: &mut _, peer| NetworkBehaviour::handle_pending_outbound_connection(
+            p, ConnectionId::new_unchecked(1), Some(peer), &[], Endpoint::Dialer);
+        assert!(dial(&mut policy, unknown).is_err());
+        assert!(dial(&mut policy, trusted).is_ok());
+        let mut open = super::connection_allowlist(&None);
+        assert!(dial(&mut open, unknown).is_ok());
+    }
 }
 
 #[derive(NetworkBehaviour)]
 #[behaviour(to_swarm = "BehaviourEvent")]
 struct Behaviour {
+    peer_allowlist: Toggle<allow_block_list::Behaviour<allow_block_list::AllowedPeers>>,
+    peer_blocklist: allow_block_list::Behaviour<allow_block_list::BlockedPeers>,
     gossipsub: gossipsub::Behaviour,
     kademlia: kad::Behaviour<MemoryStore>,
     mdns: Toggle<mdns::tokio::Behaviour>,
@@ -900,6 +929,24 @@ fn parse_interval_secs(raw: Option<&str>, default: u64, min: u64, max: u64) -> u
     raw.and_then(|value| value.parse::<u64>().ok())
         .unwrap_or(default)
         .clamp(min, max)
+}
+
+fn parse_per_peer_limit(raw: Option<&str>) -> Result<u32, Box<dyn Error>> {
+    match raw {
+        None | Some("4") => Ok(4),
+        Some("1") => Ok(1), Some("2") => Ok(2), Some("3") => Ok(3),
+        _ => Err("OSIRIS_MAX_CONNECTIONS_PER_PEER must be 1, 2, 3 or 4".into()),
+    }
+}
+
+fn connection_allowlist(trusted: &Option<HashSet<PeerId>>)
+    -> Toggle<allow_block_list::Behaviour<allow_block_list::AllowedPeers>>
+{
+    trusted.as_ref().map(|peers| {
+        let mut policy = allow_block_list::Behaviour::default();
+        for peer in peers { policy.allow_peer(*peer); }
+        policy
+    }).into()
 }
 
 fn peer_id_from_multiaddr(address: &Multiaddr) -> Option<PeerId> {
@@ -1208,6 +1255,9 @@ fn embedded_relay_config() -> relay::Config {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    let max_connections_per_peer = parse_per_peer_limit(
+        read_peer_setting("OSIRIS_MAX_CONNECTIONS_PER_PEER")?.as_deref(),
+    )?;
     let max_observation_age = observation_policy::parse_max_age(
         read_peer_setting("OSIRIS_MAX_OBSERVATION_AGE_SECS")?.as_deref(),
     )?;
@@ -1267,6 +1317,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let auto_relay_enabled = parse_flag(read_peer_setting("OSIRIS_AUTO_RELAY")?.as_deref(), "OSIRIS_AUTO_RELAY", true)?;
     let (relay_transport, relay_behaviour) = relay::client::new(peer_id);
     let mut behaviour = Behaviour {
+        peer_allowlist: None.into(),
+        peer_blocklist: allow_block_list::Behaviour::default(),
         gossipsub,
         kademlia: kad::Behaviour::with_config(
             peer_id,
@@ -1296,7 +1348,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 .with_max_pending_outgoing(Some(32))
                 .with_max_established_incoming(Some(128))
                 .with_max_established_outgoing(Some(128))
-                .with_max_established_per_peer(Some(4))
+                .with_max_established_per_peer(Some(max_connections_per_peer))
                 .with_max_established(Some(256)),
         ),
     };
@@ -1364,6 +1416,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
         None
     };
     let mut revoked_peers = if revoked_peer_set.is_empty() { None } else { Some(revoked_peer_set) };
+    // Enforce policy inside libp2p as well as application events. Internal DHT
+    // dials must not consume transport slots for explicitly untrusted peers.
+    swarm.behaviour_mut().peer_allowlist = connection_allowlist(&trusted_peers);
+    if let Some(peers) = &revoked_peers {
+        for peer in peers { swarm.behaviour_mut().peer_blocklist.block_peer(*peer); }
+    }
     let replay_path = env::var_os("OSIRIS_REPLAY_CACHE")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(".osiris-replay-cache"));
@@ -1491,6 +1549,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut health_tick = tokio::time::interval(Duration::from_secs(health_interval_secs));
     let mut key_binding_tick = tokio::time::interval(Duration::from_secs(24 * 60 * 60));
     key_binding_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut binding_announcements = announcement::AnnouncementGate::new(Instant::now());
+    let mut announcement_tick = tokio::time::interval(Duration::from_millis(250));
+    announcement_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     health_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let started_at = Instant::now();
     let health_address: SocketAddr = env::var("OSIRIS_HEALTH_HTTP_ADDR")
@@ -1513,7 +1574,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     emit!("mdns_enabled={mdns_enabled}");
     emit!("upnp_enabled={upnp_enabled} autonat=enabled hole_punch={}", if hole_punch_enabled { "enabled" } else { "disabled" });
     emit!("relay_server={} auto_relay={auto_relay_enabled}", if relay_server_enabled { "enabled" } else { "disabled" });
-    emit!("connection_limits pending_incoming=32 pending_outgoing=32 established_total=256 established_per_peer=4");
+    emit!("connection_limits pending_incoming=32 pending_outgoing=32 established_total=256 established_per_peer={max_connections_per_peer}");
     emit!("bootstrap_peers={}", bootstrap_peers.len());
     emit!("bootstrap_reconnect_interval_seconds={reconnect_interval_secs}");
     emit!("dht_protocol={DHT_PROTOCOL_NAME}");
@@ -1573,10 +1634,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     &key, &transport_key.public_key, transport_key_epoch,
                     issued_at, issued_at + 30 * 24 * 60 * 60,
                 )?;
+                binding_announcements.request(Instant::now());
+            }
+            _ = announcement_tick.tick() => {
+                if !binding_announcements.ready(Instant::now()) { continue; }
                 let binding_bytes = serde_json::to_vec(&local_key_binding)?;
                 match swarm.behaviour_mut().gossipsub.publish(key_binding_topic.clone(), binding_bytes) {
-                    Ok(_) => emit!("key_binding_refreshed epoch={transport_key_epoch}"),
-                    Err(error) => emit!("key_binding_refresh_deferred error={error}"),
+                    Ok(_) => {
+                        binding_announcements.completed(true, Instant::now());
+                        emit!("key_binding_refreshed epoch={transport_key_epoch}");
+                    }
+                    Err(error) => {
+                        binding_announcements.completed(false, Instant::now());
+                        emit!("key_binding_refresh_deferred error={error}");
+                    }
                 }
             }
             _ = health_tick.tick() => {
@@ -1715,7 +1786,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 SwarmEvent::OutgoingConnectionError { peer_id: target, connection_id, error } => {
                     emit!("outgoing_connection_error peer={target:?} connection={connection_id:?} error={error}");
                 }
-                SwarmEvent::IncomingConnectionError { connection_id, local_addr, send_back_addr, error, .. } => {
+                SwarmEvent::IncomingConnectionError { connection_id, local_addr, send_back_addr, error, peer_id: denied_peer } => {
+                    if let Some(peer) = denied_peer {
+                        if !is_peer_allowed(&peer, &trusted_peers, &revoked_peers) {
+                            emit!("peer_rejected={peer} reason=not_in_trusted_peer_allowlist");
+                        }
+                    }
                     emit!("incoming_connection_error connection={connection_id:?} local={local_addr} remote={send_back_addr} error={error}");
                 }
                 SwarmEvent::ConnectionEstablished { peer_id, endpoint, connection_id, num_established, .. } => {
@@ -1778,16 +1854,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         emit!("mdns_peer_expired={peer}");
                     }
                 }
-                SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Subscribed { peer_id: subscribed_peer_id, .. })) => {
+                SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Subscribed { peer_id: subscribed_peer_id, topic })) => {
                     if !is_peer_allowed(&subscribed_peer_id, &trusted_peers, &revoked_peers) {
                         emit!("peer_rejected={subscribed_peer_id} reason=not_in_trusted_peer_allowlist");
                         let _ = swarm.disconnect_peer_id(subscribed_peer_id);
                         continue;
                     }
-                    emit!("gossipsub_subscribed peer={subscribed_peer_id}");
-                    let binding_bytes = serde_json::to_vec(&local_key_binding)?;
-                    let _ = swarm.behaviour_mut().gossipsub.publish(key_binding_topic.clone(), binding_bytes);
-                    if revocation_registry.is_some() {
+                    emit!("gossipsub_subscribed peer={subscribed_peer_id} topic={topic}");
+                    // One connection subscribes to several topics. Announcing
+                    // on each event floods all subscribers during cohort startup.
+                    if topic.as_str() == KEY_BINDING_TOPIC_NAME {
+                        binding_announcements.request(Instant::now());
+                    }
+                    if topic.as_str() == REVOCATION_TOPIC_NAME && revocation_registry.is_some() {
                         let request_id = revocation_request_id(&peer_id, None);
                         remember_revocation_request(&mut pending_revocation_requests, request_id.clone());
                         let request = serde_json::to_vec(&RevocationSyncMessage::SyncRequestPageV2 { request_id, requester_peer_id: peer_id.to_string(), after_peer_id: None })?;
@@ -2036,6 +2115,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                     Ok(true) => {
                                         let peer = record.peer_id.parse::<PeerId>()?;
                                         revoked_peers.get_or_insert_with(HashSet::new).insert(peer);
+                                        swarm.behaviour_mut().peer_blocklist.block_peer(peer);
                                         let _ = peer_cache.remove(&record.peer_id);
                                         let bytes = serde_json::to_vec(&RevocationSyncMessage::Record(record))?;
                                         let _ = swarm.behaviour_mut().gossipsub.publish(revocation_topic.clone(), bytes);
@@ -2053,6 +2133,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                         Ok(true) => {
                                             let peer = record.peer_id.parse::<PeerId>()?;
                                             revoked_peers.get_or_insert_with(HashSet::new).insert(peer);
+                                            swarm.behaviour_mut().peer_blocklist.block_peer(peer);
                                             let _ = peer_cache.remove(&record.peer_id);
                                             let bytes = serde_json::to_vec(&RevocationSyncMessage::Record(record))?;
                                             let _ = swarm.behaviour_mut().gossipsub.publish(revocation_topic.clone(), bytes);
@@ -2078,6 +2159,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                         Ok(true) => {
                                             let revoked_peer = record.peer_id.parse::<PeerId>()?;
                                             revoked_peers.get_or_insert_with(HashSet::new).insert(revoked_peer);
+                                            swarm.behaviour_mut().peer_blocklist.block_peer(revoked_peer);
                                             let _ = peer_cache.remove(&record.peer_id);
                                             let bytes = serde_json::to_vec(&RevocationSyncMessage::Record(record))?;
                                             let _ = swarm.behaviour_mut().gossipsub.publish(revocation_topic.clone(), bytes);

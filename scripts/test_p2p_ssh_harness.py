@@ -86,6 +86,29 @@ class SSHHarnessTests(unittest.TestCase):
             self.assertNotIn(secret, repr(events.history))
 
     @unittest.skipUnless(os.name == "posix", "remote launcher targets POSIX SSH hosts")
+    def test_remote_launcher_unsets_inherited_peer_policy_instead_of_exporting_empty(self):
+        with tempfile.TemporaryDirectory(prefix="osiris-ssh-policy-") as directory:
+            binary = Path(directory) / "node"
+            binary.write_text(
+                '#!/bin/sh\n'
+                'test "${OSIRIS_TRUSTED_PEERS+x}" != x || exit 41\n'
+                'test "${OSIRIS_TRUSTED_PEERS_FILE+x}" != x || exit 42\n'
+                'test "${OSIRIS_REVOKED_PEERS+x}" != x || exit 43\n'
+                'test "${OSIRIS_REVOKED_PEERS_FILE+x}" != x || exit 44\n'
+                'test "$OSIRIS_E2EE_ENABLED" = 1 || exit 45\n'
+            )
+            binary.chmod(0o700)
+            env = dict(os.environ, OSIRIS_TRUSTED_PEERS="operator-policy",
+                       OSIRIS_TRUSTED_PEERS_FILE="operator-policy-file",
+                       OSIRIS_REVOKED_PEERS="operator-revocations",
+                       OSIRIS_REVOKED_PEERS_FILE="operator-revocation-file")
+            result = subprocess.run(
+                ["sh", "-c", remote_command(str(binary), "bootstrap")],
+                input="", text=True, capture_output=True, timeout=10, env=env,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    @unittest.skipUnless(os.name == "posix", "remote launcher targets POSIX SSH hosts")
     def test_remote_command_quotes_paths_preserves_exit_status_and_cleans_state(self):
         with tempfile.TemporaryDirectory(prefix="osiris-ssh-harness-") as directory:
             binary = Path(directory) / "node '$(echo BAD)'"
