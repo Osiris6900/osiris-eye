@@ -42,6 +42,7 @@ jobs:
           python scripts/test_run_p2p_soak.py
           python scripts/test_check_p2p_load_acceptance.py
           python deploy/p2p/test_preflight.py
+          python scripts/test_systemd_smoke_guards.py
       - name: Validate public TCP probe without network access
         run: python -m unittest discover -s scripts -p 'test_probe_p2p_public_tcp.py' -v
       - name: Validate multi-vantage TCP evidence gate offline
@@ -91,6 +92,22 @@ jobs:
         run: python scripts/test_p2p_core_relay_e2ee.py --evidence "${{ runner.temp }}/core-relay-e2ee.json"
       - name: Verify observation freshness and fail-closed configuration
         run: python scripts/test_p2p_observation_freshness.py
+      - name: Verify hardened systemd startup, restart and durable identity
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
+        run: |
+          NODE_BINARY="${CARGO_TARGET_DIR:-services/p2p-node/target}/release/osiris-p2p-node"
+          sudo -n env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" \
+            /usr/bin/python3 scripts/test_p2p_systemd_profile.py \
+            --binary "$NODE_BINARY" --evidence "$RUNNER_TEMP/systemd-profile-smoke.json"
+      - name: Retain sanitized systemd operational evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: systemd-profile-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/systemd-profile-smoke.json
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Retain core relay acceptance evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
