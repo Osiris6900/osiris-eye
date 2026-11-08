@@ -3,7 +3,7 @@ from check_p2p_release_evidence import check
 
 class ReleaseEvidenceTests(unittest.TestCase):
     def record(self):
-        return {"commit_sha":"a"*40,"clean_checkout":True,"topology":"three_independent_hosts","hosts":[{"host_id":str(i),"binary_sha256":"b"*64} for i in range(3)],"payload_sha256":"c"*64,"recipient_digest_matched":True,"nonrecipient_discarded":True,"workflow_url":"https://github.com/example/repo/actions/runs/1"}
+        return {"commit_sha":"a"*40,"clean_checkout":True,"test_passed":True,"duration_seconds":120,"topology":"three_independent_hosts","hosts":[{"host_id":str(i),"binary_sha256":"b"*64} for i in range(3)],"payload_sha256":"c"*64,"recipient_digest_matched":True,"nonrecipient_discarded":True,"workflow_url":"https://github.com/example/repo/actions/runs/1"}
     def test_valid_metadata(self):
         self.assertEqual(check(self.record()), [])
     def test_missing_binary_hash_fails(self):
@@ -15,4 +15,7 @@ class ReleaseEvidenceTests(unittest.TestCase):
     def test_recipient_leak_fails(self):
         r=self.record(); r["nonrecipient_discarded"]=False
         self.assertTrue(check(r))
+    def test_short_or_failed_soak_denied(self):
+        r=self.record(); r["duration_seconds"]=10; self.assertTrue(check(r))
+        r=self.record(); r["test_passed"]=False; self.assertTrue(check(r))
 if __name__=="__main__": unittest.main()
