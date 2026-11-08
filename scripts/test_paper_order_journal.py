@@ -77,6 +77,20 @@ class PaperOrderJournalTests(unittest.TestCase):
             apply_command(restored, {"command_id": "c3", "type": "order",
                                     "order": {"id": "o2", "symbol": "BTC", "side": "buy", "quantity": "1"}})
 
+    def test_injected_fill_rejected_during_recovery(self):
+        state, _ = apply_command(self.initial(), self.order())
+        state, _ = apply_command(state, self.fill())
+        state["fills"][0]["price"] = "1"
+        with self.assertRaisesRegex(ValueError, "differs from command journal"):
+            recover(state)
+
+    def test_injected_order_rejected_during_recovery(self):
+        state, _ = apply_command(self.initial(), self.order())
+        state["orders"].append({"id": "injected", "symbol": "BTC",
+                                "side": "buy", "quantity": "1"})
+        with self.assertRaisesRegex(ValueError, "differs from command journal"):
+            recover(state)
+
     def test_corrupt_restart_snapshot_rejected(self):
         state, _ = apply_command(self.initial(), self.order())
         state["commands"]["c1"]["command"]["command_id"] = "tampered"
