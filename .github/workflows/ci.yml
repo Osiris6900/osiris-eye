@@ -39,6 +39,8 @@ jobs:
         run: |
           python scripts/check_p2p_workflows.py
           python scripts/test_check_p2p_workflows.py
+      - name: Validate CycloneDX SBOM includes the hashed Python lock
+        run: python scripts/test_generate_dependency_sbom.py
       - name: Verify P2P coordination, SSH harness and deployment preflight
         run: |
           python scripts/test_p2p_workflow_coordination.py
