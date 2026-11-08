@@ -47,7 +47,43 @@ def reconcile(data):
         filled[oid] += qty
         if orders[oid] is not None and filled[oid] > orders[oid]:
             errors.append(f"{oid}: overfilled")
-    return {"passed": not errors, "errors": errors, "filled_quantity": {k: str(v) for k,v in filled.items()}}
+    # Deterministic cash/position replay in fill order; no broker or network access.
+    # All arithmetic uses Decimal, and every fill is linked to a validated order.
+    cash = positive(data.get("starting_cash", "100000"))
+    if cash is None:
+        errors.append("invalid starting cash")
+        cash = Decimal("0")
+    positions = {}
+    order_meta = {o["id"]: o for o in data["orders"] if isinstance(o, dict) and isinstance(o.get("id"), str) and o.get("id")}
+    seen = set()
+    for fill in data["fills"]:
+        if not isinstance(fill, dict):
+            continue
+        fid, oid = fill.get("id"), fill.get("order_id")
+        if not isinstance(fid, str) or fid in seen:
+            continue
+        seen.add(fid)
+        order = order_meta.get(oid)
+        qty, price = positive(fill.get("quantity")), positive(fill.get("price"))
+        if not order or qty is None or price is None or order.get("side") not in ("buy", "sell") or not isinstance(order.get("symbol"), str) or not order["symbol"]:
+            continue
+        symbol = order["symbol"]
+        position = positions.get(symbol, Decimal("0"))
+        if order["side"] == "buy":
+            if cash < qty * price:
+                errors.append(f"{fid}: insufficient paper cash")
+                continue
+            cash -= qty * price
+            positions[symbol] = position + qty
+        else:
+            if position < qty:
+                errors.append(f"{fid}: insufficient paper position")
+                continue
+            cash += qty * price
+            positions[symbol] = position - qty
+    return {"passed": not errors, "errors": errors,
+            "filled_quantity": {k: str(v) for k,v in filled.items()},
+            "cash": str(cash), "positions": {k: str(v) for k,v in sorted(positions.items())}}
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
