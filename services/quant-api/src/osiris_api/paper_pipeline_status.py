@@ -3,6 +3,7 @@
 No order execution or durable workflow status is claimed. A process restart
 clears this view; deployments with multiple workers need a shared store.
 """
+from copy import deepcopy
 from datetime import datetime, timezone
 from threading import Lock
 
@@ -55,4 +56,4 @@ def get_paper_pipeline_status():
                 "cash": None,
                 "pnl": None,
             }
-        return dict(_latest)
+        return deepcopy(_latest)
