@@ -36,10 +36,10 @@ from .hypothesis_ledger import (
 )
 from .p2p_ingestion import DATASET
 
-#: record_key prefixes that carry world/celestial events. Market quotes
+#: record_key prefixes that carry world/celestial/ocean events. Market quotes
 #: use bare symbols (``^SPX:...``, ``BTCUSDT:...``) and are never scanned
 #: as events.
-EVENT_INSTRUMENT_PREFIXES = ("EQ:", "EONET:", "WX:", "ASTRO:", "SWPC:")
+EVENT_INSTRUMENT_PREFIXES = ("EQ:", "EONET:", "WX:", "ASTRO:", "SWPC:", "SEA:", "BUOY:", "TIDE:", "ALRT:")
 
 DEFAULT_LOOKBACK_HOURS = 72
 MAX_LOOKBACK_HOURS = 24 * 31  # about one month

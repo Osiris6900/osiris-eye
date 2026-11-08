@@ -74,6 +74,20 @@ DEFAULT_EXPOSURE_RULES: tuple[ExposureRule, ...] = (
     ExposureRule("planetary", ("opposition", "close approach", "conjunction"),
                  ("^SPX", "^NDQ", "BTCUSDT")),
     ExposureRule("eclipse", ("eclipse",), ("^SPX", "^NDQ", "^DJI", "BTCUSDT")),
+    # Ocean (see docs/OCEAN_WATCH.md): chokepoint marine conditions and
+    # coastal readings map to the economies their sea lanes feed. As
+    # always these are hypotheses — causality never established.
+    ExposureRule("marine_conditions", ("hormuz", "bab-el-mandeb"), ("USD-JPY", "^SPX")),
+    ExposureRule("marine_conditions", ("malacca", "singapore"), ("USD-CNY", "^NKX")),
+    ExposureRule("marine_conditions", ("suez", "gibraltar", "english-channel"), ("USD-EUR",)),
+    ExposureRule("marine_conditions", ("panama", "cape-of-good-hope"), ("^SPX", "^DJI")),
+    ExposureRule("buoy_conditions", (), ("^SPX",)),
+    ExposureRule("water_level", ("new york", "battery"), ("^SPX", "^DJI")),
+    ExposureRule("water_level", ("san francisco",), ("^NDQ",)),
+    ExposureRule("water_level", ("key west",), ("^SPX",)),
+    ExposureRule("marine_alert", ("tsunami",), ("^SPX", "^NKX", "USD-JPY")),
+    ExposureRule("marine_alert", ("hurricane", "tropical storm", "storm"), ("^SPX", "^DJI")),
+    ExposureRule("marine_alert", ("coastal flood", "special marine", "high surf"), ("^SPX",)),
 )
 
 
