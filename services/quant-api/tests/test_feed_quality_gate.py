@@ -26,7 +26,7 @@ def test_rejects_unentitled_and_unauthenticated():
 
 
 def test_rejects_stale_future_and_out_of_order():
-    assert validate_observation(replace(sample(), available_time=NOW-timedelta(seconds=8)), now=NOW).reason == "stale"
+    assert validate_observation(replace(sample(), event_time=NOW-timedelta(seconds=9), available_time=NOW-timedelta(seconds=8)), now=NOW).reason == "stale"
     assert validate_observation(replace(sample(), available_time=NOW+timedelta(seconds=1)), now=NOW).reason == "future_timestamp"
     assert validate_observation(sample(), now=NOW, previous_event_time=sample().event_time).reason == "out_of_order"
 
