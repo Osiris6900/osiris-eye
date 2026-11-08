@@ -712,35 +712,33 @@ mod tests {
         assert!(pending.contains_key(&fresh));
         assert!(!pending.contains_key(&stale));
     }
-    #[test] fn reconnect_backoff_doubles_caps_and_isolates_peers() {
-        use std::time::{Duration, Instant};
-        let start = Instant::now();
+    #[test] fn reconnect_backoff_skips_one_then_two_then_four_then_eight_ticks() {
         let peer = PeerId::random();
         let other = PeerId::random();
         let mut failures = std::collections::HashMap::new();
-        let mut now = start;
-        for (index, seconds) in [1u64, 2, 4, 8, 8, 8].into_iter().enumerate() {
-            let (attempts, delay) = super::record_reconnect_failure(&mut failures, peer, now);
+        let mut tick = 0u64;
+        for (index, skips) in [1u32, 2, 4, 8, 8].into_iter().enumerate() {
+            let (attempts, delay) = super::record_reconnect_failure(&mut failures, peer, tick);
             assert_eq!(attempts, (index as u32) + 1);
-            assert_eq!(delay, Duration::from_secs(seconds));
-            assert!(super::reconnect_backoff_active(&failures, &peer, now + delay - Duration::from_nanos(1)));
-            assert!(!super::reconnect_backoff_active(&failures, &peer, now + delay));
-            assert!(!super::reconnect_backoff_active(&failures, &other, now));
-            now += delay;
+            assert_eq!(delay, skips);
+            assert!(super::reconnect_backoff_active(&failures, &peer, tick + u64::from(skips)));
+            assert!(!super::reconnect_backoff_active(&failures, &peer, tick + u64::from(skips) + 1));
+            assert!(!super::reconnect_backoff_active(&failures, &other, tick));
+            tick += u64::from(skips) + 1;
         }
         failures.remove(&peer);
-        assert!(!super::reconnect_backoff_active(&failures, &peer, now));
+        assert!(!super::reconnect_backoff_active(&failures, &peer, tick));
         assert!(failures.is_empty());
     }
     #[test] fn reconnect_backoff_attempt_counter_saturates() {
-        use std::time::Instant;
-        let start = Instant::now();
         let peer = PeerId::random();
         let mut failures = std::collections::HashMap::new();
-        failures.insert(peer, super::ReconnectFailure { attempts: u32::MAX, next_attempt: start });
-        let (attempts, delay) = super::record_reconnect_failure(&mut failures, peer, start);
+        failures.insert(peer, super::ReconnectFailure { attempts: u32::MAX, resume_after_tick: 0 });
+        let (attempts, skips) = super::record_reconnect_failure(&mut failures, peer, 3);
         assert_eq!(attempts, u32::MAX);
-        assert_eq!(delay, std::time::Duration::from_secs(8));
+        assert_eq!(skips, 8);
+        assert!(super::reconnect_backoff_active(&failures, &peer, 11));
+        assert!(!super::reconnect_backoff_active(&failures, &peer, 12));
     }
     #[test] fn reconnect_dial_budget_rotates_and_prefers_relays() {
         let relays = [PeerId::random(), PeerId::random()];
@@ -760,6 +758,12 @@ mod tests {
         let shared = PeerId::random();
         let (unique, _) = super::schedule_reconnect_dials(&[shared], &[shared, bootstraps[0]], 8, 0);
         assert_eq!(unique, vec![shared, bootstraps[0]]);
+    }
+    #[test] fn startup_rejoin_stays_inside_pending_outgoing_slots() {
+        assert_eq!(super::startup_rejoin_limit(0, 16, super::MAX_PENDING_OUTGOING), 16);
+        assert_eq!(super::startup_rejoin_limit(30, 16, super::MAX_PENDING_OUTGOING), 2);
+        assert_eq!(super::startup_rejoin_limit(32, 64, super::MAX_PENDING_OUTGOING), 0);
+        assert_eq!(super::startup_rejoin_limit(40, 8, super::MAX_PENDING_OUTGOING), 0);
     }
     #[test] fn rejoin_plan_skips_self_bootstrap_relays_and_policy_blocked_peers() {
         let self_peer = PeerId::random();
@@ -1124,6 +1128,11 @@ fn relay_readiness(relay_addresses: &[(PeerId, Multiaddr)], active: &HashSet<Pee
 const PENDING_DIAL_TTL: Duration = Duration::from_secs(60);
 const RELAY_RESERVATION_COOLDOWN: Duration = Duration::from_secs(30 * 60);
 const MAX_RECONNECT_DIALS_PER_TICK: usize = 8;
+const MAX_PENDING_OUTGOING: usize = 32;
+
+fn startup_rejoin_limit(already_dialed: usize, requested: usize, pending_outgoing_cap: usize) -> usize {
+    requested.min(pending_outgoing_cap.saturating_sub(already_dialed))
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RelayMaintainAction { Dial, RequestReservation, Hold }
@@ -1168,27 +1177,27 @@ fn expire_pending_dials(pending: &mut HashMap<PeerId, Instant>, now: Instant) ->
 #[derive(Clone, Copy, Debug)]
 struct ReconnectFailure {
     attempts: u32,
-    next_attempt: Instant,
+    resume_after_tick: u64,
 }
 
-/// Delay before the next dial of one configured bootstrap or relay peer.
-/// The sequence is 1s, 2s, 4s, then 8s. It does not stop permanently: a
-/// peer that comes back is dialed on the first tick after the delay.
-fn reconnect_backoff_delay(attempts: u32) -> Duration {
-    let shift = attempts.saturating_sub(1).min(3);
-    Duration::from_secs(1u64 << shift)
+/// How many upcoming reconnect ticks to skip after this failure.
+/// The sequence is 1, 2, 4, then 8 ticks. The reconnect timer is at least
+/// 5 seconds, so a shorter wall-clock delay would already have expired
+/// before the next tick. A success clears the entry.
+fn reconnect_skip_ticks(attempts: u32) -> u32 {
+    1u32 << attempts.saturating_sub(1).min(3)
 }
 
-fn record_reconnect_failure(failures: &mut HashMap<PeerId, ReconnectFailure>, peer: PeerId, now: Instant) -> (u32, Duration) {
+fn record_reconnect_failure(failures: &mut HashMap<PeerId, ReconnectFailure>, peer: PeerId, observed_tick: u64) -> (u32, u32) {
     let attempts = failures.get(&peer).map(|failure| failure.attempts.saturating_add(1)).unwrap_or(1);
-    let delay = reconnect_backoff_delay(attempts);
-    let next_attempt = now.checked_add(delay).unwrap_or(now);
-    failures.insert(peer, ReconnectFailure { attempts, next_attempt });
-    (attempts, delay)
+    let skips = reconnect_skip_ticks(attempts);
+    let resume_after_tick = observed_tick.saturating_add(u64::from(skips));
+    failures.insert(peer, ReconnectFailure { attempts, resume_after_tick });
+    (attempts, skips)
 }
 
-fn reconnect_backoff_active(failures: &HashMap<PeerId, ReconnectFailure>, peer: &PeerId, now: Instant) -> bool {
-    failures.get(peer).is_some_and(|failure| now < failure.next_attempt)
+fn reconnect_backoff_active(failures: &HashMap<PeerId, ReconnectFailure>, peer: &PeerId, tick: u64) -> bool {
+    failures.get(peer).is_some_and(|failure| tick <= failure.resume_after_tick)
 }
 
 /// Choose which configured peers to dial on this reconnect tick.
@@ -1561,7 +1570,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         connection_limits: connection_limits::Behaviour::new(
             connection_limits::ConnectionLimits::default()
                 .with_max_pending_incoming(Some(32))
-                .with_max_pending_outgoing(Some(32))
+                .with_max_pending_outgoing(Some(MAX_PENDING_OUTGOING as u32))
                 .with_max_established_incoming(Some(128))
                 .with_max_established_outgoing(Some(128))
                 .with_max_established_per_peer(Some(max_connections_per_peer))
@@ -1631,6 +1640,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // not stored, so the map cannot grow with DHT churn. A success clears it.
     let mut reconnect_failures: HashMap<PeerId, ReconnectFailure> = HashMap::new();
     let mut reconnect_dial_cursor: usize = 0;
+    let mut reconnect_tick_count: u64 = 0;
     let bootstrap_peers = parse_bootstrap_peers(read_peer_setting("OSIRIS_BOOTSTRAP_PEERS")?.as_deref())?;
     let trusted_peers = parse_trusted_peers(read_peer_setting("OSIRIS_TRUSTED_PEERS")?.as_deref())?;
     // Server-mode kademlia auto-bootstraps whenever the routing table gains
@@ -1700,9 +1710,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
     if relay_addresses.len() > 1 {
         emit!("relay_failover=enabled relays={}", relay_addresses.len());
     }
-    // Parse and admit every configured endpoint before any outbound dial.
+    // Admit every configured endpoint to the DHT, but do not dial more
+    // bootstrap peers than one reconnect tick. The rest are covered by the
+    // rotating reconnect budget instead of filling the pending-outgoing slots.
+    let initial_bootstrap: HashSet<PeerId> = schedule_reconnect_dials(
+        &[],
+        &bootstrap_peers.iter().map(|(peer, _)| *peer).collect::<Vec<_>>(),
+        MAX_RECONNECT_DIALS_PER_TICK,
+        0,
+    ).0.into_iter().collect();
     for (bootstrap_peer, address) in &bootstrap_peers {
         swarm.behaviour_mut().kademlia.add_address(bootstrap_peer, address.clone());
+        if !initial_bootstrap.contains(bootstrap_peer) {
+            emit!("bootstrap_initial_dial_deferred peer={bootstrap_peer}");
+            continue;
+        }
         swarm.dial(address.clone())?;
         pending_dials.insert(*bootstrap_peer, Instant::now());
     }
@@ -1717,7 +1739,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let cached_peers = peer_cache.load_recent(256, peer_cache_max_age_secs, startup_now)?;
     let rejoin_plan = plan_rejoin_dials(
         &cached_peers, &peer_id, &bootstrap_peers, &relay_addresses,
-        &trusted_peers, &revoked_peers, peer_cache_dial_on_start);
+        &trusted_peers, &revoked_peers,
+        startup_rejoin_limit(pending_dials.len(), peer_cache_dial_on_start, MAX_PENDING_OUTGOING));
     emit!(
         "peer_cache=loaded cache_total={} rejoin_candidates={} rejoin_dials={} path={}",
         peer_cache.len()?, cached_peers.len(), rejoin_plan.len(), peer_cache.path().display());
@@ -1830,7 +1853,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     emit!("mdns_enabled={mdns_enabled}");
     emit!("upnp_enabled={upnp_enabled} autonat=enabled hole_punch={}", if hole_punch_enabled { "enabled" } else { "disabled" });
     emit!("relay_server={} auto_relay={auto_relay_enabled}", if relay_server_enabled { "enabled" } else { "disabled" });
-    emit!("connection_limits pending_incoming=32 pending_outgoing=32 established_total=256 established_per_peer={max_connections_per_peer}");
+    emit!("connection_limits pending_incoming=32 pending_outgoing={MAX_PENDING_OUTGOING} established_total=256 established_per_peer={max_connections_per_peer}");
     emit!("bootstrap_peers={}", bootstrap_peers.len());
     emit!("bootstrap_reconnect_interval_seconds={reconnect_interval_secs}");
     emit!("dht_protocol={DHT_PROTOCOL_NAME}");
@@ -1954,6 +1977,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
             _ = reconnect_tick.tick() => {
+                reconnect_tick_count = reconnect_tick_count.saturating_add(1);
                 let reconnect_now = Instant::now();
                 for peer in expire_pending_dials(&mut pending_dials, reconnect_now) {
                     emit!("pending_dial_expired peer={peer} ttl_seconds={}", PENDING_DIAL_TTL.as_secs());
@@ -1970,14 +1994,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         reservation_refused: relay_reservation_refused.contains_key(relay_peer),
                         hop_capable: relay_hop_capable.contains(relay_peer),
                     }) == RelayMaintainAction::Dial
-                        && !reconnect_backoff_active(&reconnect_failures, relay_peer, reconnect_now);
+                        && !reconnect_backoff_active(&reconnect_failures, relay_peer, reconnect_tick_count);
                     dial.then_some(*relay_peer)
                 }).collect();
                 let bootstrap_dial_candidates: Vec<PeerId> = bootstrap_peers.iter().filter_map(|(bootstrap_peer, _)| {
                     let dial = is_peer_allowed(bootstrap_peer, &trusted_peers, &revoked_peers)
                         && !swarm.is_connected(bootstrap_peer)
                         && !pending_dials.contains_key(bootstrap_peer)
-                        && !reconnect_backoff_active(&reconnect_failures, bootstrap_peer, reconnect_now);
+                        && !reconnect_backoff_active(&reconnect_failures, bootstrap_peer, reconnect_tick_count);
                     dial.then_some(*bootstrap_peer)
                 }).collect();
                 let (scheduled_dials, next_cursor) = schedule_reconnect_dials(
@@ -2008,9 +2032,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 emit!("relay_reconnect_attempt peer={relay_peer}");
                             }
                             Err(error) => {
-                                let (attempts, delay) = record_reconnect_failure(&mut reconnect_failures, *relay_peer, reconnect_now);
+                                let (attempts, skips) = record_reconnect_failure(&mut reconnect_failures, *relay_peer, reconnect_tick_count);
                                 emit!("relay_reconnect_error peer={relay_peer} error={error}");
-                                emit!("reconnect_backoff peer={relay_peer} delay_seconds={} attempts={attempts}", delay.as_secs());
+                                emit!("reconnect_backoff peer={relay_peer} skip_ticks={skips} attempts={attempts}");
                             }
                         },
                         RelayMaintainAction::RequestReservation => {
@@ -2057,9 +2081,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 emit!("bootstrap_reconnect_attempt peer={bootstrap_peer}");
                             }
                             Err(error) => {
-                                let (attempts, delay) = record_reconnect_failure(&mut reconnect_failures, *bootstrap_peer, reconnect_now);
+                                let (attempts, skips) = record_reconnect_failure(&mut reconnect_failures, *bootstrap_peer, reconnect_tick_count);
                                 emit!("bootstrap_reconnect_error peer={bootstrap_peer} error={error}");
-                                emit!("reconnect_backoff peer={bootstrap_peer} delay_seconds={} attempts={attempts}", delay.as_secs());
+                                emit!("reconnect_backoff peer={bootstrap_peer} skip_ticks={skips} attempts={attempts}");
                             }
                         }
                     }
@@ -2151,8 +2175,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         let configured = bootstrap_peers.iter().any(|(peer, _)| *peer == target_peer)
                             || relay_addresses.iter().any(|(peer, _)| *peer == target_peer);
                         if configured {
-                            let (attempts, delay) = record_reconnect_failure(&mut reconnect_failures, target_peer, Instant::now());
-                            emit!("reconnect_backoff peer={target_peer} delay_seconds={} attempts={attempts}", delay.as_secs());
+                            let (attempts, skips) = record_reconnect_failure(&mut reconnect_failures, target_peer, reconnect_tick_count);
+                            emit!("reconnect_backoff peer={target_peer} skip_ticks={skips} attempts={attempts}");
                         }
                     }
                     emit!("outgoing_connection_error peer={target:?} connection={connection_id:?} error={error}");
