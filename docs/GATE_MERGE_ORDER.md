@@ -4,7 +4,7 @@ Base of this note: `main`. The checkbox inventory is [PR #275](https://github.co
 
 ## Merge order
 
-1. **#276** (#171). Hickory/Yamux lock floor. `Cargo.lock` is unchanged. T01 stays Partial.
+1. **#276** (#171). Hickory/Yamux lock floor. `Cargo.lock` is unchanged. T01 stays Partial. **#281** is stacked on #276 and only edits `docs/workstreams/ISSUE-171.md`.
 2. **#279** (#255, #176). Rejection-log throttle lines. Land before a new soak. T04 stays Remaining.
 3. **#280** (#176) after #279. Its git base is #279's branch. Reconnect backoff only.
 4. **#277** (#179) ahead of #268. Kill switch, stale data, and an internal paper reconcile. No broker order.
