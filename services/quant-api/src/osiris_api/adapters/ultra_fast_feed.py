@@ -8,6 +8,8 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Callable
 
+from osiris_api.config.ultra_fast_config import UltraFastConfig
+
 _BINARY_TICK = struct.Struct("<QddI")
 
 
@@ -109,9 +111,14 @@ class UltraFastMarketFeed:
 class OSIRISUltraFastAdapter:
     """Explicit JSON adapter; Binance trade IDs are sequences, 'm' is NOT."""
 
-    def __init__(self, api_instance=None, *, buffer_size: int = 65536):
+    def __init__(self, api_instance=None, *, config: UltraFastConfig | None = None,
+                 buffer_size: int | None = None):
         self.api = api_instance
-        self.feed = UltraFastMarketFeed(buffer_size=buffer_size)
+        self.config = config or UltraFastConfig()
+        self.feed = UltraFastMarketFeed(
+            buffer_size=self.config.RING_BUFFER_SIZE if buffer_size is None else buffer_size,
+            max_age_ns=self.config.MAX_STALE_MS * 1_000_000,
+        )
 
     def process_websocket_message(self, message: dict, *,
                                   received_ns: int | None = None) -> bool:
