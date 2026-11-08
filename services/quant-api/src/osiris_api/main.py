@@ -861,3 +861,7 @@ def evaluate_stored_observation_endpoint(p: dict[str, Any] = Body(...)):
         max_future_skew_seconds=p.get("max_future_skew_seconds", 60.0),
         require_feed_admission=p.get("require_feed_admission", False) is True,
     )
+
+
+from .durable_paper_ledger import router as durable_paper_ledger_router
+app.include_router(durable_paper_ledger_router)
