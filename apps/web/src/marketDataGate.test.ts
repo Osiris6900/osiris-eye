@@ -17,4 +17,10 @@ describe('market observation admission', () => {
     expect(validateMarketObservation({ ...observation, symbol: 'BAD SYMBOL' }, policy)).toMatchObject({ accepted: false });
     expect(validateMarketObservation(observation, { ...policy, maxAgeMs: 0 })).toMatchObject({ accepted: false });
   });
+  it('fails closed on malformed runtime payloads', () => {
+    expect(validateMarketObservation(null as unknown as MarketObservation, policy)).toMatchObject({ accepted: false, reason: 'invalid_input' });
+    expect(validateMarketObservation({ ...observation, symbol: 123 as unknown as string }, policy)).toMatchObject({ accepted: false, reason: 'invalid_symbol' });
+    expect(validateMarketObservation({ ...observation, source: {} as unknown as string }, policy)).toMatchObject({ accepted: false, reason: 'untrusted_source' });
+    expect(validateMarketObservation(observation, { ...policy, trustedSources: [42] as unknown as string[] })).toMatchObject({ accepted: false, reason: 'invalid_input' });
+  });
 });
