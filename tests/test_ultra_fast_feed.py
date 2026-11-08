@@ -6,6 +6,7 @@ import time
 
 import pytest
 
+from osiris_api.ultra_fast_config import PRODUCTION_CONFIG, UltraFastConfig
 from osiris_api.ultra_fast_engine import (
     FastTick,
     LockFreeRingBuffer,
@@ -20,6 +21,11 @@ def packet(sequence=1, *, timestamp_ns=None, price=123.5, size=2.0):
         time.time_ns() if timestamp_ns is None else timestamp_ns,
         price, size, sequence,
     )
+
+
+def test_flat_config_import():
+    assert isinstance(PRODUCTION_CONFIG, UltraFastConfig)
+    assert PRODUCTION_CONFIG.FAIL_CLOSED_ON_STALE
 
 
 def test_buffer_wrap_and_overflow():
