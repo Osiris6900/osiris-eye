@@ -318,7 +318,7 @@ mod tests {
         let relay = PeerId::random();
         let direct: Multiaddr = "/ip4/127.0.0.1/tcp/4001".parse().unwrap();
         assert_eq!(super::local_listen_address(direct.clone(), local).to_string(), format!("{direct}/p2p/{local}"));
-        let circuit: Multiaddr = format!("/ip4/127.0.0.1/tcp/4001/p2p/{relay}/p2p-circuit/p2p/{local}").parse().unwrap();
+        let circuit: Multiaddr = format!("{direct}/p2p/{relay}/p2p-circuit/p2p/{local}").parse().unwrap();
         assert_eq!(super::local_listen_address(circuit.clone(), local), circuit);
     }
 
