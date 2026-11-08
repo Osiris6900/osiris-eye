@@ -804,6 +804,9 @@ app.include_router(market_mechanics_router)
 
 
 from .paper_workflow import evaluate_paper_workflow
+from .paper_pipeline_status import router as paper_pipeline_status_router, record_paper_workflow
+
+app.include_router(paper_pipeline_status_router)
 
 
 @app.post("/paper/workflow/evaluate")
@@ -832,6 +835,7 @@ def evaluate_paper_workflow_endpoint(p: dict[str, Any] = Body(...)):
         },
     )
     result["audit"] = audit
+    record_paper_workflow(result)
     return result
 
 
