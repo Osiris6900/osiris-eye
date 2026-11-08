@@ -17,6 +17,9 @@ REQUIRED = (
     "operator_rbac_passed",
     "backup_restore_passed",
     "ci_passed",
+    "network_partition_recovery_passed",
+    "restart_replay_recovery_passed",
+    "paper_order_trace_passed",
 )
 
 def validate(record):
@@ -25,6 +28,10 @@ def validate(record):
     errors = [f"{key} must be true" for key in REQUIRED if record.get(key) is not True]
     if record.get("live_trading_enabled") is not False:
         errors.append("live_trading_enabled must be false")
+    if record.get("test_mode") != "paper":
+        errors.append("test_mode must be paper")
+    if record.get("external_order_count") != 0 or type(record.get("external_order_count")) is not int:
+        errors.append("external_order_count must be integer zero")
     return errors
 
 if __name__ == "__main__":
