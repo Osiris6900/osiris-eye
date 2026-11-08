@@ -6,6 +6,7 @@ verified a vendor contract, redistribution license, or reviewer identity.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from math import isfinite
 from typing import Any, Mapping
 
 DEFAULT_MAX_REVIEW_AGE_SECONDS = 30 * 24 * 60 * 60.0
@@ -43,11 +44,13 @@ def admit_feed(
     max_review_age_seconds: float = DEFAULT_MAX_REVIEW_AGE_SECONDS,
 ) -> dict[str, Any]:
     """Return an auditable admission report or reject without admitting data."""
+    provider = _text(provider, "provider")
+    instrument = _text(instrument, "instrument")
     if not isinstance(policy, Mapping):
         raise FeedAdmissionRejection("feed_policy_required")
     if isinstance(max_review_age_seconds, bool) or not isinstance(
         max_review_age_seconds, (int, float)
-    ) or not 0 < max_review_age_seconds <= 366 * 24 * 60 * 60:
+    ) or not isfinite(max_review_age_seconds) or not 0 < max_review_age_seconds <= 366 * 24 * 60 * 60:
         raise FeedAdmissionRejection("feed_quality_review_age_bound_invalid")
     record = policy.get(provider)
     if not isinstance(record, Mapping):
