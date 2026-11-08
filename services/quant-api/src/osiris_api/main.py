@@ -6,6 +6,7 @@ from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from .integration_gate import router as paper_integration_router
 from .data_store import ResearchStore
 from .data_intelligence import audit_observations
 from .backtesting import simulate_signals
@@ -48,6 +49,7 @@ app = FastAPI(
     description="Shared research API and point-in-time data store; no live execution.",
 )
 store = ResearchStore()
+app.include_router(paper_integration_router)
 
 
 @app.middleware("http")
