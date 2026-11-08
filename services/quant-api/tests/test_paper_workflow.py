@@ -29,3 +29,17 @@ def test_paper_workflow_blocks_order_over_risk_limit():
     assert result["risk"]["reason"] == "max_order_notional_exceeded"
     assert result["paper_order_intent"]["status"] == "BLOCKED_BY_RISK"
     assert result["execution"]["broker_order_submitted"] is False
+
+
+def test_paper_workflow_rejects_non_string_symbol():
+    import pytest
+
+    for symbol in (None, 123, True, ["BTC-USD"]):
+        with pytest.raises(ValueError, match="invalid_symbol"):
+            evaluate_paper_workflow(
+                symbol=symbol,
+                signals=[0.0, 0.5],
+                asset_returns=[0.0, 0.01],
+                quantity=1,
+                price=100,
+            )
