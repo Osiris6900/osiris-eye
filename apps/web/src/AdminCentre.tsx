@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 
 /**
  * Authenticated read-only admin control centre (issue #180).
@@ -29,19 +29,39 @@ const SECRET_MARKERS = [
   'credential', 'api_key', 'apikey', 'session',
 ];
 
-/** Recursively drop object keys that look like credentials. */
-export function scrubForDisplay(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(scrubForDisplay);
+/** Recursively drop credential-shaped keys and the in-memory bearer token. */
+export function scrubForDisplay(value: unknown, secret?: string): unknown {
+  if (typeof value === 'string') {
+    if (secret && secret.length >= 8 && value.includes(secret)) {
+      return value.split(secret).join('[redacted]');
+    }
+    return value;
+  }
+  if (Array.isArray(value)) return value.map(item => scrubForDisplay(item, secret));
   if (value && typeof value === 'object') {
     const out: JsonObject = {};
     for (const [key, item] of Object.entries(value as JsonObject)) {
       const lowered = key.toLowerCase();
       if (SECRET_MARKERS.some(marker => lowered.includes(marker))) continue;
-      out[key] = scrubForDisplay(item);
+      out[key] = scrubForDisplay(item, secret);
     }
     return out;
   }
   return value;
+}
+
+const SAFE_ERROR_DETAILS = new Set(['admin_response_redacted']);
+
+function errorDetail(status: number, body: unknown): string {
+  if (status === 401) return 'authentication_failed';
+  if (status === 503) return 'admin_not_configured';
+  const detail = body && typeof body === 'object' ? (body as JsonObject).detail : undefined;
+  if (typeof detail === 'string' && SAFE_ERROR_DETAILS.has(detail)) return detail;
+  return `http_${status}`;
+}
+
+function countText(value: unknown): string {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? String(value) : 'Unavailable';
 }
 
 function countOrUnavailable(outbox: JsonObject | undefined, key: string): string {
@@ -77,10 +97,13 @@ async function fetchSection(apiBase: string, path: string, token: string): Promi
     const response = await fetch(`${apiBase}${path}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    if (response.status === 401) return { status: 'error', data: { detail: 'authentication_failed' } };
     if (response.status === 403) return { status: 'denied' };
-    if (!response.ok) return { status: 'error', data: { detail: `http_${response.status}` } };
-    return { status: 'ok', data: scrubForDisplay(await response.json()) as JsonObject };
+    if (!response.ok) {
+      let body: unknown = null;
+      try { body = await response.json(); } catch { body = null; }
+      return { status: 'error', data: { detail: errorDetail(response.status, body) } };
+    }
+    return { status: 'ok', data: scrubForDisplay(await response.json(), token) as JsonObject };
   } catch {
     return { status: 'error', data: { detail: 'backend_unavailable' } };
   }
@@ -101,8 +124,11 @@ export function AdminCentre({ apiBase = '/api' }: { apiBase?: string }) {
     paper: { status: 'idle' }, risk: { status: 'idle' }, alerts: { status: 'idle' },
   }));
   const [view, setView] = useState<SectionKey>('overview');
+  const [gateNotice, setGateNotice] = useState('');
+  const requestId = useRef(0);
 
   const load = useCallback(async (bearer: string) => {
+    const id = ++requestId.current;
     setSections(prev => {
       const next = { ...prev };
       (Object.keys(next) as SectionKey[]).forEach(key => { next[key] = { status: 'loading' }; });
@@ -113,17 +139,24 @@ export function AdminCentre({ apiBase = '/api' }: { apiBase?: string }) {
         async ([key, path]) => [key, await fetchSection(apiBase, path, bearer)] as const,
       ),
     );
+    if (id !== requestId.current) return;
     setSections(Object.fromEntries(entries) as Record<SectionKey, Section>);
   }, [apiBase]);
 
   const connect = (event: React.FormEvent) => {
     event.preventDefault();
-    if (!tokenInput.trim()) return;
-    setToken(tokenInput.trim());
+    const next = tokenInput.trim();
+    if (!next) {
+      setGateNotice('Enter an admin bearer token. It stays in memory for this page only.');
+      return;
+    }
+    setGateNotice('');
+    setToken(next);
     setTokenInput('');
-    void load(tokenInput.trim());
+    void load(next);
   };
   const disconnect = () => {
+    requestId.current += 1;
     setToken(null);
     setSections({
       overview: { status: 'idle' }, network: { status: 'idle' }, feeds: { status: 'idle' },
@@ -137,17 +170,18 @@ export function AdminCentre({ apiBase = '/api' }: { apiBase?: string }) {
   const paper = sections.paper.data;
   const risk = sections.risk.data;
   const alerts = sections.alerts.data;
-  const adapters = (feeds?.adapters as JsonObject[] | undefined) || [];
-  const flags = (risk?.flags as JsonObject[] | undefined) || [];
-  const activeAlerts = (alerts?.active as JsonObject[] | undefined) || [];
-  const acknowledgedAlerts = (alerts?.acknowledged as JsonObject[] | undefined) || [];
-  const positions = (paper?.positions as JsonObject[] | undefined) || [];
+  const adapters = Array.isArray(feeds?.adapters) ? feeds.adapters as JsonObject[] : null;
+  const flags = Array.isArray(risk?.flags) ? risk.flags as JsonObject[] : null;
+  const activeAlerts = Array.isArray(alerts?.active) ? alerts.active as JsonObject[] : null;
+  const acknowledgedAlerts = Array.isArray(alerts?.acknowledged) ? alerts.acknowledged as JsonObject[] : null;
+  const positions = Array.isArray(paper?.positions) ? paper.positions as JsonObject[] : null;
   const outbox = (network?.outbox as JsonObject | undefined);
   const role = typeof overview?.role === 'string' ? overview.role : null;
 
   const renderSection = (key: SectionKey, content: React.ReactNode) => {
     const section = sections[key];
-    if (section.status === 'loading' || section.status === 'idle') return <p>Loading…</p>;
+    if (section.status === 'loading') return <p>Loading…</p>;
+    if (section.status === 'idle') return <p>Not loaded.</p>;
     if (section.status === 'denied') return <Denied />;
     if (section.status === 'error') {
       return <SectionError detail={String(section.data?.detail || '')} />;
@@ -171,6 +205,7 @@ export function AdminCentre({ apiBase = '/api' }: { apiBase?: string }) {
             style={{ display: 'block', width: '100%', margin: '10px 0', padding: 10 }} />
           <button className="button" type="submit">Connect</button>
         </form>
+        {gateNotice && <p role="alert">{gateNotice}</p>}
         <p className="notice">The token is held in memory only and is never stored, logged or displayed.
           Authorization is enforced by the API for every request.</p>
         <p className="muted">Research and paper operations only — no live trading. No fabricated metrics:
@@ -235,14 +270,15 @@ export function AdminCentre({ apiBase = '/api' }: { apiBase?: string }) {
 
       {view === 'feeds' && <section className="panel" aria-label="Feeds">
         {renderSection('feeds', <>
-          {adapters.map(adapter => {
+          {adapters === null && <p className="muted">Adapters unavailable.</p>}
+          {adapters?.map(adapter => {
             const review = adapter.quality_review as JsonObject | undefined;
             const name = String(adapter.adapter);
             return <div className="setting" key={name}>
               <span>{name} · {((adapter.instruments as string[]) || []).join(', ')} · review {String(review?.status)} ({review?.fresh ? 'fresh' : 'stale'}){adapter.suspended ? ' · SUSPENDED' : ''}</span>
             </div>;
           })}
-          {adapters.length === 0 && <p className="muted">No adapters registered.</p>}
+          {adapters?.length === 0 && <p className="muted">No adapters registered.</p>}
         </>)}
       </section>}
 
@@ -258,10 +294,11 @@ export function AdminCentre({ apiBase = '/api' }: { apiBase?: string }) {
             <div className="setting"><span>Realized P&amp;L</span><span>{String((paper?.pnl as JsonObject | undefined)?.realized)}</span></div>
             <div className="setting"><span>Unrealized P&amp;L</span><span>{String((paper?.pnl as JsonObject | undefined)?.unrealized ?? 'Unavailable without marks')}</span></div>
           </div>
-          {positions.map(position => <p key={String(position.symbol)} className="muted">
+          {positions === null && <p className="muted">Positions unavailable.</p>}
+          {positions?.map(position => <p key={String(position.symbol)} className="muted">
             {String(position.symbol)}: {String(position.quantity)} units · average cost {String(position.average_cost)}
           </p>)}
-          {positions.length === 0 && <p className="muted">No open paper positions.</p>}
+          {positions?.length === 0 && <p className="muted">No open paper positions.</p>}
           <h3>Recent synthetic fills</h3>
           {fillRows(paper).map(fill => <p key={`${fill.side}-${fill.symbol}-${fill.quantity}-${fill.price}`} className="muted">
             {fill.side} {fill.symbol} {fill.quantity} @ {fill.price}
@@ -277,24 +314,31 @@ export function AdminCentre({ apiBase = '/api' }: { apiBase?: string }) {
             <div className="setting"><span>Exposure</span><span>{risk?.exposure === 'unavailable_without_marks' ? 'Unavailable without marks' : String(risk?.exposure ?? 'Unavailable')}</span></div>
             <div className="setting"><span>Cost basis</span><span>{risk?.cost_basis_gross == null ? 'Unavailable' : String(risk.cost_basis_gross)}</span></div>
           </div>
-          {flags.map(flag => <p key={`${flag.kind}:${flag.key}`} className="notice">
+          {flags === null && <p className="muted">Risk flags unavailable.</p>}
+          {flags?.map(flag => <p key={`${flag.kind}:${flag.key}`} className="notice">
             [{String(flag.severity)}] {String(flag.message)}
           </p>)}
-          {flags.length === 0 && <p className="status">No active risk flags.</p>}
+          {flags?.length === 0 && <p className="status">No active risk flags.</p>}
         </>)}
       </section>}
 
       {view === 'alerts' && <section className="panel" aria-label="Alerts">
         {renderSection('alerts', <>
-          <p className="muted">Storage: {String(alerts?.storage ?? 'unavailable')}. This view cannot acknowledge alerts.</p>
-          {activeAlerts.map(alert => <div className="setting" key={String(alert.alert_id)}>
+          <p className="muted">Storage: {alerts?.storage === 'process_memory_not_durable' ? 'process memory, not durable' : 'unavailable'}. This view cannot acknowledge alerts.</p>
+          <p className="muted">{alerts?.durable === false
+            ? 'Alerts are lost on restart. They are not a durable audit log.'
+            : 'Alert durability unavailable.'}</p>
+          <p className="muted">Active count: {countText(alerts?.active_count)} · Acknowledged count: {countText(alerts?.acknowledged_count)}</p>
+          {activeAlerts === null && <p className="muted">Active alerts unavailable.</p>}
+          {activeAlerts?.map(alert => <div className="setting" key={String(alert.alert_id)}>
             <span>[{String(alert.severity)}] {String(alert.message)} · {String(alert.raised_at ?? 'time unavailable')}</span>
           </div>)}
-          {activeAlerts.length === 0 && <p className="status">No active alerts.</p>}
-          {acknowledgedAlerts.map(alert => <p key={`ack-${String(alert.alert_id)}`} className="muted">
+          {activeAlerts?.length === 0 && <p className="status">No active alerts.</p>}
+          {acknowledgedAlerts === null && <p className="muted">Acknowledged alerts unavailable.</p>}
+          {acknowledgedAlerts?.map(alert => <p key={`ack-${String(alert.alert_id)}`} className="muted">
             Acknowledged: {String(alert.alert_id)} by {String(alert.acknowledged_by)}
           </p>)}
-          {acknowledgedAlerts.length === 0 && <p className="muted">No acknowledged alerts.</p>}
+          {acknowledgedAlerts?.length === 0 && <p className="muted">No acknowledged alerts.</p>}
         </>)}
       </section>}
 

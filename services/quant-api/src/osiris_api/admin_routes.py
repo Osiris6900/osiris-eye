@@ -163,6 +163,7 @@ def alerts(request: Request) -> dict[str, Any]:
         "schema": "osiris.admin_alert_list.v1",
         "generated_at": network["generated_at"],
         "storage": "process_memory_not_durable",
+        "durable": False,
         "active_count": len(active),
         "acknowledged_count": len(acknowledged),
         "active": active,

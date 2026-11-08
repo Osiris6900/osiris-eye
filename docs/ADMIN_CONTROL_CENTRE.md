@@ -112,6 +112,9 @@ above can `ack`; acknowledgements record role and timestamp.
   time; idempotency keys omitted), `cost_basis_gross` from ledger positions, and
   `market_value` only when every position has a mark. `open_orders` is `null`
   with reason `not_stored`.
+- Alert list adds `durable: false` and `storage: process_memory_not_durable`.
+  Counts match the arrays returned. The dashboard prints that limitation only
+  for this known storage value and does not render arbitrary storage text.
 - The React dashboard is read-only: it does not call kill-switch, feed revoke,
   or alert ack. Those POST routes remain server-side and RBAC-gated.
 - Unrealized P&L is `null` without external marks (`marks_available: false`).

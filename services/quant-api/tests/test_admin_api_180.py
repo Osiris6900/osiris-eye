@@ -295,6 +295,27 @@ def test_admin_exemption_does_not_weaken_outer_middleware(client, monkeypatch):
     ).status_code == 200
 
 
+def test_alerts_report_process_memory_and_require_authentication(client):
+    anonymous = client.get("/admin/alerts")
+    assert anonymous.status_code == 401
+    assert anonymous.json()["detail"] == "admin_authentication_required"
+    allowed = client.get("/admin/alerts", headers=_headers("viewer"))
+    assert allowed.status_code == 200
+    body = allowed.json()
+    assert body["storage"] == "process_memory_not_durable"
+    assert body["durable"] is False
+    assert body["active_count"] == len(body["active"])
+    assert body["acknowledged_count"] == len(body["acknowledged"])
+    assert isinstance(body["active"], list)
+    assert isinstance(body["acknowledged"], list)
+    denied = client.get("/admin/alerts", headers={"Authorization": "Bearer not-a-role-token"})
+    assert denied.status_code == 401
+    for secret in TOKENS.values():
+        assert secret not in allowed.text
+        assert secret not in anonymous.text
+        assert secret not in denied.text
+
+
 def test_paper_fills_are_readable_by_research_roles_only(client):
     from osiris_api import durable_paper_ledger
 
