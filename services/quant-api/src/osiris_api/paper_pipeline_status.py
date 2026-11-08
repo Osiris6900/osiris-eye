@@ -3,6 +3,7 @@
 No order execution or durable workflow status is claimed. A process restart
 clears this view; deployments with multiple workers need a shared store.
 """
+from copy import deepcopy
 from datetime import datetime, timezone
 from threading import Lock
 
@@ -27,6 +28,10 @@ def record_paper_workflow(result: dict) -> None:
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "source": "in-process-paper-workflow",
         "detail": "Paper evaluation only; no broker orders or fills.",
+        "intent": dict(result.get("paper_order_intent", {})),
+        "positions": None,
+        "cash": None,
+        "pnl": None,
     }
     with _lock:
         _latest = snapshot
@@ -46,5 +51,9 @@ def get_paper_pipeline_status():
                 "timestamp": "",
                 "source": "unavailable",
                 "detail": "No paper workflow evaluation has run in this process.",
+                "intent": None,
+                "positions": None,
+                "cash": None,
+                "pnl": None,
             }
-        return dict(_latest)
+        return deepcopy(_latest)
