@@ -32,7 +32,7 @@
         "services/quant-api/requirements-lock.txt"
       ],
       "evidence_commits": ["5176eae8843a1e5144ac903f37843fe9bb46cdd9"],
-      "open_prs": [276],
+      "open_prs": [276, 281],
       "blocker": "paste 1.0.15 (RUSTSEC-2024-0436) remains; CycloneDX SBOM still marks Python deployment resolution unresolved; license provenance checker is not a Dependency Security Audit step; #171 text is stale."
     },
     {
