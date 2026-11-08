@@ -116,14 +116,14 @@ class Agent:
                            'peer_not_allowed_rejected', 'peer_not_allowed_rejected_suppressed'):
                 if line.startswith(prefix + ' '):
                     reason = re.search(r'\breason=([a-z_]{1,64})(?:\s|$)', line)
+                    amount = 1
+                    if prefix == 'peer_not_allowed_rejected_suppressed':
+                        count = re.search(r'\bcount=(\d+)(?:\s|$)', line)
+                        if count is None or int(count[1]) < 1:
+                            self.emit('fatal', reason='invalid_suppressed_rejection_count', node=index)
+                            break
+                        amount = int(count[1])
                     with self.lock:
-                        amount = 1
-                        if prefix == 'peer_not_allowed_rejected_suppressed':
-                            count = re.search(r'\\bcount=(\\d+)(?:\\s|$)', line)
-                            if count is None or int(count[1]) < 1:
-                                self.emit('fatal', reason='invalid_suppressed_rejection_count', node=index)
-                                break
-                            amount = int(count[1])
                         self.diagnostics[prefix + (':' + reason[1] if reason else '')] += amount
             if len(line) > 32768:
                 self.emit('fatal', reason='oversized_node_output', node=index)
