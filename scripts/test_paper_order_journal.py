@@ -65,6 +65,18 @@ class PaperOrderJournalTests(unittest.TestCase):
             apply_command(state, {"command_id": "c3", "type": "order",
                                   "order": {"id": "o2", "symbol": "BTC", "side": "buy", "quantity": "1"}})
 
+    def test_recovery_preserves_historical_fills_after_emergency_halt(self):
+        state, _ = apply_command(self.initial(), self.order())
+        state, _ = apply_command(state, self.fill())
+        state["kill_switch"] = True
+        state["market_data_fresh"] = False
+        restored = json.loads(json.dumps(state))
+        self.assertEqual(recover(restored)["cash"], "900")
+        self.assertEqual(recover(restored)["positions"]["BTC"], "1")
+        with self.assertRaises(ValueError):
+            apply_command(restored, {"command_id": "c3", "type": "order",
+                                    "order": {"id": "o2", "symbol": "BTC", "side": "buy", "quantity": "1"}})
+
     def test_corrupt_restart_snapshot_rejected(self):
         state, _ = apply_command(self.initial(), self.order())
         state["commands"]["c1"]["command"]["command_id"] = "tampered"
