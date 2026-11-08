@@ -102,6 +102,13 @@ class UltraFastMarketFeed:
     def subscribe(self, symbol: str, callback: Callable[[TickData], None]) -> None:
         self.subscribers.setdefault(symbol, []).append(callback)
 
+    def unsubscribe(self, symbol: str, callback: Callable[[TickData], None]) -> None:
+        callbacks = self.subscribers.get(symbol, [])
+        if callback in callbacks:
+            callbacks.remove(callback)
+        if not callbacks:
+            self.subscribers.pop(symbol, None)
+
     def stats(self) -> dict[str, float | int]:
         return {"accepted": self.accepted, "rejected": self.rejected,
                 "overflow": self.buffer.rejected_overflow,
