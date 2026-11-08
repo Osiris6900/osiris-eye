@@ -22,6 +22,8 @@ def check(record):
         return errors
     require(bool(SHA.fullmatch(str(record.get("commit_sha", "")))), "valid commit_sha required")
     require(record.get("clean_checkout") is True, "clean_checkout must be true")
+    require(record.get("test_passed") is True, "test_passed must be true")
+    require(isinstance(record.get("duration_seconds"), int) and not isinstance(record.get("duration_seconds"), bool) and record.get("duration_seconds") >= 60, "sustained test duration >=60 seconds required")
     require(record.get("topology") in ("two_independent_hosts", "three_independent_hosts"), "independent-host topology required")
     hosts = record.get("hosts")
     require(isinstance(hosts, list), "hosts must be a list")
