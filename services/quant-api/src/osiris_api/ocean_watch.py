@@ -17,6 +17,8 @@ the mesh:
   stations (The Battery NY, San Francisco, Key West).
 - NWS api.weather.gov — active US marine/coastal alerts (tsunami,
   hurricane, storm, coastal flood, special marine).
+- JMA (Japan Meteorological Agency) — earthquake/volcano bulletin feed;
+  tsunami, eruption and ashfall bulletins for the northwest Pacific.
 
 The companion ``event_market_impact`` module then checks each ocean
 event's plausibly exposed instruments for unusual moves.
@@ -35,6 +37,7 @@ import hashlib
 import json
 import math
 import re
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
@@ -48,8 +51,11 @@ PROVIDER_MARINE = "open-meteo-marine"
 PROVIDER_NDBC = "noaa-ndbc"
 PROVIDER_COOPS = "noaa-coops"
 PROVIDER_NWS = "nws-alerts"
+PROVIDER_JMA = "jma-bulletins"
 
-DEFAULT_PROVIDERS = frozenset({PROVIDER_MARINE, PROVIDER_NDBC, PROVIDER_COOPS, PROVIDER_NWS})
+DEFAULT_PROVIDERS = frozenset({
+    PROVIDER_MARINE, PROVIDER_NDBC, PROVIDER_COOPS, PROVIDER_NWS, PROVIDER_JMA,
+})
 
 #: Keyless default ocean watchlist. Operators can extend it; every
 #: source here needs no account, key or payment.
@@ -64,6 +70,7 @@ DEFAULT_OCEAN_WATCHLIST: dict[str, tuple[str, ...]] = {
         "Tsunami Warning", "Tsunami Advisory", "Hurricane Warning",
         "Storm Warning", "Coastal Flood Warning", "Special Marine Warning",
     ),
+    PROVIDER_JMA: ("tsunami", "eruption", "ashfall", "earthquake"),
 }
 
 #: Shipping chokepoints: name → (latitude, longitude). These are the
@@ -104,10 +111,19 @@ KNOWN_NWS_EVENTS = frozenset({
     "Special Marine Warning", "High Surf Warning", "High Surf Advisory",
 })
 
+#: JMA bulletin categories: slug → Japanese title keyword in the feed.
+KNOWN_JMA_CATEGORIES: dict[str, str] = {
+    "tsunami": "津波",
+    "eruption": "噴火",
+    "ashfall": "降灰",
+    "earthquake": "震源",
+}
+
 MAX_EVENTS_PER_SOURCE = 100
 MAX_RESPONSE_BYTES = 2 * 1_048_576
 MAX_TEXT_LENGTH = 240
 NWS_ALERTS_PER_EVENT = 25
+JMA_ENTRIES_PER_CATEGORY = 10
 
 _SITE_SLUG = re.compile(r"[a-z0-9-]{2,40}")
 _STATION_ID = re.compile(r"[A-Za-z0-9]{4,8}")
@@ -387,11 +403,64 @@ def _fetch_nws(event_names: tuple[str, ...], transport: Transport, timeout: floa
     return observations
 
 
+def _fetch_jma(categories: tuple[str, ...], transport: Transport, timeout: float,
+               now: datetime) -> list[dict[str, Any]]:
+    observations: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    requested = [category.strip().lower() for category in categories]
+    unknown = [category for category in requested if category not in KNOWN_JMA_CATEGORIES]
+    if unknown:
+        raise ValueError("invalid_jma_category:" + ",".join(sorted(unknown)))
+    body = transport("https://www.data.jma.go.jp/developer/xml/feed/eqvol.xml", timeout)
+    try:
+        root = ET.fromstring(body.decode("utf-8", errors="replace"))
+    except ET.ParseError as exc:
+        raise ValueError("invalid_jma_response") from exc
+    namespace = {"atom": "http://www.w3.org/2005/Atom"}
+    entries = root.findall("atom:entry", namespace)
+    per_category: dict[str, int] = {category: 0 for category in requested}
+    for entry in entries:
+        title = _text(entry.findtext("atom:title", "", namespace))
+        if not title:
+            continue
+        matched = [category for category in requested
+                   if KNOWN_JMA_CATEGORIES[category] in title]
+        if not matched:
+            continue
+        link = ""
+        link_node = entry.find("atom:link", namespace)
+        if link_node is not None:
+            link = _text(link_node.get("href"))
+        entry_id = _text(entry.findtext("atom:id", "", namespace)) or link or title
+        if entry_id in seen_ids:
+            continue
+        seen_ids.add(entry_id)
+        category = matched[0]
+        if per_category[category] >= JMA_ENTRIES_PER_CATEGORY:
+            continue
+        per_category[category] += 1
+        event = {
+            "kind": "jma_bulletin",
+            "title": title,
+            "category": category,
+            "jma_id": entry_id,
+            "link": link or None,
+            "event_time": _iso_text(entry.findtext("atom:updated", "", namespace)),
+            "source": "jma_eqvol_atom_feed",
+        }
+        digest = hashlib.sha256(entry_id.encode("utf-8")).hexdigest()[:16].upper()
+        observations.append(_observation(f"JMA:{digest}", PROVIDER_JMA, event, now))
+        if len(observations) > MAX_EVENTS_PER_SOURCE:
+            raise ValueError("too_many_events")
+    return observations
+
+
 _SOURCE_FETCHERS = {
     PROVIDER_MARINE: _fetch_marine,
     PROVIDER_NDBC: _fetch_ndbc,
     PROVIDER_COOPS: _fetch_coops,
     PROVIDER_NWS: _fetch_nws,
+    PROVIDER_JMA: _fetch_jma,
 }
 
 

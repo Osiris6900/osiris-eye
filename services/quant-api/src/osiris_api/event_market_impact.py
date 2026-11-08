@@ -88,6 +88,24 @@ DEFAULT_EXPOSURE_RULES: tuple[ExposureRule, ...] = (
     ExposureRule("marine_alert", ("tsunami",), ("^SPX", "^NKX", "USD-JPY")),
     ExposureRule("marine_alert", ("hurricane", "tropical storm", "storm"), ("^SPX", "^DJI")),
     ExposureRule("marine_alert", ("coastal flood", "special marine", "high surf"), ("^SPX",)),
+    # Ocean expansion: JMA bulletins (Japanese titles) and detector-raised
+    # anomalies. An anomaly on a lane maps to the same economies as the
+    # lane's marine conditions.
+    ExposureRule("jma_bulletin", ("津波",), ("^NKX", "USD-JPY")),
+    ExposureRule("jma_bulletin", ("噴火", "降灰"), ("^NKX",)),
+    ExposureRule("ocean_anomaly", ("hormuz", "bab-el-mandeb"), ("USD-JPY", "^SPX")),
+    ExposureRule("ocean_anomaly", ("malacca", "singapore"), ("USD-CNY", "^NKX")),
+    ExposureRule("ocean_anomaly", ("suez", "gibraltar", "english-channel"), ("USD-EUR",)),
+    ExposureRule("ocean_anomaly", ("panama", "cape-of-good-hope"), ("^SPX", "^DJI")),
+    ExposureRule("ocean_anomaly", ("buoy",), ("^SPX",)),
+    # Frontier senses (see docs/FRONTIER_WATCH.md): rivers, radiation,
+    # volcanoes. Satellite TLEs deliberately have no exposure rule.
+    ExposureRule("river_gauge", ("mississippi", "potomac", "sacramento"), ("^SPX",)),
+    ExposureRule("radiation", ("fukushima", "tokyo"), ("^NKX", "USD-JPY")),
+    ExposureRule("radiation", ("chernobyl",), ("USD-EUR",)),
+    ExposureRule("radiation", ("new-york",), ("^SPX",)),
+    ExposureRule("volcano_report", ("indonesia", "japan", "philippines"), ("^NKX",)),
+    ExposureRule("volcano_report", ("iceland", "italy", "etna", "sicily"), ("USD-EUR",)),
 )
 
 
