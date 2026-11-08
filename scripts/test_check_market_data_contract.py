@@ -13,4 +13,7 @@ class MarketDataTests(unittest.TestCase):
         r=self.row(); r["price"]="NaN"; self.assertTrue(validate([r]))
     def test_reject_stale(self):
         r=self.row(); r["received_time"]="2026-11-08T10:10:00Z"; self.assertTrue(validate([r]))
+    def test_invalid_freshness_limit_denied(self):
+        self.assertTrue(validate([self.row()], -1))
+        self.assertTrue(validate([self.row()], True))
 if __name__=="__main__": unittest.main()
