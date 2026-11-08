@@ -11,6 +11,7 @@ PERMISSIONS = {
     "viewer": frozenset({"read_health", "read_audit"}),
     "analyst": frozenset({"read_health", "read_audit", "read_research"}),
     "operator": frozenset({"read_health", "read_audit", "read_research", "ack_alert"}),
+    "risk_officer": frozenset({"read_health", "read_audit", "read_research", "ack_alert", "activate_kill_switch"}),
     "security_admin": frozenset({"read_health", "read_audit", "read_research", "ack_alert", "revoke_peer"}),
 }
 DANGEROUS = frozenset({"place_live_order", "export_private_key", "disable_risk_gate", "erase_audit"})
