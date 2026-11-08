@@ -52,6 +52,7 @@ class VulnerableLockRatchetTests(unittest.TestCase):
         blocked, maintenance = self.inspect([
             ("hickory-proto", "0.26.1"),
             ("hickory-resolver", "0.26.2"),
+            ("hickory-resolver", "0.26.10"),
             ("hickory-net", "0.26.1"),
             ("yamux", "0.13.10"),
             ("paste", "1.0.15"),
@@ -59,9 +60,40 @@ class VulnerableLockRatchetTests(unittest.TestCase):
         self.assertEqual(blocked, [])
         self.assertEqual(len(maintenance), 1)
 
-    def test_prerelease_below_the_fix_line_is_blocked(self):
-        blocked, _maintenance = self.inspect([("hickory-proto", "0.26.1-beta.1")])
-        self.assertEqual(blocked[0][1], "0.26.1-beta.1")
+    def test_prereleases_and_noncanonical_versions_do_not_pass(self):
+        samples = [
+            "0.26.1-beta.1",
+            "0.26.3-alpha.1",
+            "0.14.0-rc.1",
+            "0.13.10-0",
+            "0.14.1+build.1",
+            "0.14.01",
+            "v0.14.1",
+            "0.14.1 ",
+            "latest",
+            "",
+        ]
+        for version in samples:
+            blocked, _maintenance = self.inspect([("yamux", version), ("hickory-proto", version)])
+            self.assertEqual(
+                [item[1] for item in blocked],
+                [version, version],
+                version,
+            )
+        completed = subprocess.run(
+            [sys.executable, str(Path(ratchet.__file__)), str(self._write([("yamux", "0.14.0-rc.1")]))],
+            check=False, capture_output=True, text=True,
+        )
+        self.assertEqual(completed.returncode, 1)
+        self.assertIn("not a stable release", completed.stdout)
+        self.assertNotIn("ratchet passed", completed.stdout)
+
+    def _write(self, packages):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        path = Path(directory.name) / "Cargo.lock"
+        path.write_text(lock_text(packages))
+        return path
 
     def test_malformed_lock_fails_closed(self):
         with self.assertRaises(ValueError):

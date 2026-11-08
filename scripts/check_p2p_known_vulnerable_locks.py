@@ -7,6 +7,7 @@ It is not an OSV scan, a reachability proof, or a paste remediation.
 """
 import argparse
 from pathlib import Path
+import re
 import sys
 import tomllib
 
@@ -21,19 +22,22 @@ FLOORS = (
 MAINTENANCE = {"paste": "RUSTSEC-2024-0436 (unmaintained; no fixed crates.io release)"}
 
 
-def version_key(version):
-    if not isinstance(version, str) or not version or version != version.strip():
-        raise ValueError(f"invalid crate version {version!r}")
-    release, separator, _prerelease = version.partition("-")
-    numbers = release.split(".")
-    if not numbers or any(not part.isdigit() for part in numbers):
-        raise ValueError(f"invalid crate version {version!r}")
-    # A pre-release is older than the same numbered release.
-    return (tuple(int(part) for part in numbers), 0 if separator else 1)
+# Stable dotted releases only. Pre-releases, build metadata, leading zeros,
+# and any other string are not treated as meeting a fix line.
+_STABLE_VERSION = re.compile(r"^(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*))*$")
 
 
-def older_than(version, floor):
-    return version_key(version) < version_key(floor)
+def stable_key(version):
+    if isinstance(version, str) and _STABLE_VERSION.fullmatch(version):
+        return tuple(int(part) for part in version.split("."))
+    return None
+
+
+def below_fix_line(version, floor):
+    got = stable_key(version)
+    if got is None:
+        return True
+    return got < stable_key(floor)
 
 
 def inspect(lock):
@@ -53,7 +57,7 @@ def inspect(lock):
         (name, version, floor, advisory)
         for name, version in found
         for crate, floor, advisory in FLOORS
-        if name == crate and older_than(version, floor)
+        if name == crate and below_fix_line(version, floor)
     ]
     maintenance = [
         (name, version, advisory)
@@ -73,7 +77,11 @@ def main():
         print("BLOCK: cannot inspect lock:", exc)
         return 2
     for name, version, floor, advisory in blocked:
-        print(f"BLOCK: {name} {version}: {advisory} (fixed in {floor})")
+        if stable_key(version) is None:
+            reason = f"not a stable release; fix line is {floor}"
+        else:
+            reason = f"fixed in {floor}"
+        print(f"BLOCK: {name} {version}: {advisory} ({reason})")
     for name, version, advisory in maintenance:
         print(f"REVIEW: {name} {version}: {advisory}")
     if blocked:

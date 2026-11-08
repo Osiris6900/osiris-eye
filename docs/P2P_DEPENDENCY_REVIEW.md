@@ -103,16 +103,17 @@ IDs/classifications or derived summary counts are stale or internally
 inconsistent. The checks derive expected counts from the current lock inputs;
 they do not require a fixed number of advisories after remediation.
 
-The live query at `2026-11-08T11:20:57Z` covered 544 packages at source commit
-`587dbc71e58de3e6dc88748814ab551641a359e0`: 388 crates.io, 132 npm and — for the
-first time — 24 PyPI packages from the hashed deployment lock. One raw match
-was normalized into one alias-aware maintenance-only advisory group affecting
-one Cargo package. No vulnerability group was returned in any ecosystem in this
-point-in-time query, and `--fail-on-vulnerability` exited 0. This is the
-post-remediation re-scan retained for issue #171: the Hickory and Yamux
-advisory groups from the pre-remediation scan no longer match the locked
-graph, and the Python deployment set is now inside the scanned coverage rather
-than reported as `unresolved`.
+The retained report is `docs/P2P_DEPENDENCY_ADVISORIES.json`, queried at
+`2026-11-08T16:20:16Z` with source commit
+`58290743079880aa6c32d871e0d823851501becc`. That commit contains every hashed
+input: the Cargo lock, the npm lock, `services/quant-api/pyproject.toml`, and
+`services/quant-api/requirements-lock.txt`. The query covered 544 packages
+(388 crates.io, 132 npm, 24 PyPI). One raw match was normalized into one
+alias-aware maintenance-only group. No vulnerability group was returned, and
+`--fail-on-vulnerability` exited 0. Python deployment coverage in this
+retained report is `scanned`, not `unresolved`. An earlier report named
+`587dbc71e58de3e6dc88748814ab551641a359e0`; that commit does not contain
+`requirements-lock.txt`, so it is not the retained source identity.
 
 | Package | Classification | Advisory group IDs |
 |---|---|---|
@@ -127,11 +128,9 @@ The libp2p 0.57.1 remediation is already on `main` via PR #173
 (`974de9ce04585e1d38824136514325f231b2bdaf`). At baseline
 `5176eae8843a1e5144ac903f37843fe9bb46cdd9`, `services/p2p-node/Cargo.lock`
 resolves hickory-proto, hickory-resolver, and hickory-net 0.26.3 and a single
-yamux 0.14.1 through libp2p-yamux 0.48.0. A live OSV `querybatch` repeated at
-`2026-11-08T16:09:48Z` against that same lock (544 packages: 388 crates.io,
-132 npm, 24 PyPI) returned the same summary as the retained report: 0
-vulnerability groups and 1 maintenance-only group. `--fail-on-vulnerability`
-exited 0. Cargo.lock is unchanged by the regression gate below.
+yamux 0.14.1 through libp2p-yamux 0.48.0. Those bytes are unchanged on this
+branch. The retained OSV report above is the advisory evidence for those
+inputs.
 
 `cargo metadata --manifest-path services/p2p-node/Cargo.toml --locked
 --format-version 1` records the enabled libp2p features `autonat`, `dcutr`,
@@ -161,7 +160,10 @@ stays, separate from the vulnerability gate.
 `scripts/check_p2p_known_vulnerable_locks.py` rejects any locked
 hickory-proto below 0.26.1, hickory-resolver below 0.26.2, hickory-net below
 0.26.1, or yamux below 0.13.10, including when a patched copy is locked beside
-an older one. paste is printed as `REVIEW` and does not fail the command.
+an older one. Pre-releases, build metadata, leading zeros, and other
+non-stable version strings for those crates are rejected rather than treated
+as meeting the fix line. paste is printed as `REVIEW` and does not fail the
+command.
 Dependency-security CI runs the gate on every pull request. The gate is
 regression protection for versions already on main. It is not a new upgrade
 and it does not clear license, provenance, or a universal vulnerability claim.
@@ -182,7 +184,8 @@ and artifact provenance for the Python lock, offline by default. Evidence
 lives in `docs/PYTHON_LICENSE_PROVENANCE.json` (schema
 `osiris.python-license-provenance.v1`): per distribution, the PyPI JSON API
 license expression, legacy field and license classifiers, refreshed
-2026-11-08 at source commit `587dbc71e58de3e6dc88748814ab551641a359e0`.
+`2026-11-08T16:20:14Z` at source commit
+`58290743079880aa6c32d871e0d823851501becc`, which contains the hashed lock.
 The policy in `config/license_policy.json` allows permissive expressions
 (MIT, MIT-0, Apache-2.0, BSD-2/3-Clause, 0BSD, ISC, Zlib, CC0-1.0, PSF-2.0,
 Python-2.0, MPL-2.0); `OR` expressions pass when any branch is allowed, `AND`
@@ -240,7 +243,7 @@ python scripts/check_p2p_known_vulnerable_locks.py services/p2p-node/Cargo.lock
 python scripts/test_check_p2p_known_vulnerable_locks.py
 python scripts/test_scan_dependency_advisories.py
 python scripts/scan_dependency_advisories.py \
-  --source-commit 587dbc71e58de3e6dc88748814ab551641a359e0 \
+  --source-commit 58290743079880aa6c32d871e0d823851501becc \
   --output docs/P2P_DEPENDENCY_ADVISORIES.json
 python3.11 -m venv /tmp/lockenv && /tmp/lockenv/bin/pip install pip-tools
 /tmp/lockenv/bin/python scripts/resolve_python_lock.py
@@ -251,9 +254,11 @@ python scripts/check_license_provenance.py --refresh --source-commit <full-sha>
 python scripts/test_check_license_provenance.py
 ```
 
-The preserved remediated files passed 165 Rust tests locally. Those same-host
-results do not establish independent-host, cross-network, hostile-load,
-production-capacity, external-audit, or exploitability evidence.
+`cargo test --locked --manifest-path services/p2p-node/Cargo.toml --all-targets`
+on Rust 1.99.1 (the stable toolchain CI selects through
+`dtolnay/rust-toolchain`) exited 0: 185 tests passed and 0 failed. Those
+same-host results do not establish independent-host, cross-network,
+hostile-load, production-capacity, external-audit, or exploitability evidence.
 
 Before a public release, refresh the combined advisory report, remediate its
 current findings, triage reachability, re-resolve and re-scan the Python lock
