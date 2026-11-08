@@ -132,3 +132,21 @@ def test_invalid_batch_size_rejected():
         assert False, "zero batch size accepted"
     except ValueError:
         pass
+
+
+def test_standalone_synthetic_benchmark_counts_without_overflow():
+    from osiris_api.ultra_fast_engine import simulate_network_traffic
+    stats = simulate_network_traffic(1000, buffer_size=128, batch_size=64)
+    assert stats["mode"] == "synthetic_local_only"
+    assert stats["total_ticks"] == 1000
+    assert stats["rejected"] == 0
+    assert stats["ticks_per_second"] > 0
+
+
+def test_standalone_benchmark_rejects_oversized_batch():
+    from osiris_api.ultra_fast_engine import simulate_network_traffic
+    try:
+        simulate_network_traffic(10, buffer_size=8, batch_size=9)
+        assert False, "oversized batch accepted"
+    except ValueError:
+        pass
