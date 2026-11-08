@@ -132,3 +132,9 @@ def test_trusted_public_key_padding_cannot_change_enrollment_identity(tmp_path):
 def test_identity_registry_requires_persistent_database():
     with pytest.raises(ValueError, match="identity_registry_requires_persistent_database"):
         P2PIdentityRegistry(":memory:")
+
+
+def test_malformed_signature_is_not_accepted():
+    from osiris_api.p2p_identity import _verify
+
+    assert _verify("%%%", "%%%", "challenge", "nonce", "node") is False
