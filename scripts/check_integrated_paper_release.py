@@ -1,0 +1,36 @@
+"""Fail-closed offline integration acceptance gate for OSIRIS paper release.
+
+Consumes independently generated evidence statuses. This is a coordination
+check, not proof that tests actually ran or that an external reviewer signed.
+No broker connectivity or live trading is enabled.
+"""
+import argparse
+import json
+from pathlib import Path
+
+REQUIRED = (
+    "p2p_cross_host_passed",
+    "crypto_negative_tests_passed",
+    "authorized_market_data_passed",
+    "paper_reconciliation_passed",
+    "risk_kill_switch_passed",
+    "operator_rbac_passed",
+    "backup_restore_passed",
+    "ci_passed",
+)
+
+def validate(record):
+    if not isinstance(record, dict):
+        return ["integration evidence must be an object"]
+    errors = [f"{key} must be true" for key in REQUIRED if record.get(key) is not True]
+    if record.get("live_trading_enabled") is not False:
+        errors.append("live_trading_enabled must be false")
+    return errors
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("evidence", type=Path)
+    args = parser.parse_args()
+    errors = validate(json.loads(args.evidence.read_text(encoding="utf-8")))
+    print(json.dumps({"passed": not errors, "errors": errors}))
+    raise SystemExit(bool(errors))
