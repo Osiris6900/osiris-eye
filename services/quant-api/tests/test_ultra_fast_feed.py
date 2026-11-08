@@ -50,3 +50,25 @@ def test_callbacks_and_invalid_json():
     adapter = OSIRISUltraFastAdapter()
     assert not adapter.process_websocket_message({"s": "BTCUSDT"})
     assert adapter.feed.stats()["rejected"] == 1
+
+
+def test_configuration_rejects_unsupported_acceleration():
+    from osiris_api.config.ultra_fast_config import UltraFastConfig, DEVELOPMENT_CONFIG
+    assert DEVELOPMENT_CONFIG.RING_BUFFER_SIZE == 131_072
+    for kwargs in ({"RING_BUFFER_SIZE": 100_000},
+                   {"ENABLE_MULTIPATH": True},
+                   {"USE_MEMORY_MAPPING": True},
+                   {"FAIL_CLOSED_ON_STALE": False}):
+        try:
+            UltraFastConfig(**kwargs)
+            assert False, f"unsupported configuration accepted: {kwargs}"
+        except ValueError:
+            pass
+
+
+def test_adapter_enforces_configured_100ms_staleness():
+    from osiris_api.config.ultra_fast_config import UltraFastConfig
+    adapter = OSIRISUltraFastAdapter(config=UltraFastConfig(RING_BUFFER_SIZE=8))
+    now = 1_800_000_000_000_000_000
+    assert not adapter.feed.ingest("X", 1, 1, now - 101_000_000, 1, received_ns=now)
+    assert adapter.feed.ingest("X", 1, 1, now - 99_000_000, 1, received_ns=now)
