@@ -137,6 +137,37 @@ mod tests {
     }
 
     #[test]
+    fn authorization_denies_revoked_peer_without_executing_callback() {
+        use std::cell::Cell;
+        let peer = PeerId::random();
+        let revoked = Some([peer].into_iter().collect());
+        let calls = Cell::new(0);
+        for _ in 0..3 {
+            assert!(run_if_peer_allowed(&peer, &None, &revoked, || {
+                calls.set(calls.get() + 1);
+            }).is_err());
+        }
+        assert_eq!(calls.get(), 0);
+    }
+
+    #[test]
+    fn authorization_allows_only_configured_peer_and_executes_once() {
+        use std::cell::Cell;
+        let allowed = PeerId::random();
+        let other = PeerId::random();
+        let trusted = Some([allowed].into_iter().collect());
+        let calls = Cell::new(0);
+        assert!(run_if_peer_allowed(&other, &trusted, &None, || {
+            calls.set(calls.get() + 1);
+        }).is_err());
+        assert_eq!(calls.get(), 0);
+        assert!(run_if_peer_allowed(&allowed, &trusted, &None, || {
+            calls.set(calls.get() + 1);
+        }).is_ok());
+        assert_eq!(calls.get(), 1);
+    }
+
+    #[test]
     fn rejects_unknown_peer() {
         let allowed = PeerId::random();
         let unknown = PeerId::random();
