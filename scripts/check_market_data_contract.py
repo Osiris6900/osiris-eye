@@ -22,6 +22,8 @@ def validate(rows, max_delay_seconds=300):
     errors = []
     if not isinstance(rows, list):
         return ["observations must be an array"]
+    if not isinstance(max_delay_seconds, (int, float)) or isinstance(max_delay_seconds, bool) or max_delay_seconds < 0:
+        return ["max_delay_seconds must be nonnegative"]
     for index, row in enumerate(rows):
         if not isinstance(row, dict):
             errors.append(f"{index}: observation must be an object")
