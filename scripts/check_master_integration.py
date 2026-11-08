@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import re
+from datetime import date
 from pathlib import Path
 
 SHA40 = re.compile(r"^[0-9a-f]{40}$")
@@ -90,6 +91,22 @@ def validate(record, evidence_dir):
                     for field in ("reviewer", "organization", "review_date", "report_reference", "scope"):
                         if not isinstance(review.get(field), str) or not review[field].strip():
                             errors.append(f"security_review: {field} required")
+                    try:
+                        date.fromisoformat(review.get("review_date", ""))
+                    except (ValueError, TypeError):
+                        errors.append("security_review: ISO review_date required")
+                    findings = review.get("findings")
+                    if not isinstance(findings, list):
+                        errors.append("security_review: findings list required")
+                    elif any(not isinstance(item, dict) or
+                             item.get("severity") not in ("critical", "high", "medium", "low", "info") or
+                             item.get("status") not in ("resolved", "accepted", "open") or
+                             not isinstance(item.get("id"), str) or not item["id"].strip()
+                             for item in findings):
+                        errors.append("security_review: invalid finding record")
+                    elif any(item["severity"] in ("critical", "high") and item["status"] != "resolved"
+                             for item in findings):
+                        errors.append("security_review: critical/high findings must be resolved")
                     if not isinstance(review.get("unresolved_critical_high"), int) or isinstance(review.get("unresolved_critical_high"), bool) or review["unresolved_critical_high"] != 0:
                         errors.append("security_review: unresolved critical/high findings must be zero")
                 except (ValueError, UnicodeError, OSError):
