@@ -4,12 +4,12 @@ Base of this note: `main`. The checkbox inventory is [PR #275](https://github.co
 
 ## Merge order
 
-1. **#276** (#171). Hickory/Yamux lock floor. `Cargo.lock` is unchanged. T01 stays Partial. **#281** is stacked on #276 and only edits `docs/workstreams/ISSUE-171.md`.
+1. **#276** (#171). Hickory/Yamux lock floor. `Cargo.lock` is unchanged. T01 stays Partial. **#281** is stacked on #276 and only edits `docs/workstreams/ISSUE-171.md`. **#286** is independent of those and teaches the SBOM to read the hashed Python lock. It does not clear paste.
 2. **#279** (#255, #176). Rejection-log throttle lines. Land before a new soak. T04 stays Remaining.
-3. **#280** (#176) after #279. Its git base is #279's branch. Reconnect backoff only.
+3. **#280** (#176) after #279. Its git base is #279's branch. Reconnect backoff only. **#283** is stacked on #280 and only caps dials per reconnect tick.
 4. **#277** (#179) ahead of #268. Kill switch, stale data, and an internal paper reconcile. No broker order.
 5. **#268** (#179) only if #277 is not merged. Same new test file.
-6. **#278** (#180) before #271. Read-only fills and outbox status. `peer_count` stays null.
+6. **#278** (#180) before #271. Read-only fills and outbox status. `peer_count` stays null. **#284** is stacked on #278 and adds a read-only enrolled-identity view. T17 stays Partial.
 7. **#272** (#181). Staging config check. Not a restore drill.
 8. **#270** (#177) after a review against the existing receipt path.
 9. **#271** (#180) after #278, using the `admin_centre` permissions.
