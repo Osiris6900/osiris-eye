@@ -32,6 +32,7 @@ def validate(record, evidence_dir):
     if set(gates) != set(GATES):
         errors.append("gate set must match required master acceptance gates")
     root = Path(evidence_dir).resolve()
+    used_artifacts = set()
     for name in GATES:
         gate = gates.get(name)
         if not isinstance(gate, dict):
@@ -49,9 +50,15 @@ def validate(record, evidence_dir):
         if not isinstance(digest, str) or not SHA256.fullmatch(digest):
             errors.append(f"{name}: invalid artifact digest")
             continue
+        if relative in used_artifacts:
+            errors.append(f"{name}: evidence artifact reused across gates")
+        used_artifacts.add(relative)
         path = (root / relative).resolve()
         if not path.is_relative_to(root) or not path.is_file() or path.is_symlink():
             errors.append(f"{name}: artifact missing or unsafe")
+            continue
+        if path.stat().st_size > 10 * 1024 * 1024:
+            errors.append(f"{name}: artifact exceeds 10 MiB limit")
             continue
         if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
             errors.append(f"{name}: artifact digest mismatch")
