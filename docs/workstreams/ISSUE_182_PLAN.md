@@ -1,5 +1,7 @@
 # Integration acceptance — #182
 
+> Release-gate status lives in [Integrated delivery gates](../INTEGRATED_DELIVERY_GATES_2026_11_08.md) and `docs/release-gate-status.json`. This file is a scenario list, not the inventory.
+
 ## Implementation target
 
 Exercise signed observation through ledger, authorized data to paper risk, dashboard permissions, multi-host recovery and rollback.

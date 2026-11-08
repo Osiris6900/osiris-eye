@@ -1,5 +1,7 @@
 # OSIRIS Eye integration acceptance matrix (draft)
 
+> Release-gate status lives in [Integrated delivery gates](INTEGRATED_DELIVERY_GATES_2026_11_08.md) and `docs/release-gate-status.json`. This file is a scenario list, not the inventory.
+
 Tracking: #182. This document is an initial auditable checklist, not evidence of passing tests.
 
 | Gate | Test scenario | Pass criteria | Evidence |
