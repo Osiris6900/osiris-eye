@@ -87,6 +87,8 @@ def negotiate_protocol(
     Capability names are intersected with an explicit local policy allowlist.
     A peer cannot grant itself permissions by advertising extra capabilities.
     """
+    if not isinstance(local, ProtocolOffer) or not isinstance(remote, ProtocolOffer):
+        raise ProtocolNegotiationError("invalid_protocol_offer")
     _validate_capabilities(allowed_capabilities)
     _validate_capabilities(required_capabilities)
     if local.family != remote.family:

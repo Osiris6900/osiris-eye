@@ -97,3 +97,11 @@ def test_unbounded_peer_capabilities_rejected():
 def test_capability_control_characters_rejected():
     with pytest.raises(ValueError, match="invalid_capability_name"):
         offer(capabilities={"peer_discovery\nadmin_override"})
+
+
+def test_negotiation_rejects_malformed_offer():
+    import pytest
+    from osiris_api.p2p_protocol import negotiate_protocol, ProtocolNegotiationError
+
+    with pytest.raises(ProtocolNegotiationError, match="invalid_protocol_offer"):
+        negotiate_protocol(None, None, allowed_capabilities=frozenset())
