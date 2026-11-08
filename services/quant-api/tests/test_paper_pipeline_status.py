@@ -16,3 +16,15 @@ def test_status_endpoint_never_claims_broker_fill():
     assert result.json()["risk"] == "pass"
     assert result.json()["order"] == "none"
     assert result.json()["feed"] == "missing"
+
+
+def test_intent_is_read_only_and_accounting_unavailable():
+    from osiris_api.paper_pipeline_status import get_paper_pipeline_status
+    record_paper_workflow({"symbol": "ETH", "risk": {"approved_for_paper": False}, "paper_order_intent": {"side": "BUY", "quantity": 2, "status": "BLOCKED_BY_RISK"}})
+    status = get_paper_pipeline_status()
+    assert status["intent"]["status"] == "BLOCKED_BY_RISK"
+    assert status["positions"] is None
+    assert status["cash"] is None
+    assert status["pnl"] is None
+    status["intent"]["status"] = "FAKE"
+    assert get_paper_pipeline_status()["intent"]["status"] == "BLOCKED_BY_RISK"
