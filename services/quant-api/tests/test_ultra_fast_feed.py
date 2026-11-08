@@ -68,7 +68,7 @@ def test_configuration_rejects_unsupported_acceleration():
 
 def test_adapter_enforces_configured_100ms_staleness():
     from osiris_api.config.ultra_fast_config import UltraFastConfig
-    adapter = OSIRISUltraFastAdapter(config=UltraFastConfig(RING_BUFFER_SIZE=8))
+    adapter = OSIRISUltraFastAdapter(config=UltraFastConfig(RING_BUFFER_SIZE=8, BATCH_SIZE=8))
     now = 1_800_000_000_000_000_000
     assert not adapter.feed.ingest("X", 1, 1, now - 101_000_000, 1, received_ns=now)
     assert adapter.feed.ingest("X", 1, 1, now - 99_000_000, 1, received_ns=now)
