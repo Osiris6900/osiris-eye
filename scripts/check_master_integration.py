@@ -1,0 +1,126 @@
+"""Fail-closed, offline master integration evidence validator.
+
+Validates independently supplied artifact hashes and release gate decisions.
+It cannot certify that external tests ran; no live orders are authorized.
+"""
+import argparse
+import hashlib
+import json
+import re
+from datetime import date
+from pathlib import Path
+
+SHA40 = re.compile(r"^[0-9a-f]{40}$")
+SHA256 = re.compile(r"^[0-9a-f]{64}$")
+GATES = (
+    "p2p_cross_host", "crypto_negative_tests", "crypto_replay_restart",
+    "market_data_authorized", "events_data_authorized", "ai_backtest",
+    "risk_limits", "paper_reconciliation", "kill_switch", "operator_rbac",
+    "ci_exact_commit", "backup_restore", "security_review",
+)
+def validate(record, evidence_dir):
+    errors = []
+    if not isinstance(record, dict):
+        return ["manifest must be an object"]
+    sha = record.get("commit_sha")
+    if not isinstance(sha, str) or not SHA40.fullmatch(sha):
+        errors.append("valid exact commit_sha required")
+    if record.get("live_trading_enabled") is not False:
+        errors.append("live trading must explicitly be disabled")
+    gates = record.get("gates")
+    if not isinstance(gates, dict):
+        return errors + ["gates must be an object"]
+    if set(gates) != set(GATES):
+        errors.append("gate set must match required master acceptance gates")
+    root = Path(evidence_dir).resolve()
+    used_artifacts = set()
+    for name in GATES:
+        gate = gates.get(name)
+        if not isinstance(gate, dict):
+            errors.append(f"{name}: evidence object required")
+            continue
+        if gate.get("passed") is not True:
+            errors.append(f"{name}: must be passed")
+        if gate.get("commit_sha") != sha:
+            errors.append(f"{name}: commit mismatch")
+        relative = gate.get("artifact")
+        digest = gate.get("sha256")
+        if not isinstance(relative, str) or not relative or Path(relative).is_absolute() or ".." in Path(relative).parts:
+            errors.append(f"{name}: invalid artifact path")
+            continue
+        if not isinstance(digest, str) or not SHA256.fullmatch(digest):
+            errors.append(f"{name}: invalid artifact digest")
+            continue
+        if relative in used_artifacts:
+            errors.append(f"{name}: evidence artifact reused across gates")
+        used_artifacts.add(relative)
+        raw_path = root / relative
+        if any(part.is_symlink() for part in (raw_path, *raw_path.parents) if part != root and root in part.parents):
+            errors.append(f"{name}: symlink in evidence path")
+            continue
+        path = raw_path.resolve()
+        if not path.is_relative_to(root) or not path.is_file() or path.is_symlink():
+            errors.append(f"{name}: artifact missing or unsafe")
+            continue
+        if path.stat().st_size == 0:
+            errors.append(f"{name}: empty evidence artifact")
+            continue
+        if path.stat().st_size > 10 * 1024 * 1024:
+            errors.append(f"{name}: artifact exceeds 10 MiB limit")
+            continue
+        if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+            errors.append(f"{name}: artifact digest mismatch")
+    # The security gate must contain a structured, independently attributable review.
+    # This checks completeness only; it does not authenticate the reviewer's identity.
+    security = gates.get("security_review")
+    if isinstance(security, dict):
+        relative = security.get("artifact")
+        if isinstance(relative, str) and relative and not Path(relative).is_absolute() and ".." not in Path(relative).parts:
+            path = root / relative
+            if path.is_file() and not path.is_symlink() and path.stat().st_size <= 10 * 1024 * 1024:
+                try:
+                    review = json.loads(path.read_text(encoding="utf-8"))
+                    if not isinstance(review, dict):
+                        raise ValueError("review must be an object")
+                    if review.get("decision") != "approved":
+                        errors.append("security_review: explicit approved decision required")
+                    if review.get("commit_sha") != sha:
+                        errors.append("security_review: reviewed commit mismatch")
+                    if review.get("independent") is not True:
+                        errors.append("security_review: independent review declaration required")
+                    for field in ("reviewer", "organization", "review_date", "report_reference", "scope"):
+                        if not isinstance(review.get(field), str) or not review[field].strip():
+                            errors.append(f"security_review: {field} required")
+                    try:
+                        date.fromisoformat(review.get("review_date", ""))
+                    except (ValueError, TypeError):
+                        errors.append("security_review: ISO review_date required")
+                    findings = review.get("findings")
+                    if not isinstance(findings, list):
+                        errors.append("security_review: findings list required")
+                    elif any(not isinstance(item, dict) or
+                             item.get("severity") not in ("critical", "high", "medium", "low", "info") or
+                             item.get("status") not in ("resolved", "accepted", "open") or
+                             not isinstance(item.get("id"), str) or not item["id"].strip()
+                             for item in findings):
+                        errors.append("security_review: invalid finding record")
+                    elif any(item["severity"] in ("critical", "high") and item["status"] != "resolved"
+                             for item in findings):
+                        errors.append("security_review: critical/high findings must be resolved")
+                    if not isinstance(review.get("unresolved_critical_high"), int) or isinstance(review.get("unresolved_critical_high"), bool) or review["unresolved_critical_high"] != 0:
+                        errors.append("security_review: unresolved critical/high findings must be zero")
+                except (ValueError, UnicodeError, OSError):
+                    errors.append("security_review: valid JSON review report required")
+    return errors
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("manifest", type=Path)
+    parser.add_argument("--evidence-dir", type=Path, required=True)
+    args = parser.parse_args()
+    errors = validate(json.loads(args.manifest.read_text(encoding="utf-8")), args.evidence_dir)
+    print(json.dumps({"passed": not errors, "errors": errors}))
+    return int(bool(errors))
+
+if __name__ == "__main__":
+    raise SystemExit(main())
