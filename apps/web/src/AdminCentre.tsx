@@ -25,7 +25,7 @@ export const SECTION_PATHS = {
 export type SectionKey = keyof typeof SECTION_PATHS;
 
 const SECRET_MARKERS = [
-  'token', 'secret', 'password', 'private_key', 'authorization',
+  'token', 'secret', 'password', 'private_key', 'public_key', 'authorization',
   'credential', 'api_key', 'apikey', 'session',
 ];
 
@@ -79,6 +79,46 @@ function rejectionReasons(outbox: JsonObject | undefined): Array<{ reason: strin
     if (!/^[a-z0-9_:-]{1,80}$/.test(row.reason)) return [];
     return [{ reason: row.reason, count: row.count }];
   });
+}
+
+const PEER_UNAVAILABLE_COPY: Record<string, string> = {
+  not_configured: 'Identity registry is not configured. No peer list is shown.',
+  registry_file_absent: 'Identity registry file is absent. No peer list is shown.',
+  registry_schema_absent: 'Identity registry has no enrolled-node table.',
+  registry_unreadable: 'Identity registry could not be read.',
+  unavailable_in_quant_api_process: 'Peer count is not measured in this process, so none is shown.',
+};
+
+function peerUnavailableCopy(health: JsonObject | undefined): string {
+  const reason = typeof health?.reason === 'string' ? health.reason : 'unavailable_in_quant_api_process';
+  return PEER_UNAVAILABLE_COPY[reason] ?? 'Peer registry unavailable. No peer list is shown.';
+}
+
+const TRUST_LABELS: Record<string, string> = {
+  trusted: 'trusted',
+  public_untrusted: 'public untrusted',
+  unclassified: 'unclassified',
+};
+
+function peerNodes(health: JsonObject | undefined): Array<{ id: string; trust: string; enrolled: string }> {
+  if (!health || health.status !== 'enrolled_registry' || !Array.isArray(health.nodes)) return [];
+  return health.nodes.flatMap(item => {
+    if (!item || typeof item !== 'object') return [];
+    const row = item as JsonObject;
+    if (typeof row.node_id !== 'string' || !/^[0-9a-f]{64}$/.test(row.node_id)) return [];
+    const trust = typeof row.trust_level === 'string' ? TRUST_LABELS[row.trust_level] : undefined;
+    if (!trust) return [];
+    const enrolled = typeof row.enrolled_at === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(row.enrolled_at)
+      ? row.enrolled_at
+      : 'time unavailable';
+    return [{ id: row.node_id, trust, enrolled }];
+  });
+}
+
+function registryCount(health: JsonObject | undefined, key: string): string {
+  if (!health || health.status !== 'enrolled_registry') return 'Unavailable';
+  const value = health[key];
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? String(value) : 'Unavailable';
 }
 
 function fillRows(paper: JsonObject | undefined): Array<{ side: string; symbol: string; quantity: string; price: string }> {
@@ -176,6 +216,8 @@ export function AdminCentre({ apiBase = '/api' }: { apiBase?: string }) {
   const acknowledgedAlerts = Array.isArray(alerts?.acknowledged) ? alerts.acknowledged as JsonObject[] : null;
   const positions = Array.isArray(paper?.positions) ? paper.positions as JsonObject[] : null;
   const outbox = (network?.outbox as JsonObject | undefined);
+  const peerHealth = network?.peer_health as JsonObject | undefined;
+  const enrolledNodes = peerNodes(peerHealth);
   const role = typeof overview?.role === 'string' ? overview.role : null;
 
   const renderSection = (key: SectionKey, content: React.ReactNode) => {
@@ -245,21 +287,33 @@ export function AdminCentre({ apiBase = '/api' }: { apiBase?: string }) {
           <div className="setting"><span>Active alerts</span><span>{String(overview?.active_alert_count ?? '—')}</span></div>
           <div className="setting"><span>Risk flags</span><span>{String(overview?.risk_flag_count ?? '—')}</span></div>
           <div className="setting"><span>Live trading authorized</span><span>{String(overview?.live_trading_authorized)}</span></div>
-          <div className="setting"><span>Peer health</span><span>{String(overview?.peer_health ?? 'unavailable')}</span></div>
+          <div className="setting"><span>Peer health</span><span>{overview?.peer_health === 'enrolled_registry' ? 'Enrolled registry' : 'unavailable'}</span></div>
+          <div className="setting"><span>Enrolled peers</span><span>{overview?.peer_health === 'enrolled_registry' && typeof overview?.enrolled_peer_count === 'number' ? String(overview.enrolled_peer_count) : 'Unavailable'}</span></div>
           <div className="setting"><span>Outbox pending</span><span>{overview?.outbox_pending == null ? 'Unavailable' : String(overview.outbox_pending)}</span></div>
         </div>)}
       </section>}
 
       {view === 'network' && <section className="panel" aria-label="Network">
         {renderSection('network', <>
-          <p className="muted">Peer count is not measured in this process, so none is shown.</p>
+          {peerHealth?.status === 'enrolled_registry' ? <>
+            <p className="muted">Enrolled identities from the local registry. This is not a live session or health probe.</p>
+            <div className="settings">
+              <div className="setting"><span>Enrolled nodes</span><span>{registryCount(peerHealth, 'peer_count')}</span></div>
+              <div className="setting"><span>Trusted</span><span>{registryCount(peerHealth, 'trusted_count')}</span></div>
+              <div className="setting"><span>Public untrusted</span><span>{registryCount(peerHealth, 'public_untrusted_count')}</span></div>
+            </div>
+            {peerHealth.nodes_truncated === true && <p className="muted">Node list truncated. The enrolled count includes nodes that are not shown.</p>}
+            {enrolledNodes.map(node => <p key={node.id} className="muted">{node.trust} · {node.id} · enrolled {node.enrolled}</p>)}
+            {Array.isArray(peerHealth.nodes) && enrolledNodes.length === 0 && <p className="muted">No enrolled nodes.</p>}
+            {!Array.isArray(peerHealth.nodes) && <p className="muted">Node list unavailable.</p>}
+          </> : <p className="muted">{peerUnavailableCopy(peerHealth)}</p>}
           <div className="settings">
             <div className="setting"><span>Ingestion enabled</span><span>{String(network?.ingestion_enabled)}</span></div>
             <div className="setting"><span>Outbox configured</span><span>{String(outbox?.configured ?? false)}</span></div>
             <div className="setting"><span>Outbox pending</span><span>{countOrUnavailable(outbox, 'pending')}</span></div>
             <div className="setting"><span>Outbox rejected</span><span>{countOrUnavailable(outbox, 'rejected')}</span></div>
             <div className="setting"><span>Outbox delivered</span><span>{countOrUnavailable(outbox, 'delivered')}</span></div>
-            <div className="setting"><span>Peer telemetry</span><span>{String(network?.peer_telemetry ?? 'unavailable')}</span></div>
+            <div className="setting"><span>Peer telemetry</span><span>{network?.peer_telemetry === 'identity_enrollment_not_live_sessions' ? 'Enrollment registry only' : 'Unavailable'}</span></div>
           </div>
           {outbox?.delivered_meaning === 'local_node_process_not_remote_receipt' && <p className="muted">Delivered counts are local node handoff, not remote peer receipts.</p>}
           <h3>Rejection reasons</h3>

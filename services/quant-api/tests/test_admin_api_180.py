@@ -32,6 +32,7 @@ def client(monkeypatch, tmp_path):
     monkeypatch.setenv(admin_centre.ENABLE_ENV, "0")  # setenv (not delenv) so monkeypatch undo also removes endpoint writes
     monkeypatch.setenv("OSIRIS_PAPER_LEDGER_DB", str(tmp_path / "paper.sqlite3"))
     monkeypatch.delenv(admin_centre.OUTBOX_PATH_ENV, raising=False)
+    monkeypatch.setenv(admin_centre.IDENTITY_DB_ENV, str(tmp_path / "p2p.sqlite3"))
     admin_centre.reset_admin_state()
     yield TestClient(app)
     admin_centre.reset_admin_state()
@@ -230,15 +231,17 @@ def test_response_redaction_fails_closed(client, monkeypatch):
 # API contract
 
 
-def test_contract_schemas_and_keys(client):
+def test_contract_schemas_and_keys(client, tmp_path):
     overview = client.get("/admin/overview", headers=_headers("viewer")).json()
     assert overview["schema"] == "osiris.admin_overview.v1"
     assert set(overview) == {
         "schema", "generated_at", "service", "api_version", "role", "roles_configured",
         "ingestion_enabled", "feeds", "paper_initialized", "active_alert_count",
-        "risk_flag_count", "peer_health", "outbox_pending", "live_trading_authorized",
+        "risk_flag_count", "peer_health", "enrolled_peer_count", "outbox_pending",
+        "live_trading_authorized",
     }
     assert overview["peer_health"] == "unavailable"
+    assert overview["enrolled_peer_count"] is None
     assert overview["outbox_pending"] is None
     assert overview["role"] == "viewer"
     assert overview["live_trading_authorized"] is False
@@ -251,6 +254,10 @@ def test_contract_schemas_and_keys(client):
     }
     assert network["peer_health"]["peer_count"] is None
     assert network["peer_health"]["status"] == "unavailable"
+    assert network["peer_health"]["reason"] == "registry_file_absent"
+    assert network["peer_health"]["nodes"] is None
+    assert network["peer_health"]["liveness"] == "not_observed"
+    assert not (tmp_path / "p2p.sqlite3").exists()
 
     feeds = client.get("/admin/feeds/status", headers=_headers("viewer")).json()
     assert feeds["schema"] == "osiris.admin_feeds_status.v1"
@@ -371,3 +378,80 @@ def test_network_message_status_counts_and_hides_raw_rejection_text(client, tmp_
     assert client.post(
         "/admin/network/status", headers=_headers("viewer")
     ).status_code == 405
+
+
+def test_enrolled_registry_is_read_only_and_hides_key_material(client, tmp_path, monkeypatch):
+    import sqlite3
+
+    from osiris_api.p2p_identity import (
+        P2PIdentityRegistry,
+        generate_node_identity,
+        sign_enrollment_challenge,
+    )
+
+    path = tmp_path / "nodes.sqlite3"
+    trusted = generate_node_identity()
+    other = generate_node_identity()
+    registry = P2PIdentityRegistry(str(path), {trusted["public_key"]})
+
+    def enroll(identity):
+        challenge = registry.create_challenge()
+        signature = sign_enrollment_challenge(
+            identity["private_key"], challenge["challenge_id"], challenge["nonce"],
+            identity["node_id"],
+        )
+        return registry.enroll(identity["public_key"], signature, challenge["challenge_id"])
+
+    enroll(trusted)
+    enroll(other)
+    database = sqlite3.connect(path)
+    database.execute(
+        "INSERT INTO p2p_nodes(node_id, public_key, trust_level, enrolled_at, last_seen_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        ("ee" * 32, "not-returned", "token=supersecretvalue", 1_700_000_000, 1_700_000_000),
+    )
+    database.execute(
+        "INSERT INTO p2p_nodes(node_id, public_key, trust_level, enrolled_at, last_seen_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        ("not-a-node", "hidden-public", "token=supersecretvalue", 1_700_000_000, 1_700_000_000),
+    )
+    database.commit()
+    before = database.execute("SELECT COUNT(*) FROM p2p_nodes").fetchone()[0]
+    schema = database.execute("SELECT sql FROM sqlite_master ORDER BY sql").fetchall()
+    database.close()
+    monkeypatch.setenv(admin_centre.IDENTITY_DB_ENV, str(path))
+
+    anonymous = client.get("/admin/network/status")
+    assert anonymous.status_code == 401
+    response = client.get("/admin/network/status", headers=_headers("viewer"))
+    assert response.status_code == 200
+    health = response.json()["peer_health"]
+    assert health["status"] == "enrolled_registry"
+    assert health["liveness"] == "not_observed"
+    assert health["peer_count"] == 3
+    assert health["trusted_count"] == 1
+    assert health["public_untrusted_count"] == 1
+    assert health["unclassified_count"] == 1
+    assert health["omitted_count"] == 1
+    assert health["nodes_truncated"] is False
+    assert {node["node_id"] for node in health["nodes"]} == {
+        trusted["node_id"], other["node_id"], "ee" * 32,
+    }
+    assert response.json()["peer_telemetry"] == "identity_enrollment_not_live_sessions"
+    assert "supersecretvalue" not in response.text
+    assert "not-a-node" not in response.text
+    assert trusted["public_key"] not in response.text
+    assert trusted["private_key"] not in response.text
+    assert other["public_key"] not in response.text
+    assert "hidden-public" not in response.text
+    assert "public_key" not in response.text
+    assert str(path) not in response.text
+    overview = client.get("/admin/overview", headers=_headers("viewer")).json()
+    assert overview["peer_health"] == "enrolled_registry"
+    assert overview["enrolled_peer_count"] == 3
+    denied = client.get("/admin/paper/status", headers=_headers("viewer"))
+    assert denied.status_code == 403
+    database = sqlite3.connect(path)
+    assert database.execute("SELECT COUNT(*) FROM p2p_nodes").fetchone()[0] == before
+    assert database.execute("SELECT sql FROM sqlite_master ORDER BY sql").fetchall() == schema
+    database.close()
