@@ -57,6 +57,31 @@ ADAPTER_ENTITLEMENTS: dict[str, dict[str, Any]] = {
 }
 
 
+# Runtime revocation set (issue #180). security_admin can suspend a registered
+# adapter from the admin control centre; ingestion refuses suspended adapters
+# BEFORE fetch. The set is process-local and resets on restart.
+_SUSPENDED_ADAPTERS: set[str] = set()
+
+
+def suspend_adapter(name: str) -> None:
+    """Suspend a registered adapter; unknown names fail closed."""
+    if name not in ADAPTER_ENTITLEMENTS:
+        raise FeedAdapterRejection("adapter_not_registered")
+    _SUSPENDED_ADAPTERS.add(name)
+
+
+def restore_adapter(name: str) -> None:
+    _SUSPENDED_ADAPTERS.discard(name)
+
+
+def suspended_adapters() -> frozenset[str]:
+    return frozenset(_SUSPENDED_ADAPTERS)
+
+
+def is_adapter_suspended(name: str) -> bool:
+    return name in _SUSPENDED_ADAPTERS
+
+
 def _utc(value: Any, field: str) -> datetime:
     if not isinstance(value, str):
         raise FeedAdapterRejection(f"tick_{field}_invalid")
@@ -148,6 +173,8 @@ def ingest_adapter_ticks(
     registry = ADAPTER_ENTITLEMENTS.get(name)
     if registry is None:
         raise FeedAdapterRejection("adapter_not_registered")
+    if name in _SUSPENDED_ADAPTERS:
+        raise FeedAdapterRejection("adapter_suspended")
     instrument_list = [str(i).strip() for i in instruments if str(i).strip()]
     if not instrument_list or len(instrument_list) > 1_000:
         raise FeedAdapterRejection("instruments_required_bounded")
