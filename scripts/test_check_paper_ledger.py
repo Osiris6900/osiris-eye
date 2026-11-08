@@ -58,4 +58,21 @@ class LedgerTests(unittest.TestCase):
         d["starting_cash"] = "-1"
         self.assertFalse(reconcile(d)["passed"])
 
+    def test_kill_switch_blocks_paper_fills(self):
+        d = self.data()
+        d["kill_switch_active"] = True
+        self.assertFalse(reconcile(d)["passed"])
+        self.assertIn("kill switch", reconcile(d)["errors"][0])
+
+    def test_stale_feed_blocks_paper_fills(self):
+        d = self.data()
+        d["market_data_fresh"] = False
+        self.assertFalse(reconcile(d)["passed"])
+        self.assertIn("stale market data", reconcile(d)["errors"][0])
+
+    def test_invalid_gate_configuration_fails_closed(self):
+        d = self.data()
+        d["kill_switch_active"] = "false"
+        self.assertFalse(reconcile(d)["passed"])
+
 if __name__=="__main__": unittest.main()
