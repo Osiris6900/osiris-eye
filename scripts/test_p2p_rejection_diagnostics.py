@@ -29,11 +29,11 @@ def summarize(lines):
 class DiagnosticTests(unittest.TestCase):
     def test_first_rejection_and_aggregate_are_separate(self):
         raw, aggregate = summarize([
-            "encrypted_message_rejected peer=a reason=peer_not_allowed",
-            "encrypted_message_rejected_suppressed reason=peer_not_allowed count=42 window_secs=60",
-            "encrypted_message_rejected peer=b reason=peer_not_allowed",
+            "peer_not_allowed_rejected topic=osiris/e2ee/messages/1 peer=a reason=peer_not_allowed",
+            "peer_not_allowed_rejected_suppressed topic=osiris/e2ee/messages/1 reason=peer_not_allowed count=42 window_secs=60",
+            "peer_not_allowed_rejected topic=osiris/e2ee/messages/1 peer=b reason=peer_not_allowed",
         ])
-        self.assertEqual(raw[("encrypted_message_rejected", "peer_not_allowed")], 2)
+        self.assertEqual(raw[("peer_not_allowed_rejected", "peer_not_allowed")], 2)
         self.assertEqual(aggregate[("encrypted_message_rejected", "peer_not_allowed")], 42)
     def test_other_reasons_are_not_hidden(self):
         raw, aggregate = summarize(["key_binding_rejected reason=invalid_signature",
