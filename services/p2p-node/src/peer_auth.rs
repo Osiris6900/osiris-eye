@@ -114,6 +114,29 @@ mod tests {
     }
 
     #[test]
+    fn malformed_separators_fail_closed_for_both_peer_sets() {
+        let peer = PeerId::random();
+        for raw in ["", " ", ",", ",,", " , , "] {
+            assert!(parse_trusted_peers(Some(raw)).is_err());
+            assert!(parse_revoked_peers(Some(raw)).is_err());
+        }
+        for raw in [format!("{peer},,"), format!(",,{peer}")] {
+            assert!(parse_trusted_peers(Some(&raw)).is_err());
+            assert!(parse_revoked_peers(Some(&raw)).is_err());
+        }
+    }
+
+    #[test]
+    fn revocation_blocks_peer_even_in_open_network_mode() {
+        let peer = PeerId::random();
+        let revoked = Some([peer].into_iter().collect());
+        assert!(!is_peer_allowed(&peer, &None, &revoked));
+        let mut entered = false;
+        assert!(run_if_peer_allowed(&peer, &None, &revoked, || { entered = true; }).is_err());
+        assert!(!entered);
+    }
+
+    #[test]
     fn rejects_unknown_peer() {
         let allowed = PeerId::random();
         let unknown = PeerId::random();
