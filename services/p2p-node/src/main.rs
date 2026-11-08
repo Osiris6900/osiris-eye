@@ -4,6 +4,7 @@ mod e2ee;
 mod peer_key_store;
 mod peer_cache;
 mod observation_policy;
+mod announcement;
 
 use revocation::{RevocationRegistry, RevocationSyncMessage};
 use e2ee::{create_key_binding, decrypt_for_recipient, encrypt_for_recipient, verify_key_binding, EncryptedEnvelope, KeyBindingRecord, TransportKeyPair};
@@ -1491,6 +1492,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut health_tick = tokio::time::interval(Duration::from_secs(health_interval_secs));
     let mut key_binding_tick = tokio::time::interval(Duration::from_secs(24 * 60 * 60));
     key_binding_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut binding_announcements = announcement::AnnouncementGate::new(Instant::now());
+    let mut announcement_tick = tokio::time::interval(Duration::from_millis(250));
+    announcement_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     health_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let started_at = Instant::now();
     let health_address: SocketAddr = env::var("OSIRIS_HEALTH_HTTP_ADDR")
@@ -1573,10 +1577,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     &key, &transport_key.public_key, transport_key_epoch,
                     issued_at, issued_at + 30 * 24 * 60 * 60,
                 )?;
+                binding_announcements.request(Instant::now());
+            }
+            _ = announcement_tick.tick() => {
+                if !binding_announcements.ready(Instant::now()) { continue; }
                 let binding_bytes = serde_json::to_vec(&local_key_binding)?;
                 match swarm.behaviour_mut().gossipsub.publish(key_binding_topic.clone(), binding_bytes) {
-                    Ok(_) => emit!("key_binding_refreshed epoch={transport_key_epoch}"),
-                    Err(error) => emit!("key_binding_refresh_deferred error={error}"),
+                    Ok(_) => {
+                        binding_announcements.completed(true, Instant::now());
+                        emit!("key_binding_refreshed epoch={transport_key_epoch}");
+                    }
+                    Err(error) => {
+                        binding_announcements.completed(false, Instant::now());
+                        emit!("key_binding_refresh_deferred error={error}");
+                    }
                 }
             }
             _ = health_tick.tick() => {
@@ -1778,16 +1792,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         emit!("mdns_peer_expired={peer}");
                     }
                 }
-                SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Subscribed { peer_id: subscribed_peer_id, .. })) => {
+                SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Subscribed { peer_id: subscribed_peer_id, topic })) => {
                     if !is_peer_allowed(&subscribed_peer_id, &trusted_peers, &revoked_peers) {
                         emit!("peer_rejected={subscribed_peer_id} reason=not_in_trusted_peer_allowlist");
                         let _ = swarm.disconnect_peer_id(subscribed_peer_id);
                         continue;
                     }
-                    emit!("gossipsub_subscribed peer={subscribed_peer_id}");
-                    let binding_bytes = serde_json::to_vec(&local_key_binding)?;
-                    let _ = swarm.behaviour_mut().gossipsub.publish(key_binding_topic.clone(), binding_bytes);
-                    if revocation_registry.is_some() {
+                    emit!("gossipsub_subscribed peer={subscribed_peer_id} topic={topic}");
+                    // One connection subscribes to several topics. Announcing
+                    // on each event floods all subscribers during cohort startup.
+                    if topic.as_str() == KEY_BINDING_TOPIC_NAME {
+                        binding_announcements.request(Instant::now());
+                    }
+                    if topic.as_str() == REVOCATION_TOPIC_NAME && revocation_registry.is_some() {
                         let request_id = revocation_request_id(&peer_id, None);
                         remember_revocation_request(&mut pending_revocation_requests, request_id.clone());
                         let request = serde_json::to_vec(&RevocationSyncMessage::SyncRequestPageV2 { request_id, requester_peer_id: peer_id.to_string(), after_peer_id: None })?;

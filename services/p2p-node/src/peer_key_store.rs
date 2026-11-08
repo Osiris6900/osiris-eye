@@ -131,6 +131,12 @@ impl PeerKeyStore {
                 if record.issued_at < previous.issued_at {
                     return Err("key binding refresh timestamp rollback rejected".into());
                 }
+                // An identical authenticated announcement must not append a WAL
+                // update or fsync. Decode/index and rollback checks above still run.
+                if serde_json::to_string(&previous)? == encoded {
+                    transaction.commit()?;
+                    return Ok(());
+                }
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)?.as_secs() as i64;
                 transaction.execute(
@@ -245,6 +251,29 @@ mod tests {
         store.upsert_verified(&record(1, "key-a")).unwrap();
         store.upsert_verified(&record(2, "key-b")).unwrap();
         assert_eq!(store.get("12D3KooWTestPeer").unwrap().unwrap().transport_public_key, "key-b");
+        cleanup(&path);
+    }
+
+    #[test]
+    fn identical_reannouncement_is_read_only_but_refresh_is_durable() {
+        let path = temp_path("idempotent-refresh");
+        let mut store = PeerKeyStore::open(path.clone()).unwrap();
+        let original = record(1, "key");
+        store.upsert_verified(&original).unwrap();
+        let changes = store.connection.total_changes();
+        for _ in 0..100 {
+            store.upsert_verified(&original).unwrap();
+        }
+        assert_eq!(store.connection.total_changes(), changes);
+        let mut refreshed = original.clone();
+        refreshed.issued_at += 1;
+        refreshed.expires_at += 1;
+        store.upsert_verified(&refreshed).unwrap();
+        assert_eq!(store.connection.total_changes(), changes + 1);
+        drop(store);
+        let reopened = PeerKeyStore::open(path.clone()).unwrap();
+        assert_eq!(reopened.get(&original.peer_id).unwrap().unwrap().issued_at, refreshed.issued_at);
+        drop(reopened);
         cleanup(&path);
     }
 

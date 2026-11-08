@@ -96,18 +96,27 @@ The workflow retains only sanitized `soak-evidence.json` and `soak-gate.json`,
 including failed outcomes; private node state and SSH keys are never uploaded.
 Inspect the artifact and exact revision before promotion.
 
-The declared topology has 50 peers on each host: 99 encrypted publishers and
-one recipient/bootstrap on host B. Every publisher must deliver an encrypted
+The declared topology has 25 peers on each of four independent runners: 99
+encrypted publishers and one recipient/bootstrap on host B. Publishers admit
+only the recipient PeerId so automatic discovery cannot silently expand the
+declared star into a full mesh. This is not an open-mesh capacity test. Every publisher must deliver an encrypted
 warmup before measurement. Workload messages rotate through all 99 publishers;
-about half traverse A-to-B, and the remainder exercise B-to-B paths. Each
+about three quarters cross host boundaries, and the remainder exercise B-to-B
+paths. Each
 retained delivery record identifies its source/recipient host and digest.
 This is not a 100-host test or a claim that every message crosses machines.
 
-At the midpoint, the recipient/bootstrap stops for five seconds and restarts
-using the same identity, replay and key state. Cross-host probes measure loss
-and recovery; scheduled workload pauses until delivery resumes. This tests
+At the midpoint, previously submitted workload is drained with a bounded
+30-second wait. A drain failure fails the measurement rather than hiding loss.
+The recipient/bootstrap then stops for five seconds and restarts
+using the same identity, replay and key state. Stale subscriptions are cleared
+and new encrypted-topic subscriptions are observed before recovery warmup. Cross-host probes measure loss
+and recovery; scheduled workload pauses until every publisher reconnects, subscribes and
+delivers a fresh encrypted recovery warmup. This tests
 recovery, not in-flight durability or continued delivery through an outage.
 Probes and warmup are excluded from workload counts and latency percentiles.
+Outstanding probes remain observable after the next sampling tick; a delayed
+valid post-restart delivery can still establish sampled recovery.
 
 Latency uses the controller's single monotonic clock from write to observed
 recipient decryption, including SSH event transport. It is an observation upper
@@ -131,3 +140,13 @@ python scripts/test_run_p2p_soak.py
 A local smoke cannot close the release gate. The committed acceptance policy is
 never relaxed by this runner; the full real-host evidence checker determines
 whether the numerical gate passes.
+
+## Scale remediation under review
+
+The initial two-runner/100-peer attempt timed out before workload traffic, with
+about 3.5–3.9 GiB aggregate RSS per host. The candidate now coalesces key-binding
+announcements across subscription bursts, announces only for key-topic
+subscriptions, and avoids rewriting byte-identical verified key bindings.
+Signature, epoch, rollback and corrupt-index checks remain enforced. Distribution
+to four runners changes the declared topology, not the numerical policy. Exact
+source/binary hashes and the new run result are still required before promotion.

@@ -1,0 +1,94 @@
+{
+  "schema": "osiris.scale_remediation.regression_summary.v1",
+  "date": "2026-11-08",
+  "scope": "single-host release-build star regression; not production or multi-host acceptance",
+  "source_base": "8ea71eb69634fe0e44bfe30c9cac17c8fbee5809",
+  "source_dirty": true,
+  "changed_source_sha256": {
+    "services/p2p-node/src/main.rs": "261ddd1fc4487260ce711eb1a0a4405b15ae9958178ffff144cc9b1b61a3931e",
+    "services/p2p-node/src/announcement.rs": "9502fb357c8ddfc0f1b7ffe5ab4e42096700eed482134b4b8997b4f1f4ee57b4",
+    "services/p2p-node/src/peer_key_store.rs": "e1773cc7573718aa35605dc0af643ca4f5f9fffb159283eac27c396c7c4e88bb",
+    "scripts/run_p2p_soak.py": "18c11e0a4b4a49f33e45768697a9cfef243ff3be5557501e9426633e0d0ba041",
+    "scripts/test_run_p2p_soak.py": "c8bafc1e55c5cca1286791df80d4f7ffe58504ea6409e8a30a03260e6480fd3c",
+    ".github/workflows/p2p-real-cross-host-e2ee.yml": "bb3bff8ed37eea34a222fa76fc9e53d6245c8794f68d63467e21fbf668528937"
+  },
+  "workload": {
+    "peers": 20,
+    "messages": 200,
+    "fanout": 1,
+    "duration_seconds": 30.001592
+  },
+  "delivery": {
+    "sent": 200,
+    "delivered": 200,
+    "lost": 0,
+    "rejected": 0,
+    "pending": 0
+  },
+  "latency_ms": {
+    "count": 200,
+    "p50": 6.334499999866239,
+    "p95": 35.712808999960544,
+    "p99": 57.22731100013334,
+    "max": 78.46957299989299
+  },
+  "hosts": [
+    {
+      "host_id": "host-a",
+      "binary_sha256": "961fc3f8960a4e82cc04ea2dec7fba5ff7247d58cf3be0ff594aedf06cf15309",
+      "rss_peak_bytes": 169574400,
+      "cpu_percent": 39.101055102605336,
+      "disk_growth_bytes": 1505240
+    },
+    {
+      "host_id": "host-b",
+      "binary_sha256": "961fc3f8960a4e82cc04ea2dec7fba5ff7247d58cf3be0ff594aedf06cf15309",
+      "rss_peak_bytes": 156909568,
+      "cpu_percent": 35.48004252995407,
+      "disk_growth_bytes": 2221204
+    }
+  ],
+  "outage_result": {
+    "status": "pass",
+    "gate": "sampled_outage_recovery",
+    "outage_start_ms": 15004,
+    "recovery_observed": true,
+    "sampled_recovery_ms": 9069,
+    "max_recovery_ms": 30000,
+    "sample_count": 47,
+    "continuous_availability_verified": false,
+    "independent_hosts_verified": false
+  },
+  "notes": {
+    "latency": "controller monotonic write-to-observed-decryption, includes SSH observer transport",
+    "resources": "aggregate node and agent RSS; peak one-second CPU as share of host logical CPUs",
+    "controller_resources_included_on_host_a": true,
+    "workload_paused_during_outage": true,
+    "outage_probes_excluded_from_workload": true,
+    "workload_drained_before_outage": true,
+    "all_publishers_decryption_rechecked_before_resuming": true,
+    "diagnostic_counts": {
+      "host-a": {
+        "key_binding_refreshed": 20,
+        "key_binding_rejected:peer_not_allowed": 179,
+        "key_binding_accepted": 44,
+        "encrypted_observation_published": 146,
+        "encrypted_message_rejected:peer_not_allowed": 1329,
+        "encrypted_observation_deferred": 4
+      },
+      "host-b": {
+        "key_binding_rejected:peer_not_allowed": 199,
+        "key_binding_accepted": 99,
+        "key_binding_refreshed": 23,
+        "encrypted_observation_published": 113,
+        "encrypted_message_rejected:peer_not_allowed": 1344,
+        "encrypted_message_rejected:replay_detected": 168
+      }
+    },
+    "state_preserved_across_sink_restart": true,
+    "topology": "recipient-bootstrap star; publishers trust only recipient",
+    "open_mesh_capacity_tested": false,
+    "rss_is_sampled_not_continuous": true,
+    "independent_host_fingerprints_distinct": false
+  }
+}

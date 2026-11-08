@@ -70,3 +70,28 @@ the 2400-second soak setting and invalid/infinite limits. Sanitized per-host
 publish/decryption diagnostic counters were added to investigate scale failures.
 The 100-peer gate remains open until an actual measurement passes the unchanged
 policy; no successful load acceptance is claimed here.
+
+## 2026-11-08 scale remediation
+
+The [100-peer attempt at `8ea71eb`](https://github.com/Osiris6900/osiris-eye/actions/runs/42426670853)
+started all peers but timed out before warmup/workload. Aggregate RSS reached
+3.5–3.9 GiB per runner and sampled CPU reached 93–96 percent. This is a failed
+readiness/resource result, not a completed 15-minute soak.
+
+The candidate now batches key-binding announcements only for relevant topic
+subscriptions, limits announcement retries and avoids writes for identical
+verified bindings. Signature, epoch, rollback and corrupt-index validation are
+retained. The soak enforces its declared star instead of allowing discovery to
+expand it into a full mesh. Four runners host 25 peers each without relaxing
+limits. Open-mesh capacity is explicitly untested by this experiment.
+
+The collector also retains late probes, drains existing workload before the
+induced outage, invalidates stale subscription state, and requires encrypted
+delivery from every publisher after restart before scheduled load resumes.
+These conditions measure drained restart recovery, not in-flight durability.
+
+The [local release-build regression](P2P_SCALE_REGRESSION_2026_11_08.json)
+delivered 200/200 messages over 20 peers, with no lost/pending outcomes. p95
+was 36 ms and p99 57 ms. This source-dirty, single-machine regression includes
+source-file hashes; it cannot close the real multi-host gate. A new candidate
+soak and its retained policy result remain required.

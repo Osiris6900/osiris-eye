@@ -18,6 +18,7 @@ concurrency:
 
 env:
   CARGO_TARGET_DIR: ${{ github.workspace }}/target
+  RUN_SOAK: ${{ inputs.soak || false }}
 
 # Coordinated hosts must be rerun together; each attempt has fresh artifacts.
 jobs:
@@ -56,12 +57,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          python3 scripts/p2p_workflow_coordination.py wait-artifact \
-            --name "e2ee-host-b-endpoint-${{ github.run_id }}-${{ github.run_attempt }}" --timeout 600
+          HOSTS=(host-b)
+          if [ "$RUN_SOAK" = "true" ]; then HOSTS+=(host-c host-d); fi
+          for HOST_LABEL in "${HOSTS[@]}"; do
+            python3 scripts/p2p_workflow_coordination.py wait-artifact \
+              --name "e2ee-$HOST_LABEL-endpoint-${{ github.run_id }}-${{ github.run_attempt }}" --timeout 600
+          done
       - name: Download Host B SSH endpoint
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: e2ee-host-b-endpoint-${{ github.run_id }}-${{ github.run_attempt }}
+          pattern: e2ee-host-*-endpoint-${{ github.run_id }}-${{ github.run_attempt }}
+          merge-multiple: true
           path: ${{ runner.temp }}/osiris-e2ee
           github-token: ${{ github.token }}
           run-id: ${{ github.run_id }}
@@ -74,14 +80,21 @@ jobs:
           DIR="$RUNNER_TEMP/osiris-e2ee"
           HOST_A_IP="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["tailscale_ip"])' "$DIR/host-a.json")"
           HOST_B_IP="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["ip"])' "$DIR/host-b.json")"
-          python3 scripts/p2p_workflow_coordination.py known-hosts \
-            --path "$DIR/known_hosts" --endpoint "$DIR/host-b.json"
+          ENDPOINTS=(--endpoint "$DIR/host-b.json")
           if [ "$RUN_SOAK" = "true" ]; then
+            ENDPOINTS+=(--endpoint "$DIR/host-c.json" --endpoint "$DIR/host-d.json")
+          fi
+          python3 scripts/p2p_workflow_coordination.py known-hosts \
+            --path "$DIR/known_hosts" "${ENDPOINTS[@]}"
+          if [ "$RUN_SOAK" = "true" ]; then
+            HOST_C_IP="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["ip"])' "$DIR/host-c.json")"
+            HOST_D_IP="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["ip"])' "$DIR/host-d.json")"
             python3 scripts/run_p2p_soak.py \
               --binary "$GITHUB_WORKSPACE/target/release/osiris-p2p-node" \
               --remote-binary "$GITHUB_WORKSPACE/target/release/osiris-p2p-node" \
               --remote-script "$GITHUB_WORKSPACE/scripts/run_p2p_soak.py" \
               --ssh-target "runner@$HOST_B_IP" --host-b-ip "$HOST_B_IP" --port 4001 \
+              --extra-host "host-c=runner@$HOST_C_IP" --extra-host "host-d=runner@$HOST_D_IP" \
               --peers 100 --messages 10000 --duration 900 \
               --workflow-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
               --attempt "$GITHUB_RUN_ATTEMPT" --evidence "$DIR/soak-evidence.json" \
@@ -146,7 +159,13 @@ jobs:
         run: rm -f "$RUNNER_TEMP/osiris-e2ee/host-a"
 
   host-b:
-    name: Host B - Tailscale SSH receiver
+    name: ${{ matrix.host }} - Tailscale SSH agent
+    strategy:
+      fail-fast: false
+      matrix:
+        host: ${{ fromJSON(inputs.soak && '["host-b","host-c","host-d"]' || '["host-b"]') }}
+    env:
+      HOST_LABEL: ${{ matrix.host }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -194,13 +213,13 @@ jobs:
           done
           timeout 5 bash -c ":</dev/tcp/$HOST_B_IP/22"
           python3 scripts/p2p_workflow_coordination.py write-endpoint \
-            --path "$DIR/host-b.json" --ip "$HOST_B_IP" \
+            --path "$DIR/$HOST_LABEL.json" --ip "$HOST_B_IP" \
             --host-key /etc/ssh/ssh_host_ed25519_key.pub
       - name: Publish Host B SSH endpoint
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: e2ee-host-b-endpoint-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/osiris-e2ee/host-b.json
+          name: e2ee-${{ matrix.host }}-endpoint-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/osiris-e2ee/${{ matrix.host }}.json
           if-no-files-found: error
           retention-days: 1
       - name: Keep receiver available for Host A test

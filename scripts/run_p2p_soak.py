@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Measure real encrypted P2P traffic; Linux agents run on two SSH-linked hosts.
+"""Measure real encrypted P2P traffic; Linux agents run on SSH-linked hosts.
 
 No raw node logs or private state are exported. The controller measures round
 trip-to-observer delivery latency on one monotonic clock, including SSH event
@@ -44,7 +44,8 @@ def percentile(values, fraction):
 
 
 def measurement_class(metadata, local_agents):
-    separate = len({m['host_fingerprint'] for m in metadata.values()}) == 2
+    separate = (len(metadata) >= 2 and
+                len({m['host_fingerprint'] for m in metadata.values()}) == len(metadata))
     return ('operator_attested_real_multi_host' if separate and not local_agents
             else 'single_host_process_regression')
 
@@ -90,6 +91,9 @@ class Agent:
             env['OSIRIS_BOOTSTRAP_PEERS'] = bootstrap
         if recipient:
             env['OSIRIS_E2EE_RECIPIENTS'] = recipient
+            # The declared soak is a publisher/recipient star. Prevent DHT and
+            # Identify discovery from silently turning it into a full mesh.
+            env['OSIRIS_TRUSTED_PEERS'] = recipient
         proc = subprocess.Popen([str(self.args.binary)], env=env, cwd=directory,
                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, text=True, bufsize=1)
@@ -101,7 +105,8 @@ class Agent:
         for line in proc.stdout:
             for prefix in ('encrypted_observation_published', 'encrypted_observation_deferred',
                            'publish_rejected', 'publish_deferred', 'key_binding_rejected',
-                           'encrypted_message_rejected'):
+                           'encrypted_message_rejected', 'key_binding_accepted',
+                           'key_binding_refreshed', 'key_binding_refresh_deferred'):
                 if line.startswith(prefix + ' '):
                     reason = re.search(r'\breason=([a-z_]{1,64})(?:\s|$)', line)
                     with self.lock:
@@ -118,6 +123,12 @@ class Agent:
                 match = re.search(r'peer=(\S+)', line)
                 if match:
                     self.emit('binding', node=index, peer=match[1])
+            elif line.startswith('gossipsub_subscribed ') and 'topic=osiris/e2ee/messages/1' in line:
+                match = re.search(r'peer=(\S+)', line)
+                if match:
+                    self.emit('subscription', node=index, peer=match[1])
+            elif line.startswith('peer_disconnected=') and line.rstrip().endswith('remaining=0'):
+                self.emit('disconnected', node=index, peer=line.split('=', 1)[1].split()[0])
             elif line.startswith('encrypted_observation_received ') and index == 0:
                 match = re.search(r'payload_sha256=([0-9a-f]{64})', line)
                 if match:
@@ -231,9 +242,11 @@ class Controller:
         self.agents, self.metadata, self.peers, self.bindings, self.metrics = {}, {}, {}, set(), {}
         self.events = queue.Queue(maxsize=50000)
         self.failure = None
+        self.stage = 'starting'
         self.deliveries, self.sent, self.samples = {}, {}, []
         self.sources = {}
         self.finished, self.listeners = set(), set()
+        self.subscriptions = set()
         self.sink_stopped = False
 
     def launch(self, host, command):
@@ -274,6 +287,10 @@ class Controller:
             self.listeners.add(host)
         elif kind == 'binding':
             self.bindings.add((host, event['node'], event['peer']))
+        elif kind == 'subscription':
+            self.subscriptions.add((host, event['node'], event['peer']))
+        elif kind == 'disconnected':
+            self.subscriptions.discard((host, event['node'], event['peer']))
         elif kind == 'delivery':
             self.deliveries.setdefault(event['digest'], time.monotonic())
         elif kind == 'metrics':
@@ -282,18 +299,25 @@ class Controller:
             self.finished.add(host)
         elif kind == 'sink_stopped':
             self.sink_stopped = True
+            self.subscriptions.clear()
         elif kind == 'fatal' or (kind == 'eof' and host not in self.finished):
             self.failure = f'{host}:{event.get("reason", "agent_ended_before_finish")}'
         if self.failure:
             raise RuntimeError(self.failure)
 
-    def wait(self, condition, seconds=120):
+    def wait(self, condition, seconds=120, stage='readiness'):
+        self.stage = stage
         deadline = time.monotonic() + seconds
+        next_status = time.monotonic() + 10
         while not condition():
             if self.failure:
                 raise RuntimeError(self.failure)
             if time.monotonic() >= deadline:
-                raise TimeoutError('measurement_stage_timeout')
+                raise TimeoutError(f'{stage}_timeout')
+            if time.monotonic() >= next_status:
+                print(f'soak_stage={stage} peers={len(self.peers)} bindings={len(self.bindings)}',
+                      file=sys.stderr, flush=True)
+                next_status = time.monotonic() + 10
             self.drain(.1)
 
     def publish(self, host, node, label):
@@ -316,6 +340,16 @@ class Controller:
             self.samples.append({'elapsed_ms': elapsed, 'connected': delivered,
                                  'delivered': delivered})
 
+    def observe_probes(self, pending, start, restart_after=None):
+        recovered = False
+        for digest in list(pending):
+            if digest in self.deliveries:
+                self.sample_outage(start, True)
+                if restart_after is not None and self.sent[digest] >= restart_after:
+                    recovered = True
+                del pending[digest]
+        return recovered
+
     def cleanup(self):
         for proc in self.agents.values():
             if proc.poll() is None:
@@ -335,38 +369,52 @@ class Controller:
 def measure(args):
     c = Controller()
     base = [sys.executable, str(Path(__file__).resolve()), '--agent', '--binary', str(args.binary)]
-    local_count = args.peers // 2
+    extra_hosts = {}
+    for specification in args.extra_host:
+        host, target = specification.split('=', 1)
+        if not re.fullmatch(r'host-[c-z]', host) or host in extra_hosts or not target:
+            raise ValueError('invalid_extra_host')
+        extra_hosts[host] = target
+    host_count = 2 + len(extra_hosts)
+    if host_count > args.peers:
+        raise ValueError('more_hosts_than_peers')
+    local_count = args.peers // host_count
     c.launch('host-a', base + ['--count', str(local_count), '--controller-pid', str(os.getpid())])
     remote_args = ['python3', args.remote_script, '--agent', '--binary', args.remote_binary,
-                   '--count', str(args.peers - local_count), '--port', str(args.port)]
+                   '--count', str(args.peers - local_count * (host_count-1)), '--port', str(args.port)]
     if args.local_agents:
         remote_args = [sys.executable, str(Path(__file__).resolve()), *remote_args[2:]]
         c.launch('host-b', remote_args)
     else:
         c.launch('host-b', ['ssh', '-T', *args.ssh_option, args.ssh_target,
                             shlex.join(remote_args)])
+    for host, target in extra_hosts.items():
+        peer_args = ['python3', args.remote_script, '--agent', '--binary', args.remote_binary,
+                     '--count', str(local_count)]
+        c.launch(host, ['ssh', '-T', *args.ssh_option, target, shlex.join(peer_args)])
     try:
-        c.wait(lambda: len(c.metadata) == 2)
+        c.wait(lambda: len(c.metadata) == host_count, stage='agent_metadata')
         commit, clean = revision()
         if any(m['commit_sha'] != commit or not m['clean_worktree'] for m in c.metadata.values()):
             if not args.local_agents:
                 raise RuntimeError('agents_require_same_clean_candidate')
         c.command('host-b', action='sink')
-        c.wait(lambda: ('host-b', 0) in c.peers and 'host-b' in c.listeners)
+        c.wait(lambda: ('host-b', 0) in c.peers and 'host-b' in c.listeners, stage='sink_listener')
         sink = c.peers[('host-b', 0)]
         bootstrap = f'/ip4/{args.host_b_ip}/tcp/{args.port}/p2p/{sink}'
         for host in c.agents:
             c.command(host, action='peers', bootstrap=bootstrap, recipient=sink)
-        c.wait(lambda: len(c.peers) == args.peers, seconds=180)
+        c.wait(lambda: len(c.peers) == args.peers, seconds=180, stage='peer_startup')
         if len(set(c.peers.values())) != args.peers:
             raise RuntimeError('duplicate_peer_identity')
         senders = [pair for pair in c.peers if pair != ('host-b', 0)]
         c.wait(lambda: all((h, n, sink) in c.bindings and
-                          ('host-b', 0, c.peers[(h, n)]) in c.bindings for h, n in senders), 180)
+                          ('host-b', 0, c.peers[(h, n)]) in c.bindings for h, n in senders),
+               180, stage='key_binding_exchange')
         # Require actual delivery from every publisher before starting the clock.
         run_id = os.urandom(12).hex()
         warmup = [c.publish(h, n, f'{run_id}-warmup-{i}') for i, (h, n) in enumerate(senders)]
-        c.wait(lambda: all(d in c.deliveries for d in warmup), 90)
+        c.wait(lambda: all(d in c.deliveries for d in warmup), 90, stage='encrypted_warmup')
         print('All peers delivered encrypted warmup observations', file=sys.stderr, flush=True)
         started_at = datetime.now(timezone.utc)
         start = time.monotonic()
@@ -374,22 +422,29 @@ def measure(args):
         outage_start = None
         restart_at = None
         probe_due = start
-        probe = None
+        probes = {}
         stopped = restarted = False
         restarted_time = None
         recovery_seen = False
+        recovery_warmup = None
         next_message = start
         period = (args.duration - 10) / args.messages
         next_status = start
+        c.stage = 'measurement'
         while time.monotonic() < start + args.duration or len(workload) < args.messages:
             now = time.monotonic()
             elapsed = now - start
             if not stopped and elapsed >= args.duration / 2:
-                outage_start = int(elapsed * 1000)
+                # This experiment declares a drained restart, not in-flight
+                # durability. A real pre-outage delivery failure still fails.
+                c.wait(lambda: all(d in c.deliveries for d in workload),
+                       30, stage='pre_outage_drain')
+                outage_start = int((time.monotonic() - start) * 1000)
                 c.command('host-b', action='stop_sink')
-                c.wait(lambda: c.sink_stopped, 15)
+                c.wait(lambda: c.sink_stopped, 15, stage='sink_stop')
+                c.stage = 'outage_recovery'
                 c.sample_outage(start, False)
-                probe = None  # A pre-outage probe cannot establish recovery.
+                probes.clear()  # A pre-outage probe cannot establish recovery.
                 stopped = True
                 restart_at = time.monotonic() + 5
             if stopped and not restarted and now >= restart_at:
@@ -398,23 +453,30 @@ def measure(args):
                 restarted_time = now
             # Pause scheduled workload during the outage; probes continue. This
             # measures recovery, not guaranteed in-flight message durability.
-            paused = stopped and not recovery_seen
+            if (stopped and recovery_seen and recovery_warmup is None
+                    and all((h, n, sink) in c.subscriptions for h, n in senders)):
+                recovery_warmup = [c.publish(h, n, f'{run_id}-recovery-warmup-{i}')
+                                   for i, (h, n) in enumerate(senders)]
+            all_recovered = (recovery_warmup is not None
+                             and all(d in c.deliveries for d in recovery_warmup))
+            paused = stopped and not all_recovered
             if now >= next_message and len(workload) < args.messages and not paused:
                 h, n = senders[len(workload) % len(senders)]
                 workload.append(c.publish(h, n, f'{run_id}-message-{len(workload)}'))
                 next_message = now + period
-            if probe and (probe in c.deliveries or now >= probe_due):
-                delivered = probe in c.deliveries
-                c.sample_outage(start, delivered)
-                if stopped and restarted and delivered and c.sent[probe] >= restarted_time:
-                    recovery_seen = True
-                probe = None
-            if not probe and now >= probe_due and (not stopped or restarted):
+            # Retain outstanding probes: an observation arriving after the next
+            # one-second sampling tick still proves delivery/recovery.
+            if c.observe_probes(probes, start, restarted_time if restarted else None):
+                recovery_seen = True
+                c.stage = 'measurement'
+            if now >= probe_due and (not stopped or restarted):
+                c.sample_outage(start, False)
                 # Always crosses the host boundary (host-a -> host-b).
                 probe = c.publish('host-a', 0, f'{run_id}-probe-{len(c.sent)}')
+                probes[probe] = c.sent[probe]
                 probe_due = now + 1
-            if stopped and not recovery_seen and elapsed * 1000 - outage_start > 60000:
-                raise RuntimeError('outage_recovery_not_observed_within_60_seconds')
+            if stopped and not all_recovered and (time.monotonic()-start)*1000 - outage_start > 60000:
+                raise RuntimeError('all_publishers_recovery_not_observed_within_60_seconds')
             if now >= next_status:
                 print(f'soak_elapsed={elapsed:.0f}s published={len(workload)}', file=sys.stderr, flush=True)
                 next_status = now + 30
@@ -427,14 +489,14 @@ def measure(args):
         ended_at = datetime.now(timezone.utc)
         for host in c.agents:
             c.command(host, action='finish')
-        c.wait(lambda: len(c.finished) == 2, 30)
+        c.wait(lambda: len(c.finished) == host_count, 30)
         latencies = [(c.deliveries[d]-c.sent[d])*1000 for d in workload if d in c.deliveries]
         host_records = []
         for host, metadata in c.metadata.items():
             metrics = c.metrics[host]
             host_records.append({'host_id': host, 'binary_sha256': metadata['binary_sha256'],
                                  **{k: metrics[k] for k in ('rss_peak_bytes', 'cpu_percent', 'disk_growth_bytes')}})
-        independent = len({m['host_fingerprint'] for m in c.metadata.values()}) == 2
+        independent = len({m['host_fingerprint'] for m in c.metadata.values()}) == host_count
         evidence = {
             'schema': 'osiris.p2p_load_acceptance.v1',
             'measurement_class': measurement_class(c.metadata, args.local_agents),
@@ -461,8 +523,12 @@ def measure(args):
                 'resources': 'aggregate node and agent RSS; peak one-second CPU as share of host logical CPUs',
                 'controller_resources_included_on_host_a': True,
                 'workload_paused_during_outage': True, 'outage_probes_excluded_from_workload': True,
+                'workload_drained_before_outage': True,
+                'all_publishers_decryption_rechecked_before_resuming': True,
                 'diagnostic_counts': {h: c.metrics[h]['diagnostic_counts'] for h in c.metrics},
                 'state_preserved_across_sink_restart': True,
+                'topology': 'recipient-bootstrap star; publishers trust only recipient',
+                'open_mesh_capacity_tested': False,
                 'rss_is_sampled_not_continuous': True,
                 'independent_host_fingerprints_distinct': independent,
             },
@@ -470,6 +536,7 @@ def measure(args):
         return evidence
     except Exception:
         args.partial = {
+            'stage': c.stage,
             'metadata': c.metadata, 'host_metrics': c.metrics,
             'observed_peer_count': len(c.peers), 'known_delivery_count': len(c.deliveries),
             'submitted_including_warmup_and_probes': len(c.sent),
@@ -488,6 +555,8 @@ def main():
     p.add_argument('--controller-pid', type=int)
     p.add_argument('--port', type=int, default=0)
     p.add_argument('--ssh-target')
+    p.add_argument('--extra-host', action='append', default=[],
+                   help='additional publisher host, e.g. host-c=runner@100.64.0.3')
     p.add_argument('--ssh-option', action='append', default=[])
     p.add_argument('--remote-binary')
     p.add_argument('--remote-script', default=str(Path(__file__).resolve()))

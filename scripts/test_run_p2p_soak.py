@@ -7,17 +7,66 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+from types import SimpleNamespace
 
-from run_p2p_soak import Controller, measurement_class, percentile
+from run_p2p_soak import Agent, Controller, measurement_class, percentile
 
 
 class MeasurementTests(unittest.TestCase):
+    def test_stale_subscriptions_cannot_release_restart_barrier(self):
+        c = Controller()
+        subscription = {'kind': 'subscription', 'node': 0, 'peer': 'sink'}
+        c.events.put(('host-a', subscription))
+        c.drain()
+        self.assertIn(('host-a', 0, 'sink'), c.subscriptions)
+        c.events.put(('host-b', {'kind': 'sink_stopped'}))
+        c.drain()
+        self.assertEqual(c.subscriptions, set())
+        c.events.put(('host-a', subscription))
+        c.drain()
+        c.events.put(('host-a', {'kind': 'disconnected', 'node': 0, 'peer': 'sink'}))
+        c.drain()
+        self.assertEqual(c.subscriptions, set())
+
+    def test_late_probe_still_proves_recovery_and_old_probe_cannot(self):
+        c = Controller()
+        c.sent = {'old': 1.0, 'new': 6.0}
+        c.deliveries = {'old': 9.0}
+        pending = {'old': 1.0, 'new': 6.0}
+        with patch('run_p2p_soak.time.monotonic', return_value=10.0):
+            self.assertFalse(c.observe_probes(pending, 0, restart_after=5.0))
+        self.assertIn('new', pending)
+        c.deliveries['new'] = 10.0  # Four seconds, later than a sampling tick.
+        with patch('run_p2p_soak.time.monotonic', return_value=10.1):
+            self.assertTrue(c.observe_probes(pending, 0, restart_after=5.0))
+        self.assertEqual(pending, {})
+
+    def test_publishers_enforce_declared_star_and_ignore_inherited_operator_policy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            args = SimpleNamespace(binary=Path('/bin/true'), port=0, controller_pid=None)
+            with patch('run_p2p_soak.subprocess.Popen') as launch, \
+                 patch('run_p2p_soak.threading.Thread'), \
+                 patch.dict(os.environ, {'OSIRIS_TRUSTED_PEERS': 'operator-peer',
+                                         'OSIRIS_TRUSTED_PEERS_FILE': '/operator/private-policy'}):
+                agent = Agent(args, tmp)
+                agent.start(1, '/ip4/127.0.0.1/tcp/1/p2p/recipient', 'recipient')
+                env = launch.call_args.kwargs['env']
+                self.assertEqual(env['OSIRIS_TRUSTED_PEERS'], 'recipient')
+                self.assertEqual(env['OSIRIS_E2EE_RECIPIENTS'], 'recipient')
+                self.assertNotIn('OSIRIS_TRUSTED_PEERS_FILE', env)
+                self.assertEqual(env['OSIRIS_E2EE_ENABLED'], '1')
+
     def test_same_machine_with_different_labels_is_never_multi_host(self):
         hosts = {'a': {'host_fingerprint': 'same'}, 'b': {'host_fingerprint': 'same'}}
         self.assertEqual(measurement_class(hosts, False), 'single_host_process_regression')
         hosts['b']['host_fingerprint'] = 'different'
         self.assertEqual(measurement_class(hosts, True), 'single_host_process_regression')
         self.assertEqual(measurement_class(hosts, False), 'operator_attested_real_multi_host')
+        hosts['c'] = {'host_fingerprint': 'third'}
+        hosts['d'] = {'host_fingerprint': 'fourth'}
+        self.assertEqual(measurement_class(hosts, False), 'operator_attested_real_multi_host')
+        hosts['d']['host_fingerprint'] = 'third'
+        self.assertEqual(measurement_class(hosts, False), 'single_host_process_regression')
 
     def test_percentiles_use_nearest_rank_and_keep_tail_outlier(self):
         values = list(range(1, 101))
