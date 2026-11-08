@@ -62,6 +62,7 @@ class Agent:
         self.previous_time = time.monotonic()
         self.cpu_seconds = 0.0
         self.diagnostics = Counter()
+        self.live_links = {}
         self.controllers = [os.getpid()]
         if args.controller_pid:
             self.controllers.append(args.controller_pid)
@@ -83,6 +84,9 @@ class Agent:
             'OSIRIS_PEER_CACHE': str(directory / 'peer-cache.json'),
             'OSIRIS_E2EE_ENABLED': '1', 'OSIRIS_MDNS_ENABLED': '0',
             'OSIRIS_UPNP_ENABLED': '0', 'OSIRIS_HOLE_PUNCH_ENABLED': '0',
+            'OSIRIS_AUTO_RELAY': '0', 'OSIRIS_BOOTSTRAP_SEED_URL': 'off',
+            'OSIRIS_MAX_CONNECTIONS_PER_PEER': '1',
+            'OSIRIS_PEER_CACHE_DIAL_ON_START': '0', 'OSIRIS_DHT_WALK_INTERVAL_SECS': '3600',
             'OSIRIS_HEALTH_HTTP_ADDR': '127.0.0.1:0',
             'OSIRIS_BOOTSTRAP_RECONNECT_INTERVAL_SECS': '5',
             'OSIRIS_LISTEN_ADDR': f'/ip4/0.0.0.0/tcp/{self.args.port if index == 0 else 0}',
@@ -106,7 +110,9 @@ class Agent:
             for prefix in ('encrypted_observation_published', 'encrypted_observation_deferred',
                            'publish_rejected', 'publish_deferred', 'key_binding_rejected',
                            'encrypted_message_rejected', 'key_binding_accepted',
-                           'key_binding_refreshed', 'key_binding_refresh_deferred'):
+                           'key_binding_refreshed', 'key_binding_refresh_deferred',
+                           'outgoing_connection_error', 'incoming_connection_error',
+                           'bootstrap_reconnect_error', 'bootstrap_reconnect_attempt'):
                 if line.startswith(prefix + ' '):
                     reason = re.search(r'\breason=([a-z_]{1,64})(?:\s|$)', line)
                     with self.lock:
@@ -129,6 +135,20 @@ class Agent:
                     self.emit('subscription', node=index, peer=match[1])
             elif line.startswith('peer_disconnected=') and line.rstrip().endswith('remaining=0'):
                 self.emit('disconnected', node=index, peer=line.split('=', 1)[1].split()[0])
+            if line.startswith('connection_established_detail '):
+                peer, total = re.search(r'peer=(\S+)', line), re.search(r'total=(\d+)', line)
+                if peer and total:
+                    with self.lock:
+                        self.live_links[(index, peer[1])] = int(total[1])
+            elif line.startswith('peer_disconnected='):
+                peer = line.split('=', 1)[1].split()[0]
+                total = re.search(r'remaining=(\d+)', line)
+                if total:
+                    with self.lock:
+                        if int(total[1]):
+                            self.live_links[(index, peer)] = int(total[1])
+                        else:
+                            self.live_links.pop((index, peer), None)
             elif line.startswith('encrypted_observation_received ') and index == 0:
                 match = re.search(r'payload_sha256=([0-9a-f]{64})', line)
                 if match:
@@ -151,6 +171,8 @@ class Agent:
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait(timeout=5)
+        with self.lock:
+            self.live_links = {key: value for key, value in self.live_links.items() if key[0] != index}
 
     def sample(self):
         now = time.monotonic()
@@ -181,10 +203,14 @@ class Agent:
         self.rss_peak = max(self.rss_peak, rss)
         self.cpu_peak = max(self.cpu_peak, cpu)
         self.disk_peak = max(self.disk_peak, disk)
+        with self.lock:
+            connections = {str(i): {'peers': sum(n == i for n, _ in self.live_links),
+                                    'connections': sum(v for (n, _), v in self.live_links.items() if n == i)}
+                           for i in self.nodes}
         return {'rss_peak_bytes': self.rss_peak, 'cpu_percent': self.cpu_peak,
                 'disk_growth_bytes': self.disk_peak, 'cpu_seconds': self.cpu_seconds,
                 'logical_cpus': os.cpu_count() or 1, 'sampling_interval_seconds': 1,
-                'diagnostic_counts': dict(self.diagnostics)}
+                'diagnostic_counts': dict(self.diagnostics), 'node_connections': connections}
 
     def monitor(self):
         while not self.done.wait(1):
@@ -391,7 +417,10 @@ def measure(args):
     for host, target in extra_hosts.items():
         peer_args = ['python3', args.remote_script, '--agent', '--binary', args.remote_binary,
                      '--count', str(local_count)]
-        c.launch(host, ['ssh', '-T', *args.ssh_option, target, shlex.join(peer_args)])
+        if args.local_agents:
+            c.launch(host, [sys.executable, str(Path(__file__).resolve()), *peer_args[2:]])
+        else:
+            c.launch(host, ['ssh', '-T', *args.ssh_option, target, shlex.join(peer_args)])
     try:
         c.wait(lambda: len(c.metadata) == host_count, stage='agent_metadata')
         commit, clean = revision()
@@ -460,6 +489,8 @@ def measure(args):
             all_recovered = (recovery_warmup is not None
                              and all(d in c.deliveries for d in recovery_warmup))
             paused = stopped and not all_recovered
+            if stopped and all_recovered:
+                c.stage = 'measurement'
             if now >= next_message and len(workload) < args.messages and not paused:
                 h, n = senders[len(workload) % len(senders)]
                 workload.append(c.publish(h, n, f'{run_id}-message-{len(workload)}'))
@@ -468,7 +499,6 @@ def measure(args):
             # one-second sampling tick still proves delivery/recovery.
             if c.observe_probes(probes, start, restarted_time if restarted else None):
                 recovery_seen = True
-                c.stage = 'measurement'
             if now >= probe_due and (not stopped or restarted):
                 c.sample_outage(start, False)
                 # Always crosses the host boundary (host-a -> host-b).
@@ -541,6 +571,13 @@ def measure(args):
             'observed_peer_count': len(c.peers), 'known_delivery_count': len(c.deliveries),
             'submitted_including_warmup_and_probes': len(c.sent),
             'outage_samples': c.samples,
+            'binding_readiness': [
+                {'host': h, 'node': n,
+                 'recipient_binding': (h, n, c.peers.get(('host-b', 0))) in c.bindings,
+                 'sender_binding_at_recipient': ('host-b', 0, peer) in c.bindings,
+                 'encrypted_subscription': (h, n, c.peers.get(('host-b', 0))) in c.subscriptions}
+                for (h, n), peer in sorted(c.peers.items()) if (h, n) != ('host-b', 0)
+            ],
         }
         raise
     finally:

@@ -55,6 +55,9 @@ class MeasurementTests(unittest.TestCase):
                 self.assertEqual(env['OSIRIS_E2EE_RECIPIENTS'], 'recipient')
                 self.assertNotIn('OSIRIS_TRUSTED_PEERS_FILE', env)
                 self.assertEqual(env['OSIRIS_E2EE_ENABLED'], '1')
+                self.assertEqual(env['OSIRIS_MAX_CONNECTIONS_PER_PEER'], '1')
+                self.assertEqual(env['OSIRIS_AUTO_RELAY'], '0')
+                self.assertEqual(env['OSIRIS_BOOTSTRAP_SEED_URL'], 'off')
 
     def test_same_machine_with_different_labels_is_never_multi_host(self):
         hosts = {'a': {'host_fingerprint': 'same'}, 'b': {'host_fingerprint': 'same'}}

@@ -1,0 +1,106 @@
+{
+  "schema": "osiris.p2p_soak_failure.v1",
+  "status": "fail",
+  "started_at": "2026-11-08T00:14:16.168008+00:00",
+  "ended_at": "2026-11-08T00:17:24.770943+00:00",
+  "reason": "TimeoutError:key_binding_exchange_timeout",
+  "partial_measurements": {
+    "stage": "key_binding_exchange",
+    "metadata": {
+      "host-a": {
+        "kind": "metadata",
+        "commit_sha": "82600fb05bcc516822d3d0db2eadadf5d10463db",
+        "clean_worktree": true,
+        "binary_sha256": "e1647f936a905484d309519ef632745d705747ba8f20d1dc9ad54a9a7ae177ae",
+        "host_fingerprint": "650c4e16a14ab83f9e8c1ee8f6b2d7e2469a40357a30d8c66d6a7356fb045fd2"
+      },
+      "host-b": {
+        "kind": "metadata",
+        "commit_sha": "82600fb05bcc516822d3d0db2eadadf5d10463db",
+        "clean_worktree": true,
+        "binary_sha256": "e1647f936a905484d309519ef632745d705747ba8f20d1dc9ad54a9a7ae177ae",
+        "host_fingerprint": "78c1ab732cb8b5e03ae79c8cd2c16a0242958dbae0646af30a4574d2a84c2c43"
+      },
+      "host-d": {
+        "kind": "metadata",
+        "commit_sha": "82600fb05bcc516822d3d0db2eadadf5d10463db",
+        "clean_worktree": true,
+        "binary_sha256": "e1647f936a905484d309519ef632745d705747ba8f20d1dc9ad54a9a7ae177ae",
+        "host_fingerprint": "9d9e4d6e379afb2916e04f93a0f7aefc8ad6be71d075f77789e37e4e95d506b6"
+      },
+      "host-c": {
+        "kind": "metadata",
+        "commit_sha": "82600fb05bcc516822d3d0db2eadadf5d10463db",
+        "clean_worktree": true,
+        "binary_sha256": "e1647f936a905484d309519ef632745d705747ba8f20d1dc9ad54a9a7ae177ae",
+        "host_fingerprint": "c650621e78a6fb01e86e05597694236515a650c73c1866cbad28877ee233a94a"
+      }
+    },
+    "host_metrics": {
+      "host-a": {
+        "kind": "metrics",
+        "rss_peak_bytes": 473022464,
+        "cpu_percent": 57.89995329982028,
+        "disk_growth_bytes": 4245140,
+        "cpu_seconds": 174.87000000000015,
+        "logical_cpus": 4,
+        "sampling_interval_seconds": 1,
+        "diagnostic_counts": {
+          "key_binding_accepted": 60,
+          "key_binding_rejected:peer_not_allowed": 766,
+          "key_binding_refreshed": 20,
+          "key_binding_refresh_deferred": 938
+        }
+      },
+      "host-b": {
+        "kind": "metrics",
+        "rss_peak_bytes": 460406784,
+        "cpu_percent": 50.13889591122968,
+        "disk_growth_bytes": 6156820,
+        "cpu_seconds": 123.48999999999998,
+        "logical_cpus": 4,
+        "sampling_interval_seconds": 1,
+        "diagnostic_counts": {
+          "key_binding_refreshed": 24,
+          "key_binding_accepted": 144,
+          "key_binding_rejected:peer_not_allowed": 1045,
+          "key_binding_refresh_deferred": 705
+        }
+      },
+      "host-d": {
+        "kind": "metrics",
+        "rss_peak_bytes": 440754176,
+        "cpu_percent": 52.37154686244931,
+        "disk_growth_bytes": 4092700,
+        "cpu_seconds": 131.41999999999996,
+        "logical_cpus": 4,
+        "sampling_interval_seconds": 1,
+        "diagnostic_counts": {
+          "key_binding_accepted": 63,
+          "key_binding_rejected:peer_not_allowed": 875,
+          "key_binding_refreshed": 20,
+          "key_binding_refresh_deferred": 926
+        }
+      },
+      "host-c": {
+        "kind": "metrics",
+        "rss_peak_bytes": 421609472,
+        "cpu_percent": 19.92417583915542,
+        "disk_growth_bytes": 5683020,
+        "cpu_seconds": 54.21,
+        "logical_cpus": 4,
+        "sampling_interval_seconds": 1,
+        "diagnostic_counts": {
+          "key_binding_refreshed": 15,
+          "key_binding_rejected:peer_not_allowed": 427,
+          "key_binding_refresh_deferred": 1964,
+          "key_binding_accepted": 38
+        }
+      }
+    },
+    "observed_peer_count": 100,
+    "known_delivery_count": 0,
+    "submitted_including_warmup_and_probes": 0,
+    "outage_samples": []
+  }
+}

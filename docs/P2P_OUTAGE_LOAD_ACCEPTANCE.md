@@ -99,7 +99,10 @@ Inspect the artifact and exact revision before promotion.
 The declared topology has 25 peers on each of four independent runners: 99
 encrypted publishers and one recipient/bootstrap on host B. Publishers admit
 only the recipient PeerId so automatic discovery cannot silently expand the
-declared star into a full mesh. This is not an open-mesh capacity test. Every publisher must deliver an encrypted
+declared star into a full mesh. This is not an open-mesh capacity test.
+The direct-only experiment disables automatic relay reservations, seed fetches
+and cached-peer rejoin dials, and uses one established connection per peer.
+Default production connection limits are unchanged. Every publisher must deliver an encrypted
 warmup before measurement. Workload messages rotate through all 99 publishers;
 about three quarters cross host boundaries, and the remainder exercise B-to-B
 paths. Each

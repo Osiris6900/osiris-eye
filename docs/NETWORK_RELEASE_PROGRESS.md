@@ -95,3 +95,28 @@ delivered 200/200 messages over 20 peers, with no lost/pending outcomes. p95
 was 36 ms and p99 57 ms. This source-dirty, single-machine regression includes
 source-file hashes; it cannot close the real multi-host gate. A new candidate
 soak and its retained policy result remain required.
+
+## Admission-level discovery fix and operational smoke
+
+The four-runner [82600fb attempt](https://github.com/Osiris6900/osiris-eye/actions/runs/42428590996)
+failed during key binding exchange at 150/198 required directed links. All 100
+processes started; sampled resource peaks were within policy, but traffic never
+started. The retained [failure record](P2P_LOAD_FAILED_82600FB.json) is not soak
+acceptance evidence.
+
+A local 100-peer reproduction exposed repeated discovery connections to
+non-allowlisted peers, rejected only after establishment. The candidate adds
+libp2p allow/block admission hooks for internal outbound discovery and incoming
+authenticated handlers, including dynamic signed revocations. Existing
+application checks remain. A bounded per-peer cap option preserves default 4;
+the declared direct star selects 1 and disables unrelated relay/seed/cache dials.
+
+The [local 100-peer regression](P2P_ADMISSION_LOCAL_100_REGRESSION.json) then
+completed readiness and delivered 200/200 messages with no loss/pending, p95
+12 ms and sampled recovery 9 seconds. It uses four agent groups on one machine,
+a dirty checkout and a short workload: it cannot close the real-host gate.
+
+An actual systemd profile smoke is prepared for disposable GitHub runners, with
+guards against existing accounts/installations. It covers startup, unprivileged
+execution, crash/clean-exit restart, persistent keys and unsafe-config rejection.
+Only its actual CI result can establish these checks; local guards alone cannot.

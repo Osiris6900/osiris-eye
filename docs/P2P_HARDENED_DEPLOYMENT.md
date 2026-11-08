@@ -16,6 +16,14 @@ for wildcard TCP listeners; it does not grant `CAP_NET_ADMIN`.
 The Rust node still validates PeerIds, multiaddrs, signatures and key bindings.
 Preflight success is not proof that a remote peer is reachable or trustworthy.
 
+`OSIRIS_MAX_CONNECTIONS_PER_PEER` optionally lowers the existing per-peer cap
+from four to one, two or three; invalid values fail startup. A direct-only star
+can use `1` to conserve slots. Parallel relay/direct paths or hole punching need
+an appropriate multi-connection allowance. Directional and total caps stay fixed.
+Explicit allow/block policy is enforced by libp2p connection admission as well as
+application checks, so internal discovery cannot dial known non-allowlisted
+PeerIds or establish handlers for untrusted authenticated peers.
+
 ## Install and configure
 
 Use a Linux host with systemd 247 or newer and Python 3.10 or newer. Build and
@@ -103,3 +111,15 @@ Use licensed or otherwise authorized non-sensitive observations only.
 
 Validate profile behavior locally with `python deploy/p2p/test_preflight.py`.
 No deployment, public endpoint or live trading is enabled by adding these files.
+
+## Disposable-runner operational smoke
+
+`scripts/test_p2p_systemd_profile.py` exercises the shipped unit on a fresh
+GitHub-hosted systemd runner. It refuses non-root, self-hosted and existing
+installation cases before mutation. Checks cover privilege drop, private state,
+loopback readiness, automatic restart after SIGKILL and clean SIGINT, persistent
+identity/transport keys, explicit stop and fail-closed preflight. Temporary
+accounts, installed test files and node state are cleaned afterwards.
+
+Only sanitized checks, source/binary/unit hashes and timestamps enter artifacts.
+A passing result covers one disposable host, not public reachability or uptime.
