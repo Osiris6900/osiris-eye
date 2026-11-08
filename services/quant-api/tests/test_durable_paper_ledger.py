@@ -32,3 +32,24 @@ def test_reject_unfunded_and_uninitialized(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="insufficient_paper_cash"):
         synthetic_fill("x", "BTC", "BUY", 1, 100)
     assert snapshot()["cash"] == "10"
+
+
+def test_malformed_side_and_symbol_are_rejected(tmp_path, monkeypatch):
+    monkeypatch.setenv("OSIRIS_PAPER_LEDGER_DB", str(tmp_path / "bad.sqlite3"))
+    initialize_account("1000")
+    with pytest.raises(ValueError, match="invalid_side"):
+        synthetic_fill("bad-side", "BTC", None, "1", "100")
+    with pytest.raises(ValueError, match="invalid_symbol"):
+        synthetic_fill("bad-symbol", "BTC\\nUSD", "BUY", "1", "100")
+    assert snapshot()["fill_count"] == 0
+
+
+def test_sell_fee_cannot_create_negative_cash_proceeds(tmp_path, monkeypatch):
+    monkeypatch.setenv("OSIRIS_PAPER_LEDGER_DB", str(tmp_path / "fee.sqlite3"))
+    initialize_account("1000")
+    synthetic_fill("buy", "BTC", "BUY", "1", "100")
+    with pytest.raises(ValueError, match="fee_exceeds_sell_proceeds"):
+        synthetic_fill("sell", "BTC", "SELL", "1", "10", "11")
+    state = snapshot()
+    assert state["fill_count"] == 1
+    assert state["positions"][0]["quantity"] == "1"
