@@ -130,3 +130,21 @@ def test_invalid_policy_rejects_before_storage(tmp_path, monkeypatch):
             feed_policy=_policy(redistribution_rights="unknown"),
         )
     assert store.list(DATASET) == []
+
+
+@pytest.mark.parametrize("bad_provider", [None, [], 123, "", "  "])
+def test_feed_admission_rejects_invalid_provider(bad_provider):
+    with pytest.raises(FeedAdmissionRejection, match="feed_provider_required"):
+        admit_feed(provider=bad_provider, instrument="BTC-USD", policy=_policy(), now=NOW)
+
+
+@pytest.mark.parametrize("bad_instrument", [None, [], 123, "", "  "])
+def test_feed_admission_rejects_invalid_instrument(bad_instrument):
+    with pytest.raises(FeedAdmissionRejection, match="feed_instrument_required"):
+        admit_feed(provider="binance-public", instrument=bad_instrument, policy=_policy(), now=NOW)
+
+
+@pytest.mark.parametrize("bad_age", [float("nan"), float("inf"), float("-inf")])
+def test_feed_admission_rejects_nonfinite_review_age(bad_age):
+    with pytest.raises(FeedAdmissionRejection, match="feed_quality_review_age_bound_invalid"):
+        admit_feed(provider="binance-public", instrument="BTC-USD", policy=_policy(), now=NOW, max_review_age_seconds=bad_age)
