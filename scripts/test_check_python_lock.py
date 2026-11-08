@@ -117,14 +117,12 @@ class ParserTests(LockFixture):
             parse_hashed_lock(self.lock)
 
     def test_marker_recorded_but_not_required(self):
-        self.write_lock(f'fastapi==0.115.0 ; python_version >= "3.11" \\
-    --hash=sha256:{HASH_A}\n')
+        self.write_lock(f'fastapi==0.115.0 ; python_version >= "3.11" \\\n    --hash=sha256:{HASH_A}\n')
         entries = parse_hashed_lock(self.lock)
         self.assertEqual(entries[0].marker, '; python_version >= "3.11"')
 
     def test_extras_marker_stripped_from_name(self):
-        self.write_lock(f"uvicorn[standard]==0.54.0 \\
-    --hash=sha256:{HASH_A}\n")
+        self.write_lock(f"uvicorn[standard]==0.54.0 \\\n    --hash=sha256:{HASH_A}\n")
         entries = parse_hashed_lock(self.lock)
         self.assertEqual(entries[0].name, "uvicorn")
         self.assertEqual(entries[0].version, "0.54.0")
@@ -155,8 +153,7 @@ class CheckerTests(LockFixture):
             check.check_lock(self.lock, self.pyproject)
 
     def test_direct_requirement_missing_fails_closed(self):
-        body = VALID_BODY.replace("websockets==13.1 \\
-    --hash=sha256:%s\n" % HASH_B, "")
+        body = VALID_BODY.replace("websockets==13.1 \\\n    --hash=sha256:%s\n" % HASH_B, "")
         self.write_lock(body)
         with self.assertRaisesRegex(ValueError, "websockets is not locked"):
             check.check_lock(self.lock, self.pyproject)
