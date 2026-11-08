@@ -1095,7 +1095,7 @@ fn parse_flag(raw: Option<&str>, setting: &str, default: bool) -> Result<bool, B
         None => Ok(default),
         Some("1") => Ok(true),
         Some("0") => Ok(false),
-        _ => Err(format!("{setting} must be 0 or 1".into())),
+        _ => Err(format!("{setting} must be 0 or 1").into()),
     }
 }
 
