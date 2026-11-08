@@ -2,22 +2,20 @@
 
 Offline validation only; production authentication must verify identity and
 roles server-side. A frontend check alone is not authorization.
+
+The RBAC tables are canonical in ``osiris_api.admin_centre`` (issue #180) and
+re-exported here so this offline contract and the live admin API can never
+drift apart.
 """
 import argparse
 import json
+import sys
 from pathlib import Path
 
-PERMISSIONS = {
-    "viewer": frozenset({"read_health", "read_audit"}),
-    "analyst": frozenset({"read_health", "read_audit", "read_research"}),
-    "operator": frozenset({"read_health", "read_audit", "read_research", "ack_alert"}),
-    "risk_officer": frozenset({"read_health", "read_audit", "read_research", "ack_alert", "activate_kill_switch"}),
-    "security_admin": frozenset({"read_health", "read_audit", "read_research", "ack_alert", "revoke_peer"}),
-}
-DANGEROUS = frozenset({"place_live_order", "export_private_key", "disable_risk_gate", "erase_audit"})
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "services" / "quant-api" / "src"))
 
-def authorize(role, action, authenticated=False):
-    return bool(authenticated is True and role in PERMISSIONS and action not in DANGEROUS and action in PERMISSIONS[role])
+from osiris_api.admin_centre import DANGEROUS, PERMISSIONS, authorize  # noqa: E402,F401
+
 
 def check_requests(requests):
     if not isinstance(requests, list):
@@ -28,6 +26,7 @@ def check_requests(requests):
             decisions.append(False); continue
         decisions.append(authorize(item.get("role"), item.get("action"), item.get("authenticated")))
     return {"passed": True, "allowed": decisions, "denied_count": decisions.count(False)}
+
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
