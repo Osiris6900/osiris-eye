@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 from collections.abc import Callable, Iterable
 from datetime import datetime
@@ -14,6 +15,8 @@ from pathlib import Path
 from typing import Any
 
 from .p2p_ingestion import ENABLE_ENV, IngestionRejection, validate_p2p_observation
+
+_SAFE_REJECTION_REASON = re.compile(r"^[a-z0-9_:-]{1,80}$")
 
 
 class ObservationOutbox:
@@ -140,3 +143,41 @@ class ObservationOutbox:
             return db.execute(
                 "SELECT COUNT(*) FROM pending_observations WHERE rejected_reason IS NOT NULL"
             ).fetchone()[0]
+
+    def message_status(self) -> dict[str, Any]:
+        """Read-only queue totals. Rejection text that is not a short code is dropped.
+
+        ``delivered`` counts rows handed to the local node process. It is not a
+        remote peer receipt.
+        """
+        with self._connect() as db:
+            pending = db.execute(
+                "SELECT COUNT(*) FROM pending_observations "
+                "WHERE delivered=0 AND rejected_reason IS NULL"
+            ).fetchone()[0]
+            rejected = db.execute(
+                "SELECT COUNT(*) FROM pending_observations WHERE rejected_reason IS NOT NULL"
+            ).fetchone()[0]
+            delivered = db.execute(
+                "SELECT COUNT(*) FROM pending_observations "
+                "WHERE delivered=1 AND rejected_reason IS NULL"
+            ).fetchone()[0]
+            grouped = db.execute(
+                "SELECT rejected_reason, COUNT(*) FROM pending_observations "
+                "WHERE rejected_reason IS NOT NULL GROUP BY rejected_reason"
+            ).fetchall()
+        reasons: dict[str, int] = {}
+        for reason, count in grouped:
+            code = str(reason)
+            if _SAFE_REJECTION_REASON.fullmatch(code) is None:
+                code = "unclassified"
+            reasons[code] = reasons.get(code, 0) + int(count)
+        return {
+            "pending": int(pending),
+            "rejected": int(rejected),
+            "delivered": int(delivered),
+            "rejection_reasons": [
+                {"reason": reason, "count": count}
+                for reason, count in sorted(reasons.items())
+            ],
+        }

@@ -101,8 +101,19 @@ above can `ack`; acknowledgements record role and timestamp.
 
 ## Honesty boundaries
 
-- `peer_telemetry: "unavailable_in_quant_api_process"` — the quant API has no
-  live P2P peer table; nothing is fabricated.
+- `peer_telemetry: "unavailable_in_quant_api_process"` and `peer_health.peer_count: null` — the quant API has no
+  live P2P peer table; nothing is fabricated. `peer_health.status` is `unavailable`.
+- Outbox message status, when a database file already exists, reports `pending`,
+  `rejected` and `delivered` counts. `delivered` means local node handoff, not a
+  remote receipt. Rejection reasons that are not short codes are returned as
+  `unclassified` so raw text cannot leak. A missing outbox stays `configured: false`
+  and does not invent zeros.
+- Paper status adds `recent_fills` (symbol, side, quantity, price, fee, P&L,
+  time; idempotency keys omitted), `cost_basis_gross` from ledger positions, and
+  `market_value` only when every position has a mark. `open_orders` is `null`
+  with reason `not_stored`.
+- The React dashboard is read-only: it does not call kill-switch, feed revoke,
+  or alert ack. Those POST routes remain server-side and RBAC-gated.
 - Unrealized P&L is `null` without external marks (`marks_available: false`).
 - Paper data comes from the durable SQLite ledger (`synthetic-paper-only`).
 - Audit and alerts are bounded in-memory evidence, not a compliance store.

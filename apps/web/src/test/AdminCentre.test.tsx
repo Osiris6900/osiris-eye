@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { expect, test, vi } from 'vitest';
 import { AdminCentre, scrubForDisplay } from '../AdminCentre';
 
@@ -118,7 +118,8 @@ test('successful connect loads every section with the bearer token', async () =>
   fireEvent.click(screen.getByRole('button', { name: 'paper' }));
   expect(await screen.findByText('9800')).toBeInTheDocument();
   expect(screen.getByText(/SYNTH-PERP: 2 units/)).toBeInTheDocument();
-  expect(screen.getByText(/Unavailable without marks/)).toBeInTheDocument();
+  expect(screen.getAllByText(/Unavailable without marks/).length).toBeGreaterThan(0);
+  expect(screen.getByText('Recent fills unavailable.')).toBeInTheDocument();
   expect(window.localStorage.length).toBe(0);
 });
 
@@ -168,20 +169,44 @@ test('secret-shaped fields are scrubbed before rendering', async () => {
   expect(screen.queryByText(/api_token/)).not.toBeInTheDocument();
 });
 
-test('ack posts to the API and reports server denial for the role', async () => {
-  stubFetch(allOk({
-    // alert_id is URL-encoded by the component (colon -> %3A)
-    '/admin/alerts/ingestion_disabled%3Aglobal/ack': reply(403, { detail: 'admin_permission_denied' }),
+test('network, paper, risk and alerts stay read-only and show supported fields', async () => {
+  const calls = stubFetch(allOk({
+    '/admin/network/status': reply(200, {
+      ...NETWORK,
+      outbox: {
+        configured: true, available: true, pending: 2, rejected: 1, delivered: 4,
+        delivered_meaning: 'local_node_process_not_remote_receipt',
+        rejection_reasons: [{ reason: 'observation_stale', count: 1 }],
+      },
+      peer_health: { status: 'unavailable', reason: 'unavailable_in_quant_api_process', peer_count: null },
+    }),
+    '/admin/paper/status': reply(200, {
+      ...PAPER,
+      cost_basis_gross: '200',
+      market_value: null,
+      open_orders: null,
+      recent_fills: [{ side: 'BUY', symbol: 'SYNTH-PERP', quantity: '2', price: '100' }],
+    }),
+    '/admin/risk/status': reply(200, { ...RISK, cost_basis_gross: '200', exposure: 'unavailable_without_marks' }),
   }));
   render(<AdminCentre />);
   connect();
-  await screen.findByText('operator');
+  expect(await screen.findByText('operator')).toBeInTheDocument();
+  expect(screen.getByText('unavailable')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'network' }));
+  expect(await screen.findByText(/local node handoff, not remote peer receipts/)).toBeInTheDocument();
+  expect(screen.getByText('4')).toBeInTheDocument();
+  expect(screen.getByText('observation_stale: 1')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'paper' }));
+  expect(await screen.findByText('BUY SYNTH-PERP 2 @ 100')).toBeInTheDocument();
+  expect(screen.getByText('200')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'risk' }));
+  expect(await screen.findByText(/P2P ingestion kill switch is disabled/)).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'alerts' }));
-  const ack = await screen.findByRole('button', { name: 'Ack' });
-  fireEvent.click(ack);
-  await waitFor(() => {
-    expect(screen.getByRole('status')).toHaveTextContent('Server denied the action for this role.');
-  });
+  expect(await screen.findByText(/cannot acknowledge alerts/)).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Ack' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Revoke' })).not.toBeInTheDocument();
+  expect(calls.every(call => call.init?.method === undefined)).toBe(true);
 });
 
 test('scrubForDisplay drops credential keys at any depth', () => {
