@@ -43,6 +43,10 @@ jobs:
           python scripts/test_check_p2p_load_acceptance.py
           python deploy/p2p/test_preflight.py
           python scripts/test_systemd_smoke_guards.py
+      - name: Verify admin prototype disclosure guard offline
+        run: |
+          python scripts/check_admin_prototype.py
+          python -m unittest discover -s scripts -p 'test_check_admin_prototype.py' -v
       - name: Validate public TCP probe without network access
         run: python -m unittest discover -s scripts -p 'test_probe_p2p_public_tcp.py' -v
       - name: Validate multi-vantage TCP evidence gate offline
