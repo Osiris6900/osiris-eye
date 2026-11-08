@@ -64,7 +64,7 @@ export function PaperPipelinePanel() {
       <p>Paper cash: {ledger.cash} · Synthetic fills: {ledger.fill_count ?? 0} · Realized P&amp;L: {ledger.pnl?.realized ?? '—'}</p>
       <p>Unrealized P&amp;L: {ledger.pnl?.unrealized ?? 'Unavailable without marks'} · Equity: {ledger.pnl?.equity ?? 'Unavailable without marks'}</p>
       {ledger.positions.map(position => <p key={position.symbol}>{position.symbol}: {position.quantity} units · average cost {position.average_cost}</p>)}
-    </div> : <p style={{ color: '#91a4bf' }}>Paper ledger not initialized · cash, positions and P&amp;L unavailable</p>
+    </div> : <p style={{ color: '#91a4bf' }}>Paper ledger not initialized · cash, positions and P&amp;L unavailable</p>}
     <p style={{ color: '#91a4bf' }}>Instrument: {status?.instrument || '—'} · Source: {status?.source || 'unavailable'}</p>
   </section>;
 }
