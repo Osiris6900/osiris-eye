@@ -1,0 +1,1 @@
+"""Market ingestion configuration package."""
