@@ -42,7 +42,6 @@ from .research import (
     market_regime,
 )
 from .risk import check_order
-from .paper_integration import router as paper_integration_router
 
 app = FastAPI(
     title="OSIRIS EYE Quant API",
@@ -50,7 +49,6 @@ app = FastAPI(
     description="Shared research API and point-in-time data store; no live execution.",
 )
 store = ResearchStore()
-app.include_router(paper_integration_router)
 app.include_router(paper_integration_router)
 
 
