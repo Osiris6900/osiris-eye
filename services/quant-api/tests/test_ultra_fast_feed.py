@@ -72,3 +72,63 @@ def test_adapter_enforces_configured_100ms_staleness():
     now = 1_800_000_000_000_000_000
     assert not adapter.feed.ingest("X", 1, 1, now - 101_000_000, 1, received_ns=now)
     assert adapter.feed.ingest("X", 1, 1, now - 99_000_000, 1, received_ns=now)
+
+
+def test_batch_processing_preserves_order():
+    feed = UltraFastMarketFeed(buffer_size=2048)
+    now = 1_800_000_000_000_000_000
+    for i in range(1000):
+        assert feed.ingest("ETHUSDT", 3000 + i, 10, now - 1000, i,
+                           received_ns=now)
+    first = feed.get_batch(500)
+    second = feed.get_batch(500)
+    assert len(first) == len(second) == 500
+    assert [t.sequence for t in first] == list(range(500))
+    assert [t.sequence for t in second] == list(range(500, 1000))
+    assert feed.stats()["buffer_utilization"] == 0
+
+
+def test_binary_round_trip_and_callback_delivery():
+    feed = UltraFastMarketFeed(buffer_size=8)
+    received = []
+    feed.subscribe("SOLUSDT", received.append)
+    now = 1_800_000_000_000_000_000
+    payload = struct.pack("<QddI", now - 1000, 150.0, 2.5, 99)
+    assert feed.ingest_binary(payload, "SOLUSDT", received_ns=now)
+    assert len(received) == 1
+    assert received[0].price == 150.0
+    assert received[0].size == 2.5
+    assert received[0].sequence == 99
+    assert feed.get_batch()[0] == received[0]
+
+
+def test_callback_exception_does_not_discard_accepted_tick():
+    feed = UltraFastMarketFeed(buffer_size=8)
+    def broken_callback(tick):
+        raise RuntimeError("subscriber failed")
+    feed.subscribe("BTCUSDT", broken_callback)
+    now = 1_800_000_000_000_000_000
+    assert feed.ingest("BTCUSDT", 10, 1, now - 1, 1, received_ns=now)
+    assert feed.stats()["accepted"] == 1
+    assert len(feed.get_batch()) == 1
+
+
+def test_performance_counters_are_consistent():
+    feed = UltraFastMarketFeed(buffer_size=2)
+    now = 1_800_000_000_000_000_000
+    for i in range(3):
+        feed.ingest("X", 100, 1, now - 1, i, received_ns=now)
+    stats = feed.stats()
+    assert stats["accepted"] == 2
+    assert stats["rejected"] == 1
+    assert stats["overflow"] == 1
+    assert stats["buffer_utilization"] == 1.0
+
+
+def test_invalid_batch_size_rejected():
+    feed = UltraFastMarketFeed(buffer_size=8)
+    try:
+        feed.get_batch(0)
+        assert False, "zero batch size accepted"
+    except ValueError:
+        pass
