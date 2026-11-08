@@ -27,6 +27,8 @@ def validate(manifest):
     for field in ("p2p_evidence_sha256", "artifact_sha256"):
         if not SHA256.fullmatch(str(manifest.get(field, ""))):
             errors.append(f"{field} must be SHA-256")
+    if manifest.get("backup_restore_test_passed") is not True:
+        errors.append("backup_restore_test_passed must be true")
     if manifest.get("live_trading_enabled") is not False:
         errors.append("live_trading_enabled must explicitly be false")
     return errors
