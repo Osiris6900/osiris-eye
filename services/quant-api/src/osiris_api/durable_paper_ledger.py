@@ -72,10 +72,14 @@ def synthetic_fill(key: str, symbol: str, side: str, quantity: Any, price: Any,
         raise ValueError("invalid_idempotency_key")
     if not isinstance(symbol, str) or not 1 <= len(symbol.strip()) <= 64:
         raise ValueError("invalid_symbol")
+    if not isinstance(side, str):
+        raise ValueError("invalid_side")
     key, symbol, side = key.strip(), symbol.strip().upper(), side.upper()
     if side not in ("BUY", "SELL"):
         raise ValueError("invalid_side")
     qty, px, cost = _number(quantity, positive=True), _number(price, positive=True), _number(fee)
+    if not symbol.isascii() or any(ch.isspace() or ord(ch) < 33 for ch in symbol):
+        raise ValueError("invalid_symbol")
     with _lock, _connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
         prior = conn.execute("SELECT * FROM paper_fills WHERE key=?", (key,)).fetchone()
@@ -103,7 +107,10 @@ def synthetic_fill(key: str, symbol: str, side: str, quantity: Any, price: Any,
         else:
             if qty > held:
                 raise ValueError("insufficient_paper_position")
-            cash += qty * px - cost
+            proceeds = qty * px - cost
+            if proceeds < 0:
+                raise ValueError("fee_exceeds_sell_proceeds")
+            cash += proceeds
             delta = qty * (px - avg) - cost
             realized += delta
             new_qty, new_avg = held - qty, avg
