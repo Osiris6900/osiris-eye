@@ -44,8 +44,10 @@ def percentile(values, fraction):
 
 
 def measurement_class(metadata, local_agents):
-    separate = (len(metadata) >= 2 and
-                len({m['host_fingerprint'] for m in metadata.values()}) == len(metadata))
+    fingerprints = [m.get('host_fingerprint') for m in metadata.values()]
+    separate = (len(fingerprints) >= 2 and
+                all(isinstance(f, str) and f.strip() for f in fingerprints) and
+                len(set(fingerprints)) == len(fingerprints))
     return ('operator_attested_real_multi_host' if separate and not local_agents
             else 'single_host_process_regression')
 
