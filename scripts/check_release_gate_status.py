@@ -26,6 +26,7 @@ LOCK_PATH = ROOT / "services" / "quant-api" / "requirements-lock.txt"
 CARGO_LOCK = ROOT / "services" / "p2p-node" / "Cargo.lock"
 STATUSES = {"Implemented with evidence", "Partial", "Remaining"}
 SHA40 = re.compile(r"^[0-9a-f]{40}$")
+CI_RUN_URL = re.compile(r"^https://github\.com/Osiris6900/osiris-eye/actions/runs/[1-9][0-9]*$")
 USE = re.compile(r"^\s*(?:-\s*)?uses:\s*['\"]?([^\s#'\"]+)", re.MULTILINE)
 CARGO_PACKAGES = ("hickory-proto", "hickory-resolver", "yamux", "paste")
 
@@ -124,7 +125,7 @@ def validate(manifest: dict, facts: dict) -> list[str]:
             evidence = item.get("evidence")
             commits = item.get("evidence_commits")
             if not isinstance(evidence, list) or not any(
-                isinstance(entry, str) and entry.startswith("https://github.com/Osiris6900/osiris-eye/actions/runs/")
+                isinstance(entry, str) and CI_RUN_URL.fullmatch(entry)
                 for entry in evidence
             ):
                 errors.append(f"{item.get('id')}: implemented status requires a passing CI run URL")
