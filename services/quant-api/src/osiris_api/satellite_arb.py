@@ -1,6 +1,10 @@
 """Offline route-latency comparison. No satellite telemetry or trading."""
-from math import asin, cos, radians, sin, sqrt
+from math import asin, cos, isfinite, radians, sin, sqrt
 from datetime import datetime, timezone
+
+
+def _finite_number(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and isfinite(value)
 
 FIBER_KM_S = 200_000.0
 VACUUM_KM_S = 299_792.458
@@ -9,6 +13,9 @@ VACUUM_KM_S = 299_792.458
 def compare_routes(lat_a: float, lon_a: float, lat_b: float, lon_b: float,
                    fiber_path_factor: float = 1.3, satellite_path_factor: float = 1.5) -> dict:
     """Illustrative one-way propagation lower bounds, not clock skew or alpha."""
+    coordinates = (lat_a, lon_a, lat_b, lon_b, fiber_path_factor, satellite_path_factor)
+    if not all(_finite_number(value) for value in coordinates):
+        raise ValueError("invalid coordinates")
     if not (-90 <= lat_a <= 90 and -90 <= lat_b <= 90
             and -180 <= lon_a <= 180 and -180 <= lon_b <= 180):
         raise ValueError("invalid coordinates")

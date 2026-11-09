@@ -19,17 +19,29 @@ def test_route_simulation_is_explicit_and_deterministic():
 
 @pytest.mark.parametrize("args", [
     (91, 0, 0, 0), (0, 181, 0, 0),
+    (True, 0, 0, 0), (0, float("nan"), 0, 0), (0, 0, 0, float("inf")),
 ])
 def test_invalid_coordinates_fail_closed(args):
     with pytest.raises(ValueError):
         compare_routes(*args)
 
 
-@pytest.mark.parametrize("value", [float("nan"), float("inf"), -1.1, 1.1])
+def test_boolean_path_factor_is_rejected():
+    with pytest.raises(ValueError):
+        compare_routes(0, 0, 1, 1, fiber_path_factor=True)
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), -1.1, 1.1, True, "0.2"])
 def test_sentiment_invalid_score_rejected(value):
     engine = SentimentResearch()
     with pytest.raises(ValueError):
         engine.ingest("test", "BTC", value, 1, 1)
+
+
+def test_sentiment_capacity_rejects_bool_and_zero():
+    for capacity in (True, False, 0, 10001, 1.5):
+        with pytest.raises(ValueError):
+            SentimentResearch(capacity=capacity)
 
 
 def test_sentiment_preserves_sign_and_bounds_history():

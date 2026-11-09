@@ -6,7 +6,7 @@ from math import isfinite
 
 class SentimentResearch:
     def __init__(self, capacity: int = 1000):
-        if not 1 <= capacity <= 10000:
+        if isinstance(capacity, bool) or not isinstance(capacity, int) or not 1 <= capacity <= 10000:
             raise ValueError("invalid capacity")
         self._signals = deque(maxlen=capacity)
 
@@ -14,7 +14,10 @@ class SentimentResearch:
                intensity: float, confidence: float) -> dict:
         if not source or not asset or len(source) > 100 or len(asset) > 40:
             raise ValueError("invalid source or asset")
-        if not all(isfinite(v) for v in (sentiment, intensity, confidence)):
+        values = (sentiment, intensity, confidence)
+        if any(isinstance(value, bool) or not isinstance(value, (int, float)) for value in values):
+            raise ValueError("non-finite signal")
+        if not all(isfinite(value) for value in values):
             raise ValueError("non-finite signal")
         if not (-1 <= sentiment <= 1 and 0 <= intensity <= 1 and 0 <= confidence <= 1):
             raise ValueError("signal outside valid range")
