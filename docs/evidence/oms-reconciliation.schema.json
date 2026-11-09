@@ -1,0 +1,23 @@
+{
+  "schema": "osiris.evidence-template.v1",
+  "id": "broker_oms_reconciliation",
+  "tracker_items": ["T14"],
+  "owners": ["#179"],
+  "retention": "docs/evidence/captured/oms-reconciliation.json",
+  "pass_criteria": [
+    "A broker sandbox adapter records orders, fills, and positions.",
+    "After retry and process restart, paper state matches sandbox state with a zero diff.",
+    "external_order_count to a live venue is 0.",
+    "live_trading_authorized is false."
+  ],
+  "required_fields": [
+    {"name": "commit_sha", "type": "sha40"},
+    {"name": "ci_run_url", "type": "url"},
+    {"name": "sandbox_adapter", "type": "string"},
+    {"name": "idempotency_replay", "type": "pass"},
+    {"name": "restart_replay", "type": "pass"},
+    {"name": "reconciliation_diff", "type": "zero"},
+    {"name": "external_order_count", "type": "zero"},
+    {"name": "live_trading_authorized", "type": "false"}
+  ]
+}
