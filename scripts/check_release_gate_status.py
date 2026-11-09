@@ -104,7 +104,7 @@ def validate(manifest: dict, facts: dict) -> list[str]:
         "python_lock_schema",
     ):
         if declared.get(key) != facts.get(key):
-            errors.append(f"facts.{key} does not match the worktree")
+            errors.append(f"facts.{key} does not match the worktree (declared={declared.get(key)!r}, actual={facts.get(key)!r})")
     expected_versions = {}
     for name in CARGO_PACKAGES:
         seen = facts["cargo_versions"][name]
