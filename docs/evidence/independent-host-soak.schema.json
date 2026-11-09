@@ -1,0 +1,26 @@
+{
+  "schema": "osiris.evidence-template.v1",
+  "id": "independent_host_100_peer_soak",
+  "tracker_items": ["T04"],
+  "owners": ["#176", "#255"],
+  "retention": "docs/evidence/captured/independent-host-soak.json",
+  "pass_criteria": [
+    "measurement_class is operator_attested_real_multi_host.",
+    "At least 100 peers run on hosts with distinct non-empty fingerprints.",
+    "Every host records the same node binary SHA-256.",
+    "Latency, loss, and outage recovery are present.",
+    "live_trading_authorized is false."
+  ],
+  "required_fields": [
+    {"name": "commit_sha", "type": "sha40"},
+    {"name": "ci_run_url", "type": "url"},
+    {"name": "binary_sha256", "type": "sha256"},
+    {"name": "host_fingerprints", "type": "distinct_strings"},
+    {"name": "peer_count", "type": "integer"},
+    {"name": "measurement_class", "type": "string"},
+    {"name": "latency_ms", "type": "object"},
+    {"name": "loss_count", "type": "integer"},
+    {"name": "outage_recovery", "type": "object"},
+    {"name": "live_trading_authorized", "type": "false"}
+  ]
+}

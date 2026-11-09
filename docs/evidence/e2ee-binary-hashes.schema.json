@@ -1,0 +1,22 @@
+{
+  "schema": "osiris.evidence-template.v1",
+  "id": "two_three_host_e2ee_binary_hashes",
+  "tracker_items": ["T03"],
+  "owners": ["#176", "#177"],
+  "retention": "docs/evidence/captured/e2ee-binary-hashes.json",
+  "pass_criteria": [
+    "Two-host and three-host E2EE workflows both succeed on the same candidate commit.",
+    "Each host records the SHA-256 of the node binary it ran.",
+    "The recipient digest matches and the non-recipient discards the payload.",
+    "live_trading_authorized is false."
+  ],
+  "required_fields": [
+    {"name": "commit_sha", "type": "sha40"},
+    {"name": "two_host_run_url", "type": "url"},
+    {"name": "three_host_run_url", "type": "url"},
+    {"name": "hosts", "type": "binary_sha256_per_host"},
+    {"name": "recipient_payload_sha256", "type": "sha256"},
+    {"name": "non_recipient_discarded", "type": "true"},
+    {"name": "live_trading_authorized", "type": "false"}
+  ]
+}
