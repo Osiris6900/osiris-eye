@@ -1,5 +1,4 @@
 """Research intelligence must never imply measured trading opportunities."""
-import math
 import pytest
 from fastapi.testclient import TestClient
 
@@ -44,13 +43,30 @@ def test_sentiment_preserves_sign_and_bounds_history():
     assert result["forecast_verified"] is False
 
 
-def test_dashboard_endpoint_disables_execution():
+def test_dashboard_endpoint_disables_execution(monkeypatch):
+    monkeypatch.setenv("OSIRIS_ENV", "development")
+    monkeypatch.delenv("OSIRIS_API_TOKEN", raising=False)
     client = TestClient(app)
     result = client.get("/api/v1/intelligence/dashboard/intelligence-overview")
     assert result.status_code == 200
     payload = result.json()
     assert payload["execution_enabled"] is False
     assert payload["satellite"]["arbitrage_verified"] is False
+
+
+def test_production_dashboard_requires_auth(monkeypatch):
+    monkeypatch.setenv("OSIRIS_ENV", "production")
+    monkeypatch.delenv("OSIRIS_API_TOKEN", raising=False)
+    response = TestClient(app).get("/api/v1/intelligence/dashboard/intelligence-overview")
+    assert response.status_code == 503
+
+
+def test_invalid_route_request_rejected(monkeypatch):
+    monkeypatch.setenv("OSIRIS_ENV", "development")
+    monkeypatch.delenv("OSIRIS_API_TOKEN", raising=False)
+    response = TestClient(app).post("/api/v1/intelligence/satellite/compare-routes",
+        json={"lat_a": 91, "lon_a": 0, "lat_b": 0, "lon_b": 0})
+    assert response.status_code == 422
 
 
 def test_no_live_execution_route_exposed():
