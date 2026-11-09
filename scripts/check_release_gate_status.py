@@ -26,6 +26,7 @@ LOCK_PATH = ROOT / "services" / "quant-api" / "requirements-lock.txt"
 CARGO_LOCK = ROOT / "services" / "p2p-node" / "Cargo.lock"
 STATUSES = {"Implemented with evidence", "Partial", "Remaining"}
 SHA40 = re.compile(r"^[0-9a-f]{40}$")
+CI_RUN_URL = re.compile(r"^https://github\.com/Osiris6900/osiris-eye/actions/runs/[1-9][0-9]*$")
 USE = re.compile(r"^\s*(?:-\s*)?uses:\s*['\"]?([^\s#'\"]+)", re.MULTILINE)
 CARGO_PACKAGES = ("hickory-proto", "hickory-resolver", "yamux", "paste")
 
@@ -103,7 +104,7 @@ def validate(manifest: dict, facts: dict) -> list[str]:
         "python_lock_schema",
     ):
         if declared.get(key) != facts.get(key):
-            errors.append(f"facts.{key} does not match the worktree")
+            errors.append(f"facts.{key} does not match the worktree (declared={declared.get(key)!r}, actual={facts.get(key)!r})")
     expected_versions = {}
     for name in CARGO_PACKAGES:
         seen = facts["cargo_versions"][name]
@@ -124,7 +125,7 @@ def validate(manifest: dict, facts: dict) -> list[str]:
             evidence = item.get("evidence")
             commits = item.get("evidence_commits")
             if not isinstance(evidence, list) or not any(
-                isinstance(entry, str) and entry.startswith("https://github.com/Osiris6900/osiris-eye/actions/runs/")
+                isinstance(entry, str) and CI_RUN_URL.fullmatch(entry)
                 for entry in evidence
             ):
                 errors.append(f"{item.get('id')}: implemented status requires a passing CI run URL")
@@ -164,10 +165,27 @@ def commit_exists(sha: str) -> bool:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--strict", action="store_true")
+    parser.add_argument("--refresh-facts", action="store_true", help="Update checked-in inventory facts from this worktree; preserve gate statuses and evidence")
     parser.add_argument("--manifest", type=Path, default=MANIFEST_PATH)
     args = parser.parse_args(argv)
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
     facts = collect_facts(ROOT)
+    if args.refresh_facts:
+        manifest["facts"] = {
+            "mutable_action_uses": facts["mutable_action_uses"],
+            "pinned_action_uses": facts["pinned_action_uses"],
+            "workflow_files": facts["workflow_files"],
+            "advisory_inputs_match_worktree": facts["advisory_inputs_match_worktree"],
+            "advisory_source_commit": facts["advisory_source_commit"],
+            "sbom_marks_python_unresolved": facts["sbom_marks_python_unresolved"],
+            "python_lock_schema": facts["python_lock_schema"],
+            "cargo_versions": {name: values[0] if len(values) == 1 else values for name, values in facts["cargo_versions"].items()},
+        }
+        if not commit_exists(manifest.get("baseline_commit", "")):
+            baseline = subprocess.run(["git", "rev-parse", "--verify", "HEAD^{commit}"], cwd=ROOT, check=True, capture_output=True, text=True).stdout.strip()
+            manifest["baseline_commit"] = baseline
+        args.manifest.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+        print(f"Refreshed inventory facts in {args.manifest}; review and commit this change before CI.")
     errors = validate(manifest, facts)
     errors.extend(validate_document(manifest, DOC_PATH.read_text(encoding="utf-8")))
     if not commit_exists(manifest.get("baseline_commit", "")):

@@ -36,6 +36,19 @@ class ReleaseGateInventoryTests(unittest.TestCase):
         errors = validate(manifest, self.facts)
         self.assertTrue(any("CI run URL" in error for error in errors))
 
+    def test_malformed_ci_run_urls_are_rejected(self):
+        for bad_url in (
+            "https://github.com/Osiris6900/osiris-eye/actions/runs/not-a-run",
+            "https://github.com/Osiris6900/osiris-eye/actions/runs/123/extra",
+            "https://github.com/Osiris6900/osiris-eye/actions/runs/0",
+            "https://github.com/other/repo/actions/runs/123",
+        ):
+            with self.subTest(url=bad_url):
+                manifest = copy.deepcopy(self.manifest)
+                manifest["items"][1]["evidence"] = [bad_url]
+                errors = validate(manifest, self.facts)
+                self.assertTrue(any("CI run URL" in error for error in errors))
+
     def test_partial_without_blocker_is_rejected(self):
         manifest = copy.deepcopy(self.manifest)
         manifest["items"][0]["blocker"] = " "

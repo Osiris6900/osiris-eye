@@ -4,10 +4,10 @@
   "live_trading_authorized": false,
   "facts": {
     "mutable_action_uses": 0,
-    "pinned_action_uses": 77,
-    "workflow_files": 12,
-    "advisory_inputs_match_worktree": false,
-    "advisory_source_commit": "58290743079880aa6c32d871e0d823851501becc",
+    "pinned_action_uses": 81,
+    "workflow_files": 13,
+    "advisory_inputs_match_worktree": true,
+    "advisory_source_commit": "2501a07441c7a3e124a7494f2384903c85f5b6ca",
     "sbom_marks_python_unresolved": false,
     "python_lock_schema": "osiris.python-deployment-lock.v1",
     "cargo_versions": {
