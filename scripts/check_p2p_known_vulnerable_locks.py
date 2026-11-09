@@ -17,6 +17,7 @@ FLOORS = (
     ("hickory-resolver", "0.26.2", "GHSA-5j98-2g5x-46v6 / GHSA-6f2x-v7q7-m7m5"),
     ("hickory-net", "0.26.1", "RUSTSEC-2026-0120 / GHSA-3v94-mw7p-v465"),
     ("yamux", "0.13.10", "GHSA-vxx9-2994-q338 / CVE-2026-32314"),
+    ("libsqlite3-sys", "0.39.0", "RUSTSEC-2026-0459"),
 )
 # RUSTSEC-2024-0436 covers every paste release and names no fixed version.
 MAINTENANCE = {"paste": "RUSTSEC-2024-0436 (unmaintained; no fixed crates.io release)"}

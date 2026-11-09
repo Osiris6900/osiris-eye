@@ -32,6 +32,7 @@ class VulnerableLockRatchetTests(unittest.TestCase):
             ("yamux", "0.12.1"),
             ("yamux", "0.13.9"),
             ("yamux", "0.14.1"),
+            ("libsqlite3-sys", "0.30.1"),
             ("paste", "1.0.15"),
         ])
         self.assertEqual(
@@ -42,6 +43,7 @@ class VulnerableLockRatchetTests(unittest.TestCase):
                 ("hickory-net", "0.26.0"),
                 ("yamux", "0.12.1"),
                 ("yamux", "0.13.9"),
+                ("libsqlite3-sys", "0.30.1"),
             ],
         )
         self.assertEqual(maintenance, [
@@ -55,6 +57,7 @@ class VulnerableLockRatchetTests(unittest.TestCase):
             ("hickory-resolver", "0.26.10"),
             ("hickory-net", "0.26.1"),
             ("yamux", "0.13.10"),
+            ("libsqlite3-sys", "0.39.0"),
             ("paste", "1.0.15"),
         ])
         self.assertEqual(blocked, [])
@@ -115,12 +118,15 @@ class VulnerableLockRatchetTests(unittest.TestCase):
             ("hickory-resolver", "0.26.3"),
             ("hickory-net", "0.26.3"),
             ("yamux", "0.14.1"),
+            ("libsqlite3-sys", "0.39.1"),
+            ("rusqlite", "0.41.1"),
         }.issubset(present))
         self.assertFalse(present & {
             ("hickory-proto", "0.25.2"),
             ("hickory-resolver", "0.25.2"),
             ("yamux", "0.12.1"),
             ("yamux", "0.13.10"),
+            ("libsqlite3-sys", "0.30.1"),
         })
         completed = subprocess.run(
             [sys.executable, str(Path(ratchet.__file__)), str(LOCK)],
