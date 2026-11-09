@@ -5,6 +5,7 @@ on:
       - fix/rust-sqlite-audit-20261109
     paths:
       - '.github/workflows/rust-sqlite-remediation.yml'
+      - 'services/p2p-node/Cargo.toml'
   workflow_dispatch:
 permissions:
   contents: write
@@ -24,6 +25,7 @@ jobs:
         working-directory: services/p2p-node
         run: |
           cargo add rusqlite@latest --features bundled
+          cargo tree -i libsqlite3-sys
           cargo update
           cargo test --locked
       - name: Verify RustSec advisory
