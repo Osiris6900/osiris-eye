@@ -34,7 +34,11 @@ jobs:
           python scripts/check_action_pinning.py
           python -m unittest discover -s scripts -p 'test_check_action_pinning.py' -v
       - name: Run Python tests
-        run: pytest -q services/quant-api/tests
+        run: pytest -q services/quant-api/tests tests/test_ultra_fast_feed.py
+      - name: Smoke-test bounded local tick benchmark
+        run: |
+          PYTHONPATH=services/quant-api/src python scripts/benchmark_ultra_fast_feed.py --count 1000
+
       - name: Validate workflow YAML and embedded Bash
         run: |
           python scripts/check_p2p_workflows.py
