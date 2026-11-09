@@ -46,3 +46,7 @@ path = "src/oracle_engine.rs"
 [[bin]]
 name = "web_weaver"
 path = "src/web_weaver.rs"
+
+[[bin]]
+name = "hive_mind"
+path = "src/hive_mind.rs"
