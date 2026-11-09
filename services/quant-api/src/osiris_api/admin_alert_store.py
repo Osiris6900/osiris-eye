@@ -112,7 +112,7 @@ def _project(row: sqlite3.Row) -> dict[str, Any] | None:
         "schema": ALERT_SCHEMA,
         "alert_id": alert_id,
         "kind": kind,
-        "key": alert_id.slice(len(kind) + 1),
+        "key": alert_id[len(kind) + 1:],
         "severity": severity,
         "message": message,
         "status": status,
