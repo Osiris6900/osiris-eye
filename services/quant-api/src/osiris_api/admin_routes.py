@@ -179,20 +179,12 @@ def risk_status(request: Request) -> dict[str, Any]:
 @router.get("/alerts")
 def alerts(request: Request) -> dict[str, Any]:
     role, auth = _authorize(request, "read_health")
-    network, _, _, _ = _snapshots()  # refresh alert registry from current risk flags
-    active = admin_centre.ALERTS.active()
-    acknowledged = [
-        a for a in admin_centre.ALERTS.all() if a["status"] == "acknowledged"
-    ]
+    network, _, _, risk = _snapshots()
+    recorded = admin_centre.sync_durable_alerts(risk)
     payload = {
         "schema": "osiris.admin_alert_list.v1",
         "generated_at": network["generated_at"],
-        "storage": "process_memory_not_durable",
-        "durable": False,
-        "active_count": len(active),
-        "acknowledged_count": len(acknowledged),
-        "active": active,
-        "acknowledged": acknowledged,
+        **recorded,
     }
     return _respond(payload, auth, role, "read_health")
 
@@ -200,7 +192,11 @@ def alerts(request: Request) -> dict[str, Any]:
 @router.post("/alerts/{alert_id}/ack")
 def ack_alert(request: Request, alert_id: str) -> dict[str, Any]:
     role, auth = _authorize(request, "ack_alert")
-    alert = admin_centre.ALERTS.ack(alert_id, role)
+    try:
+        alert = admin_centre.acknowledge_durable_alert(alert_id, role)
+    except admin_centre.AlertStoreError:
+        admin_centre.AUDIT_LOG.record(role, "ack_alert", "deny", "alert_store_unavailable")
+        raise HTTPException(status_code=503, detail="alert_store_unavailable")
     if alert is None:
         admin_centre.AUDIT_LOG.record(role, "ack_alert", "deny", "alert_not_found")
         raise HTTPException(status_code=404, detail="alert_not_found")

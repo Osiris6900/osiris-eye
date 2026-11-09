@@ -247,7 +247,7 @@ test('blank token, loading, errors, empty states and disconnect stay honest', as
   fireEvent.click(screen.getByRole('button', { name: 'alerts' }));
   expect(await screen.findByText('No active alerts.')).toBeInTheDocument();
   expect(screen.getByText('No acknowledged alerts.')).toBeInTheDocument();
-  expect(screen.getByText(/lost on restart/)).toBeInTheDocument();
+  expect(screen.getByText(/Alert durability unavailable/)).toBeInTheDocument();
   expect(screen.queryByText('vtk-operator-7c1d55e0')).not.toBeInTheDocument();
   first.forEach(item => item.resolve({
     status: 200, ok: true, json: async () => bodyFor(item.url, '1111', 'viewer'),
@@ -353,4 +353,23 @@ test('scrubForDisplay drops credential keys at any depth', () => {
   const redacted = scrubForDisplay({ note: 'leak vtk-operator-7c1d55e0' }, 'vtk-operator-7c1d55e0');
   expect(JSON.stringify(redacted)).not.toContain('vtk-operator-7c1d55e0');
   expect(JSON.stringify(redacted)).toContain('[redacted]');
+});
+
+
+test('SQLite alert history displays durability without enabling acknowledgement', async () => {
+  stubFetch(allOk({
+    '/admin/alerts': reply(200, {
+      storage: 'sqlite', durable: true, initialized: true,
+      active_count: 1, acknowledged_count: 0,
+      active: [{ alert_id: 'ingestion_disabled:global', kind: 'ingestion_disabled', key: 'global', severity: 'warning', message: 'P2P ingestion disabled', raised_at: '2026-11-08T12:00:00+00:00' }],
+      acknowledged: [],
+    }),
+  }));
+  render(<AdminCentre />);
+  connect();
+  await screen.findByText('operator');
+  fireEvent.click(screen.getByRole('button', { name: 'alerts' }));
+  expect(await screen.findByText(/kept in the local database across restarts/)).toBeInTheDocument();
+  expect(screen.getByText(/cannot acknowledge alerts/)).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Ack' })).not.toBeInTheDocument();
 });
