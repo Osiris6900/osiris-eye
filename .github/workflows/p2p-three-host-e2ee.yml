@@ -70,11 +70,21 @@ jobs:
             --ssh-target-b "runner@$b" --ssh-target-c "runner@$c" \
             --host-a-ip "$(tailscale ip -4 | head -n1)" --port 4001 \
             --remote-binary "$GITHUB_WORKSPACE/target/release/osiris-p2p-node" \
+            --evidence "$dir/e2ee-evidence.json" \
+            --require-distinct-hosts \
             --ssh-option=-i --ssh-option="$dir/host-a" \
             --ssh-option=-o --ssh-option=BatchMode=yes \
             --ssh-option=-o --ssh-option=StrictHostKeyChecking=yes \
             --ssh-option=-o --ssh-option="UserKnownHostsFile=$dir/known_hosts" \
             --ssh-option=-o --ssh-option=ConnectTimeout=15
+      - name: Retain recipient E2EE binary hashes and acceptance record
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: three-e2ee-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/osiris-3host/e2ee-evidence.json
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Record controller completion
         if: always()
         env:

@@ -20,6 +20,8 @@ import time
 import uuid
 from pathlib import Path
 
+from p2p_e2ee_acceptance_evidence import AcceptanceEvidence
+
 ROOT = Path(__file__).resolve().parents[1]
 CANDIDATES = [
     ROOT / "target" / "release" / "osiris-p2p-node",
@@ -151,6 +153,12 @@ def main():
     )
     parser.add_argument("--binary", help="Local release binary; auto-detected if omitted")
     parser.add_argument("--ssh-option", action="append", default=[], help="Extra SSH option; repeat as needed")
+    parser.add_argument("--evidence", type=Path, help="Write sanitized JSON evidence to this path")
+    parser.add_argument(
+        "--require-distinct-hosts",
+        action="store_true",
+        help="Fail unless each host has a distinct boot-id fingerprint",
+    )
     args = parser.parse_args()
 
     binary = Path(args.binary).expanduser() if args.binary else next(
@@ -170,8 +178,18 @@ def main():
     instrument = f"OSIRIS-XHOST-E2EE-{uuid.uuid4().hex[:12].upper()}"
     payload = f"cross-host encrypted recipient-only probe {uuid.uuid4().hex}"
     digest = hashlib.sha256(payload.encode()).hexdigest()
+    evidence = AcceptanceEvidence(
+        topology="two_host_recipient",
+        marker="CROSS_HOST_E2EE_RECIPIENT_DELIVERY",
+        require_distinct_hosts=args.require_distinct_hosts,
+        evidence_path=args.evidence,
+    )
 
     try:
+        evidence.add_local_binary("host-a", "sender", binary)
+        evidence.add_remote_binary(
+            "host-b", "recipient", args.ssh_target, args.remote_binary, args.ssh_option,
+        )
         with tempfile.TemporaryDirectory(prefix="osiris-cross-host-e2ee-") as raw_tmp:
             tmp = Path(raw_tmp)
             recipients_file = tmp / "recipients.txt"
@@ -270,11 +288,24 @@ def main():
                 and f"payload_sha256={digest}" in line,
                 30, "host B to decrypt the exact cross-host payload",
             )
+            evidence.set_peer("host-a", host_a_peer)
+            evidence.set_peer("host-b", host_b_peer)
+            evidence.set_delivery(
+                payload_sha256=digest,
+                recipient_peer_id=host_b_peer,
+                recipient_digest_matched=True,
+            )
+            record = evidence.finish(True)
             print("CROSS_HOST_E2EE_RECIPIENT_DELIVERY=PASS", flush=True)
             print(f"host_a_peer_id={host_a_peer}", flush=True)
             print(f"host_b_peer_id={host_b_peer}", flush=True)
             print(f"instrument={instrument}", flush=True)
             print(f"payload_sha256={digest}", flush=True)
+            print(f"measurement_class={record['measurement_class']}", flush=True)
+    except (OSError, RuntimeError, TimeoutError, subprocess.SubprocessError) as exc:
+        if not evidence.closed:
+            evidence.finish(False, error=f"{type(exc).__name__}: {exc}")
+        raise
     finally:
         for _, proc in (("host-b-ssh", remote), ("host-a", local)):
             if proc is not None and proc.poll() is None:

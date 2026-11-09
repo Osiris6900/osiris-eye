@@ -110,6 +110,8 @@ jobs:
               --public-ip "$HOST_A_IP" \
               --port 4001 \
               --remote-binary "$GITHUB_WORKSPACE/target/release/osiris-p2p-node" \
+              --evidence "$DIR/e2ee-evidence.json" \
+              --require-distinct-hosts \
               --ssh-option=-i --ssh-option="$DIR/host-a" \
               --ssh-option=-o --ssh-option=BatchMode=yes \
               --ssh-option=-o --ssh-option=StrictHostKeyChecking=yes \
@@ -124,6 +126,14 @@ jobs:
           path: |
             ${{ runner.temp }}/osiris-e2ee/soak-evidence.json
             ${{ runner.temp }}/osiris-e2ee/soak-gate.json
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Retain recipient E2EE binary hashes and acceptance record
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: e2ee-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/osiris-e2ee/e2ee-evidence.json
           if-no-files-found: ignore
           retention-days: 14
       - name: Record controller completion
