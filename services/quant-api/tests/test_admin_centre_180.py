@@ -260,6 +260,12 @@ def test_paper_status_reports_real_ledger_state(monkeypatch, tmp_path):
     assert status["positions"][0]["symbol"] == "SYNTH-PERP"
     assert status["pnl"]["realized"] == "0"
     assert status["pnl"]["unrealized"] is None  # no marks supplied: honest null
+    assert status["cost_basis_gross"] == "200"
+    assert status["market_value"] is None
+    assert status["open_orders"] is None
+    assert status["recent_fills"][0]["symbol"] == "SYNTH-PERP"
+    assert status["recent_fills"][0]["side"] == "BUY"
+    assert "k1" not in str(status)
 
 
 def test_synthetic_adapter_smoke_still_admitted_when_not_suspended():

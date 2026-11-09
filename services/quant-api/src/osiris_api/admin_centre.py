@@ -22,6 +22,7 @@ import json
 import os
 from collections import deque
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from typing import Any, Iterable, Mapping
 
 from . import authorized_feeds
@@ -331,6 +332,11 @@ def network_status(
         "kill_switch_env": ENABLE_ENV,
         "outbox": counts,
         "peer_telemetry": "unavailable_in_quant_api_process",
+        "peer_health": {
+            "status": "unavailable",
+            "reason": "unavailable_in_quant_api_process",
+            "peer_count": None,
+        },
         "live_trading_authorized": False,
     }
 
@@ -384,20 +390,47 @@ def feeds_status(*, now: datetime | None = None) -> dict[str, Any]:
     }
 
 
+def _cost_basis_gross(positions: Any) -> str | None:
+    """Sum of absolute quantity times average cost. None when a row will not parse."""
+    if not isinstance(positions, list):
+        return None
+    total = Decimal("0")
+    for position in positions:
+        if not isinstance(position, Mapping):
+            return None
+        try:
+            quantity = Decimal(str(position.get("quantity")))
+            average = Decimal(str(position.get("average_cost")))
+        except (InvalidOperation, TypeError, ValueError):
+            return None
+        if not quantity.is_finite() or not average.is_finite():
+            return None
+        total += abs(quantity * average)
+    return str(total)
+
+
 def paper_status(*, now: datetime | None = None) -> dict[str, Any]:
     current = _utcnow(now)
     ledger = paper_ledger_snapshot()
+    initialized = bool(ledger.get("initialized"))
+    positions = ledger.get("positions", []) if initialized else []
+    recent = ledger.get("recent_fills", []) if initialized else []
     return {
         "schema": PAPER_SCHEMA,
         "generated_at": current.isoformat(),
         "mode": ledger.get("mode", "synthetic-paper-only"),
-        "initialized": bool(ledger.get("initialized")),
-        "cash": ledger.get("cash"),
-        "positions": ledger.get("positions", []),
-        "fill_count": ledger.get("fill_count", 0),
-        "pnl": ledger.get("pnl"),
+        "initialized": initialized,
+        "cash": ledger.get("cash") if initialized else None,
+        "positions": positions,
+        "fill_count": ledger.get("fill_count", 0) if initialized else 0,
+        "recent_fills": recent if isinstance(recent, list) else [],
+        "pnl": ledger.get("pnl") if initialized else None,
+        "cost_basis_gross": _cost_basis_gross(positions) if initialized else None,
+        "market_value": ledger.get("market_value") if initialized else None,
+        "open_orders": None,
+        "open_orders_reason": "not_stored",
         "marks_available": bool(
-            ledger.get("pnl") and ledger["pnl"].get("unrealized") is not None
+            initialized and ledger.get("pnl") and ledger["pnl"].get("unrealized") is not None
         ),
         "live_trading_authorized": False,
     }
@@ -469,12 +502,16 @@ def risk_status(
                 "message": "Paper ledger is not initialized; cash, positions and P&L unavailable",
             }
         )
+    market_value = paper.get("market_value")
     return {
         "schema": RISK_SCHEMA,
         "generated_at": current.isoformat(),
         "flag_count": len(flags),
         "flags": flags,
-        "exposure": "unavailable_without_marks",
+        "exposure": market_value if market_value is not None else "unavailable_without_marks",
+        "exposure_basis": "mark_to_market" if market_value is not None else "unavailable_without_marks",
+        "cost_basis_gross": paper.get("cost_basis_gross"),
+        "market_value": market_value if market_value is not None else None,
         "risk_gate": "enforced",
         "live_trading_authorized": False,
     }
