@@ -62,3 +62,7 @@ path = "src/poltergeist.rs"
 [[bin]]
 name = "neural_lace"
 path = "src/neural_lace.rs"
+
+[[bin]]
+name = "void_walker"
+path = "src/void_walker.rs"
