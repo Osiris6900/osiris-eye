@@ -96,6 +96,21 @@ def test_stop_blocks_new_admission_but_preserves_queued_ticks():
     asyncio.run(run())
 
 
+def test_drain_batch_is_bounded_and_fifo():
+    async def run():
+        engine = UltraFastEngine(capacity=4, max_stale_ms=1000)
+        await engine.start()
+        for seq in (1, 2, 3):
+            assert await engine.ingest_raw_packet(packet(seq), "BTC")
+        assert [tick.sequence for tick in engine.drain(2)] == [1, 2]
+        assert engine.buffer.count == 1
+        assert [tick.sequence for tick in engine.drain(2)] == [3]
+        assert engine.drain(0) == []
+        with pytest.raises(ValueError):
+            engine.drain(-1)
+    asyncio.run(run())
+
+
 def test_ingestion_rejects_stale_future_and_replay():
     async def run():
         engine = UltraFastEngine(capacity=2, max_stale_ms=1000)
