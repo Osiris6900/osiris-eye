@@ -17,6 +17,9 @@ jobs:
         with:
           ref: fix/rust-sqlite-audit-20261109
           persist-credentials: true
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+        with:
+          toolchain: stable
       - name: Upgrade rusqlite and regenerate lockfile
         working-directory: services/p2p-node
         run: |
