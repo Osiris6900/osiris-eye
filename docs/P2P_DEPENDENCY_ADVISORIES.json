@@ -13,7 +13,7 @@
       "status": "scanned"
     },
     "crates.io": {
-      "packages": 388,
+      "packages": 451,
       "status": "scanned"
     },
     "npm": {
@@ -96,21 +96,21 @@
   ],
   "query": {
     "batch_size": 100,
-    "batches": 6,
-    "queried_at": "2026-11-08T16:20:16Z",
+    "batches": 7,
+    "queried_at": "2026-11-09T18:47:33Z",
     "querybatch_url": "https://api.osv.dev/v1/querybatch",
     "service": "OSV",
     "vulnerability_url_template": "https://api.osv.dev/v1/vulns/{id}"
   },
   "schema": "osiris.dependency-advisory-report.v1",
   "source": {
-    "commit": "58290743079880aa6c32d871e0d823851501becc",
+    "commit": "2501a07441c7a3e124a7494f2384903c85f5b6ca",
     "inputs": {
       "apps/web/package-lock.json": {
         "sha256": "fc7b7c0a8bc7216c037feea96eeae9003d32a059d2f34a538de8313136f21c49"
       },
       "services/p2p-node/Cargo.lock": {
-        "sha256": "d2d7437dbb9bc020c703c25a642fcf90abda9e27f01f34d27eeebdc05b0b0993"
+        "sha256": "29ae2856e7576c3e8474ad55478992166d73ddf586e17f7c7622af200287e07c"
       },
       "services/quant-api/pyproject.toml": {
         "sha256": "d877334f01e1c54c1b85679e9553aced8fb24652b101728d3a9c9ef26a4bda1b"
@@ -125,7 +125,7 @@
     "advisory_groups": 1,
     "affected_packages": 1,
     "maintenance_only_groups": 1,
-    "queried_packages": 544,
+    "queried_packages": 607,
     "raw_advisory_matches": 1,
     "vulnerability_groups": 0
   }
