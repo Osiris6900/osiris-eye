@@ -1,0 +1,33 @@
+name: Ghost sniffer lock refresh (temporary)
+on:
+  pull_request:
+    paths:
+      - 'services/p2p-node/Cargo.toml'
+      - 'services/p2p-node/src/ghost_sniffer.rs'
+      - '.github/workflows/ghost-sniffer-lock-refresh.yml'
+permissions:
+  contents: write
+jobs:
+  refresh:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'feat/ghost-sniffer-public-feed-20261109'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: feat/ghost-sniffer-public-feed-20261109
+          persist-credentials: true
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - name: Update lockfile and check Rust binary
+        run: |
+          cargo generate-lockfile --manifest-path services/p2p-node/Cargo.toml
+          cargo test --locked --manifest-path services/p2p-node/Cargo.toml --bin ghost_sniffer
+      - name: Commit updated lockfile only
+        run: |
+          if ! git diff --quiet -- services/p2p-node/Cargo.lock; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add services/p2p-node/Cargo.lock
+            git commit -m "build(feed): refresh Rust lockfile for ghost sniffer"
+            git push origin HEAD:feat/ghost-sniffer-public-feed-20261109
+          fi
