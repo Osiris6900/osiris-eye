@@ -97,14 +97,14 @@
   "query": {
     "batch_size": 100,
     "batches": 6,
-    "queried_at": "2026-11-08T11:20:57Z",
+    "queried_at": "2026-11-08T16:20:16Z",
     "querybatch_url": "https://api.osv.dev/v1/querybatch",
     "service": "OSV",
     "vulnerability_url_template": "https://api.osv.dev/v1/vulns/{id}"
   },
   "schema": "osiris.dependency-advisory-report.v1",
   "source": {
-    "commit": "587dbc71e58de3e6dc88748814ab551641a359e0",
+    "commit": "58290743079880aa6c32d871e0d823851501becc",
     "inputs": {
       "apps/web/package-lock.json": {
         "sha256": "fc7b7c0a8bc7216c037feea96eeae9003d32a059d2f34a538de8313136f21c49"

@@ -1,0 +1,317 @@
+{
+  "schema": "osiris.release-gate-inventory.v1",
+  "baseline_commit": "5176eae8843a1e5144ac903f37843fe9bb46cdd9",
+  "live_trading_authorized": false,
+  "facts": {
+    "mutable_action_uses": 0,
+    "pinned_action_uses": 68,
+    "workflow_files": 9,
+    "advisory_inputs_match_worktree": true,
+    "advisory_source_commit": "587dbc71e58de3e6dc88748814ab551641a359e0",
+    "sbom_marks_python_unresolved": true,
+    "python_lock_schema": "osiris.python-deployment-lock.v1",
+    "cargo_versions": {
+      "hickory-proto": "0.26.3",
+      "hickory-resolver": "0.26.3",
+      "yamux": "0.14.1",
+      "paste": "1.0.15"
+    }
+  },
+  "items": [
+    {
+      "id": "T01",
+      "tracker_item": "Remediate OSV dependencies (#171) and resolve Python lock/provenance gate",
+      "module_issues": [171],
+      "status": "Partial",
+      "acceptance_satisfied": false,
+      "evidence": [
+        "https://github.com/Osiris6900/osiris-eye/pull/239",
+        "https://github.com/Osiris6900/osiris-eye/pull/257",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42494850772",
+        "docs/P2P_DEPENDENCY_ADVISORIES.json",
+        "services/quant-api/requirements-lock.txt"
+      ],
+      "evidence_commits": ["5176eae8843a1e5144ac903f37843fe9bb46cdd9"],
+      "open_prs": [276, 281, 286],
+      "blocker": "paste 1.0.15 (RUSTSEC-2024-0436) remains; CycloneDX SBOM still marks Python deployment resolution unresolved; license provenance checker is not a Dependency Security Audit step; #171 text is stale."
+    },
+    {
+      "id": "T02",
+      "tracker_item": "Implement immutable action pinning and CI ratchet (#167)",
+      "module_issues": [167],
+      "status": "Implemented with evidence",
+      "acceptance_satisfied": true,
+      "evidence": [
+        "https://github.com/Osiris6900/osiris-eye/pull/240",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42494850551"
+      ],
+      "evidence_commits": [
+        "6c6d155110c796d43bf5c879ea1487e1620ac81a",
+        "5176eae8843a1e5144ac903f37843fe9bb46cdd9"
+      ],
+      "open_prs": [],
+      "blocker": ""
+    },
+    {
+      "id": "T03",
+      "tracker_item": "Re-run final-candidate 2/3 host E2EE with binary hashes and retained evidence",
+      "module_issues": [176, 177],
+      "status": "Remaining",
+      "acceptance_satisfied": false,
+      "evidence": [
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42424830531",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42424833409",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42430583187",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42430580795",
+        "docs/P2P_REMOTE_ACCEPTANCE_2026_11_07.json"
+      ],
+      "evidence_commits": ["154a65111d92cbd344ad2cc1b49a80ed8f53cd28"],
+      "open_prs": [270, 274],
+      "blocker": "No 2/3-host E2EE run on 5176eae retains node binary SHA-256. The 2026-11-07 summary records payload digests only and states binary hashes were not retained. Latest real cross-host E2EE dispatch failed."
+    },
+    {
+      "id": "T04",
+      "tracker_item": "Run sustained multi-host outage/load/relay/NAT acceptance",
+      "module_issues": [176, 255],
+      "status": "Remaining",
+      "acceptance_satisfied": false,
+      "evidence": [
+        "docs/P2P_SCALE_REGRESSION_2026_11_08.json",
+        "docs/P2P_ADMISSION_LOCAL_100_REGRESSION.json",
+        "https://github.com/Osiris6900/osiris-eye/pull/256",
+        "https://github.com/Osiris6900/osiris-eye/pull/259"
+      ],
+      "evidence_commits": ["5176eae8843a1e5144ac903f37843fe9bb46cdd9"],
+      "open_prs": [269, 279, 280, 283],
+      "blocker": "100-peer independent-host soak with distinct host fingerprints, binary hashes, latency, and loss is not retained. Checked-in soak summaries set independent_hosts_verified to false."
+    },
+    {
+      "id": "T05",
+      "tracker_item": "Deploy operator-controlled public nodes with observability and incident recovery",
+      "module_issues": [176, 181],
+      "status": "Remaining",
+      "acceptance_satisfied": false,
+      "evidence": ["docs/P2P_PUBLIC_NODE_DEPLOYMENT.md"],
+      "evidence_commits": [],
+      "open_prs": [],
+      "blocker": "No operator deployment, uptime, or incident-recovery record is attached to a commit."
+    },
+    {
+      "id": "T06",
+      "tracker_item": "Commission independent cryptography and operational security review",
+      "module_issues": [177, 181],
+      "status": "Remaining",
+      "acceptance_satisfied": false,
+      "evidence": ["scripts/check_master_integration.py"],
+      "evidence_commits": [],
+      "open_prs": [270],
+      "blocker": "No independent review artifact with reviewer, organization, scope, and an approved decision is checked in."
+    },
+    {
+      "id": "T07",
+      "tracker_item": "Build authorized multi-asset vendor adapters and instrument master",
+      "module_issues": [178],
+      "status": "Partial",
+      "acceptance_satisfied": false,
+      "evidence": [
+        "https://github.com/Osiris6900/osiris-eye/pull/243",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42467036806",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42494850551",
+        "services/quant-api/src/osiris_api/authorized_feeds.py",
+        "services/quant-api/src/osiris_api/instrument_master.py"
+      ],
+      "evidence_commits": ["30f5f2a4dd0d302548594f38f7740655241b9316", "5176eae8843a1e5144ac903f37843fe9bb46cdd9"],
+      "open_prs": [264],
+      "blocker": "Authorized adapter on main is a synthetic fixture. The module states that no vendor licence is claimed. Instrument master is operator/fixture import."
+    },
+    {
+      "id": "T08",
+      "tracker_item": "Implement streaming, point-in-time normalization, feed freshness and corporate actions",
+      "module_issues": [178],
+      "status": "Partial",
+      "acceptance_satisfied": false,
+      "evidence": [
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42494850551",
+        "services/quant-api/src/osiris_api/authorized_feeds.py",
+        "services/quant-api/src/osiris_api/feed_admission.py"
+      ],
+      "evidence_commits": ["5176eae8843a1e5144ac903f37843fe9bb46cdd9"],
+      "open_prs": [264],
+      "blocker": "Freshness checks are unit-tested. No retained streaming capture or corporate-action vendor file is attached."
+    },
+    {
+      "id": "T09",
+      "tracker_item": "Verify feed entitlements and redistribution rights",
+      "module_issues": [178],
+      "status": "Remaining",
+      "acceptance_satisfied": false,
+      "evidence": ["services/quant-api/src/osiris_api/authorized_feeds.py"],
+      "evidence_commits": [],
+      "open_prs": [264],
+      "blocker": "Feed licence signoff is absent. Fail-closed entitlement checks are not a rights verification."
+    },
+    {
+      "id": "T10",
+      "tracker_item": "Integrate global event and macro feeds with source provenance",
+      "module_issues": [178],
+      "status": "Partial",
+      "acceptance_satisfied": false,
+      "evidence": [
+        "https://github.com/Osiris6900/osiris-eye/pull/261",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42494850551"
+      ],
+      "evidence_commits": ["5176eae8843a1e5144ac903f37843fe9bb46cdd9"],
+      "open_prs": [],
+      "blocker": "Offline event validation is merged. No provenance attestation for a real macro or event feed is attached."
+    },
+    {
+      "id": "T11",
+      "tracker_item": "Implement reproducible feature/model lifecycle and walk-forward gates",
+      "module_issues": [178],
+      "status": "Partial",
+      "acceptance_satisfied": false,
+      "evidence": [
+        "https://github.com/Osiris6900/osiris-eye/pull/243",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42467036806",
+        "services/quant-api/tests/test_walk_forward_178.py"
+      ],
+      "evidence_commits": ["30f5f2a4dd0d302548594f38f7740655241b9316"],
+      "open_prs": [273],
+      "blocker": "Walk-forward unit tests pass in CI. No retained feature/model lifecycle archive for a candidate model is attached."
+    },
+    {
+      "id": "T12",
+      "tracker_item": "Validate strategies out of sample after all costs and leakage checks",
+      "module_issues": [178],
+      "status": "Partial",
+      "acceptance_satisfied": false,
+      "evidence": [
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42494850551",
+        "services/quant-api/tests/test_walk_forward_178.py"
+      ],
+      "evidence_commits": ["5176eae8843a1e5144ac903f37843fe9bb46cdd9"],
+      "open_prs": [273],
+      "blocker": "Unit tests cover a cost adjustment. No out-of-sample strategy report with a leakage review is attached."
+    },
+    {
+      "id": "T13",
+      "tracker_item": "Build independent portfolio risk budgets and strategy governance",
+      "module_issues": [179],
+      "status": "Partial",
+      "acceptance_satisfied": false,
+      "evidence": [
+        "https://github.com/Osiris6900/osiris-eye/pull/258",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42494850551",
+        "services/quant-api/src/osiris_api/risk.py",
+        "services/quant-api/tests/test_paper_risk_acceptance_179.py"
+      ],
+      "evidence_commits": ["5176eae8843a1e5144ac903f37843fe9bb46cdd9"],
+      "open_prs": [268, 277],
+      "blocker": "Simulation risk limits are tested in CI. No independent risk-budget governance signoff is attached."
+    },
+    {
+      "id": "T14",
+      "tracker_item": "Implement broker sandbox adapters, OMS state machine, idempotency and reconciliation",
+      "module_issues": [179],
+      "status": "Partial",
+      "acceptance_satisfied": false,
+      "evidence": [
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42460392297",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42494850551",
+        "services/quant-api/src/osiris_api/durable_paper_ledger.py",
+        "services/quant-api/tests/test_durable_paper_ledger.py"
+      ],
+      "evidence_commits": ["305ceb1d4d4c6f3d649cb58ee2c82eedb3818644", "5176eae8843a1e5144ac903f37843fe9bb46cdd9"],
+      "open_prs": [265, 277],
+      "blocker": "Broker OMS reconciliation is missing. The durable ledger is synthetic and idempotent; it does not reconcile broker state. The offline journal in scripts/paper_order_journal.py is not a CI step. PR #277 adds an internal paper reconcile and still sets broker_order_submitted false."
+    },
+    {
+      "id": "T15",
+      "tracker_item": "Add realistic paper fills, positions, cash, margin and P&L accounting",
+      "module_issues": [179],
+      "status": "Partial",
+      "acceptance_satisfied": false,
+      "evidence": [
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42494850551",
+        "services/quant-api/tests/test_durable_paper_ledger.py"
+      ],
+      "evidence_commits": ["5176eae8843a1e5144ac903f37843fe9bb46cdd9"],
+      "open_prs": [265, 277, 278],
+      "blocker": "CI covers synthetic cash, position, and realized P&L. Margin and realistic market fills are not evidenced."
+    },
+    {
+      "id": "T16",
+      "tracker_item": "Prove kill-switch and stale-feed fail-closed behavior",
+      "module_issues": [179, 180],
+      "status": "Partial",
+      "acceptance_satisfied": false,
+      "evidence": [
+        "https://github.com/Osiris6900/osiris-eye/pull/245",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42471703916",
+        "services/quant-api/tests/test_admin_api_180.py",
+        "scripts/test_paper_order_journal.py"
+      ],
+      "evidence_commits": ["0a610db74cac5381ebbb4abe358286a80a6e6298"],
+      "open_prs": [265, 268, 277],
+      "blocker": "Admin and ingestion kill-switch tests run in pytest. evaluate_paper_workflow does not consult a kill switch or feed freshness. The paper-journal stale-feed test is not a CI step."
+    },
+    {
+      "id": "T17",
+      "tracker_item": "Build authenticated operator dashboard for peers, feeds, orders, risk and audit",
+      "module_issues": [180],
+      "status": "Partial",
+      "acceptance_satisfied": false,
+      "evidence": [
+        "https://github.com/Osiris6900/osiris-eye/pull/245",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42471703916",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42494850551",
+        "apps/web/src/AdminCentre.tsx",
+        "services/quant-api/src/osiris_api/admin_centre.py"
+      ],
+      "evidence_commits": ["0a610db74cac5381ebbb4abe358286a80a6e6298", "5176eae8843a1e5144ac903f37843fe9bb46cdd9"],
+      "open_prs": [271, 278, 284],
+      "blocker": "RBAC dashboard tests passed in CI. Peer telemetry against a running p2p-node is not in those runs. #180 remains open."
+    },
+    {
+      "id": "T18",
+      "tracker_item": "Add metrics, alerts, distributed persistence, backups and disaster recovery",
+      "module_issues": [181, 180],
+      "status": "Partial",
+      "acceptance_satisfied": false,
+      "evidence": [
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42471703916",
+        "services/quant-api/src/osiris_api/admin_centre.py"
+      ],
+      "evidence_commits": ["0a610db74cac5381ebbb4abe358286a80a6e6298"],
+      "open_prs": [272],
+      "blocker": "In-process admin alerts are tested. No backup, restore, or disaster-recovery exercise is retained."
+    },
+    {
+      "id": "T19",
+      "tracker_item": "Run capacity/failover and CI release gates with traceable artifacts",
+      "module_issues": [181, 182],
+      "status": "Partial",
+      "acceptance_satisfied": false,
+      "evidence": [
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42494850551",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42494850772",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42495167275",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42495167271"
+      ],
+      "evidence_commits": ["5176eae8843a1e5144ac903f37843fe9bb46cdd9"],
+      "open_prs": [269, 272, 274],
+      "blocker": "CI, dependency audit, Tailscale observation stress, and the three-peer mesh are green at 5176eae. Independent-host capacity and failover artifacts are not."
+    },
+    {
+      "id": "T20",
+      "tracker_item": "Perform compliance, model-risk and security signoff before any limited live pilot",
+      "module_issues": [182, 207],
+      "status": "Remaining",
+      "acceptance_satisfied": false,
+      "evidence": [],
+      "evidence_commits": [],
+      "open_prs": [273, 274],
+      "blocker": "No compliance, model-risk, or security signoff is attached. Live trading stays unauthorized."
+    }
+  ]
+}

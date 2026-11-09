@@ -6,6 +6,7 @@ Long-only, fully funded BUY/SELL; mark-to-market is explicitly unrealized.
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -128,12 +129,59 @@ def synthetic_fill(key: str, symbol: str, side: str, quantity: Any, price: Any,
     return {"key": key, "status": "synthetic_fill", "realized_pnl": str(delta)}
 
 
+_FILL_AMOUNT = re.compile(r"^-?\d+(?:\.\d+)?$")
+_FILL_TIME = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$")
+_RECENT_FILL_LIMIT = 20
+
+
+def _recent_fills(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Newest synthetic fills. Idempotency keys are omitted on purpose."""
+    rows = conn.execute(
+        """SELECT symbol, side, quantity, price, fee, realized_pnl, created_at
+           FROM paper_fills ORDER BY rowid DESC LIMIT ?""",
+        (_RECENT_FILL_LIMIT,),
+    )
+    fills: list[dict[str, Any]] = []
+    for row in rows:
+        symbol, side = str(row["symbol"]), str(row["side"])
+        amounts = (row["quantity"], row["price"], row["fee"], row["realized_pnl"])
+        if side not in {"BUY", "SELL"}:
+            continue
+        if not symbol.isascii() or any(
+            ch not in "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:/-" for ch in symbol
+        ):
+            continue
+        if any(
+            not isinstance(value, str) or _FILL_AMOUNT.fullmatch(value) is None
+            for value in amounts
+        ):
+            continue
+        created = row["created_at"]
+        fills.append({
+            "symbol": symbol,
+            "side": side,
+            "quantity": row["quantity"],
+            "price": row["price"],
+            "fee": row["fee"],
+            "realized_pnl": row["realized_pnl"],
+            "created_at": (
+                created.replace(" ", "T") + "Z"
+                if isinstance(created, str) and _FILL_TIME.fullmatch(created) else None
+            ),
+        })
+    return fills
+
+
 def snapshot(marks: dict[str, Any] | None = None) -> dict:
     marks = marks or {}
     with _connect() as conn:
+        recent = _recent_fills(conn)
         account = conn.execute("SELECT * FROM paper_account WHERE id=1").fetchone()
         if not account:
-            return {"initialized": False, "mode": "synthetic-paper-only", "positions": [], "cash": None, "pnl": None}
+            return {
+                "initialized": False, "mode": "synthetic-paper-only", "positions": [],
+                "cash": None, "pnl": None, "recent_fills": recent, "market_value": None,
+            }
         positions, unrealized, market_value = [], Decimal("0"), Decimal("0")
         for row in conn.execute("SELECT * FROM paper_positions ORDER BY symbol"):
             qty, avg = Decimal(row["quantity"]), Decimal(row["average_cost"])
@@ -144,12 +192,14 @@ def snapshot(marks: dict[str, Any] | None = None) -> dict:
             positions.append({"symbol": row["symbol"], "quantity": str(qty),
                               "average_cost": str(avg), "mark": str(mark) if mark is not None else None})
         count = conn.execute("SELECT COUNT(*) FROM paper_fills").fetchone()[0]
+        marks_complete = all(position["mark"] is not None for position in positions)
         return {"initialized": True, "mode": "synthetic-paper-only", "cash": account["cash"],
-                "positions": positions, "fill_count": count,
+                "positions": positions, "fill_count": count, "recent_fills": recent,
+                "market_value": str(market_value) if marks_complete else None,
                 "pnl": {"realized": account["realized_pnl"],
-                        "unrealized": str(unrealized) if all(p["mark"] is not None for p in positions) else None,
+                        "unrealized": str(unrealized) if marks_complete else None,
                         "equity": str(Decimal(account["cash"]) + market_value)
-                                  if all(p["mark"] is not None for p in positions) else None}}
+                                  if marks_complete else None}}
 
 
 def _guard(fn, *args, **kwargs):

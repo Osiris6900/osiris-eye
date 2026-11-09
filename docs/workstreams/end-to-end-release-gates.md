@@ -1,5 +1,7 @@
 # Integration gates
 
+> Release-gate status lives in [Integrated delivery gates](../INTEGRATED_DELIVERY_GATES_2026_11_08.md) and `docs/release-gate-status.json`. This file is a scenario list, not the inventory.
+
 Tracks #182.
 
 ## Scope

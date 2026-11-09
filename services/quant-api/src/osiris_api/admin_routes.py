@@ -11,6 +11,7 @@ the secrets-hygiene scan before it leaves the process.
 from __future__ import annotations
 
 import os
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -62,14 +63,17 @@ def _outbox_counts() -> dict[str, Any]:
         return {"configured": False}
     if not Path(path).exists():
         return {"configured": True, "available": False}
-    from .observation_outbox import ObservationOutbox
+    try:
+        from .observation_outbox import ObservationOutbox
 
-    outbox = ObservationOutbox(path)
+        summary = ObservationOutbox(path).message_status()
+    except (OSError, sqlite3.Error, ValueError):
+        return {"configured": True, "available": False}
     return {
         "configured": True,
         "available": True,
-        "pending": outbox.pending_count(),
-        "rejected": outbox.rejected_count(),
+        "delivered_meaning": "local_node_process_not_remote_receipt",
+        **summary,
     }
 
 
@@ -102,6 +106,18 @@ def overview(request: Request) -> dict[str, Any]:
         "paper_initialized": paper["initialized"],
         "active_alert_count": len(admin_centre.ALERTS.active()),
         "risk_flag_count": risk["flag_count"],
+        "peer_health": (
+            network["peer_health"]["status"]
+            if network.get("peer_health", {}).get("status") == "unavailable"
+            else "unavailable"
+        ),
+        "outbox_pending": (
+            network["outbox"]["pending"]
+            if isinstance(network.get("outbox"), dict)
+            and network["outbox"].get("available") is True
+            and isinstance(network["outbox"].get("pending"), int)
+            else None
+        ),
         "live_trading_authorized": False,
     }
     return _respond(payload, auth, role, "read_health")
@@ -138,13 +154,20 @@ def risk_status(request: Request) -> dict[str, Any]:
 @router.get("/alerts")
 def alerts(request: Request) -> dict[str, Any]:
     role, auth = _authorize(request, "read_health")
-    _snapshots()  # refresh alert registry from current risk flags
+    network, _, _, _ = _snapshots()  # refresh alert registry from current risk flags
+    active = admin_centre.ALERTS.active()
+    acknowledged = [
+        a for a in admin_centre.ALERTS.all() if a["status"] == "acknowledged"
+    ]
     payload = {
         "schema": "osiris.admin_alert_list.v1",
-        "active": admin_centre.ALERTS.active(),
-        "acknowledged": [
-            a for a in admin_centre.ALERTS.all() if a["status"] == "acknowledged"
-        ],
+        "generated_at": network["generated_at"],
+        "storage": "process_memory_not_durable",
+        "durable": False,
+        "active_count": len(active),
+        "acknowledged_count": len(acknowledged),
+        "active": active,
+        "acknowledged": acknowledged,
     }
     return _respond(payload, auth, role, "read_health")
 

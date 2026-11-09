@@ -236,8 +236,10 @@ def test_contract_schemas_and_keys(client):
     assert set(overview) == {
         "schema", "generated_at", "service", "api_version", "role", "roles_configured",
         "ingestion_enabled", "feeds", "paper_initialized", "active_alert_count",
-        "risk_flag_count", "live_trading_authorized",
+        "risk_flag_count", "peer_health", "outbox_pending", "live_trading_authorized",
     }
+    assert overview["peer_health"] == "unavailable"
+    assert overview["outbox_pending"] is None
     assert overview["role"] == "viewer"
     assert overview["live_trading_authorized"] is False
 
@@ -245,8 +247,10 @@ def test_contract_schemas_and_keys(client):
     assert network["schema"] == "osiris.admin_network_status.v1"
     assert set(network) == {
         "schema", "generated_at", "ingestion_enabled", "kill_switch_env", "outbox",
-        "peer_telemetry", "live_trading_authorized",
+        "peer_telemetry", "peer_health", "live_trading_authorized",
     }
+    assert network["peer_health"]["peer_count"] is None
+    assert network["peer_health"]["status"] == "unavailable"
 
     feeds = client.get("/admin/feeds/status", headers=_headers("viewer")).json()
     assert feeds["schema"] == "osiris.admin_feeds_status.v1"
@@ -262,16 +266,21 @@ def test_contract_schemas_and_keys(client):
     assert paper["schema"] == "osiris.admin_paper_status.v1"
     assert set(paper) == {
         "schema", "generated_at", "mode", "initialized", "cash", "positions",
-        "fill_count", "pnl", "marks_available", "live_trading_authorized",
+        "fill_count", "recent_fills", "pnl", "cost_basis_gross", "market_value",
+        "open_orders", "open_orders_reason", "marks_available", "live_trading_authorized",
     }
+    assert paper["open_orders"] is None
+    assert paper["open_orders_reason"] == "not_stored"
+    assert paper["cost_basis_gross"] is None
     assert paper["mode"] == "synthetic-paper-only"
 
     risk = client.get("/admin/risk/status", headers=_headers("analyst")).json()
     assert risk["schema"] == "osiris.admin_risk_status.v1"
     assert set(risk) == {
-        "schema", "generated_at", "flag_count", "flags", "exposure", "risk_gate",
-        "live_trading_authorized",
+        "schema", "generated_at", "flag_count", "flags", "exposure", "exposure_basis",
+        "cost_basis_gross", "market_value", "risk_gate", "live_trading_authorized",
     }
+    assert risk["exposure"] == "unavailable_without_marks"
 
 
 def test_admin_exemption_does_not_weaken_outer_middleware(client, monkeypatch):
@@ -284,3 +293,81 @@ def test_admin_exemption_does_not_weaken_outer_middleware(client, monkeypatch):
     assert client.get(
         "/platform/modules", headers={"Authorization": "Bearer outer-token-xyz123"}
     ).status_code == 200
+
+
+def test_alerts_report_process_memory_and_require_authentication(client):
+    anonymous = client.get("/admin/alerts")
+    assert anonymous.status_code == 401
+    assert anonymous.json()["detail"] == "admin_authentication_required"
+    allowed = client.get("/admin/alerts", headers=_headers("viewer"))
+    assert allowed.status_code == 200
+    body = allowed.json()
+    assert body["storage"] == "process_memory_not_durable"
+    assert body["durable"] is False
+    assert body["active_count"] == len(body["active"])
+    assert body["acknowledged_count"] == len(body["acknowledged"])
+    assert isinstance(body["active"], list)
+    assert isinstance(body["acknowledged"], list)
+    denied = client.get("/admin/alerts", headers={"Authorization": "Bearer not-a-role-token"})
+    assert denied.status_code == 401
+    for secret in TOKENS.values():
+        assert secret not in allowed.text
+        assert secret not in anonymous.text
+        assert secret not in denied.text
+
+
+def test_paper_fills_are_readable_by_research_roles_only(client):
+    from osiris_api import durable_paper_ledger
+
+    durable_paper_ledger.initialize_account("10000")
+    durable_paper_ledger.synthetic_fill(
+        "fill-key-do-not-leak", "SYNTH-PERP", "BUY", "2", "100", fee="0"
+    )
+    allowed = client.get("/admin/paper/status", headers=_headers("analyst"))
+    assert allowed.status_code == 200
+    body = allowed.json()
+    assert body["cash"] == "9800"
+    assert body["cost_basis_gross"] == "200"
+    assert body["market_value"] is None
+    assert body["recent_fills"][0]["side"] == "BUY"
+    assert body["recent_fills"][0]["symbol"] == "SYNTH-PERP"
+    assert "fill-key-do-not-leak" not in allowed.text
+    denied = client.get("/admin/paper/status", headers=_headers("viewer"))
+    assert denied.status_code == 403
+    assert "9800" not in denied.text
+    assert "SYNTH-PERP" not in denied.text
+
+
+def test_network_message_status_counts_and_hides_raw_rejection_text(client, tmp_path, monkeypatch):
+    import sqlite3
+
+    from osiris_api.observation_outbox import ObservationOutbox
+
+    path = tmp_path / "outbox.sqlite3"
+    ObservationOutbox(str(path))
+    database = sqlite3.connect(path)
+    database.executemany(
+        "INSERT INTO pending_observations VALUES (?, ?, ?, ?)",
+        [
+            ("pending", "{}", 0, None),
+            ("delivered", "{}", 1, None),
+            ("stale", "{}", 0, "observation_stale"),
+            ("secret", "{}", 0, "token=supersecretvalue"),
+        ],
+    )
+    database.commit()
+    monkeypatch.setenv(admin_centre.OUTBOX_PATH_ENV, str(path))
+    response = client.get("/admin/network/status", headers=_headers("viewer"))
+    assert response.status_code == 200
+    body = response.json()
+    assert body["outbox"]["pending"] == 1
+    assert body["outbox"]["delivered"] == 1
+    assert body["outbox"]["rejected"] == 2
+    assert body["outbox"]["delivered_meaning"] == "local_node_process_not_remote_receipt"
+    reasons = {item["reason"]: item["count"] for item in body["outbox"]["rejection_reasons"]}
+    assert reasons == {"observation_stale": 1, "unclassified": 1}
+    assert "supersecretvalue" not in response.text
+    assert body["peer_health"]["peer_count"] is None
+    assert client.post(
+        "/admin/network/status", headers=_headers("viewer")
+    ).status_code == 405

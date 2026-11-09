@@ -6,6 +6,7 @@ from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from .integration_gate import router as verified_paper_gate_router
 from .data_store import ResearchStore
 from .data_intelligence import audit_observations
 from .backtesting import simulate_signals
@@ -41,6 +42,7 @@ from .research import (
     market_regime,
 )
 from .risk import check_order
+from .paper_integration import router as signed_paper_signal_router
 
 app = FastAPI(
     title="OSIRIS EYE Quant API",
@@ -48,6 +50,8 @@ app = FastAPI(
     description="Shared research API and point-in-time data store; no live execution.",
 )
 store = ResearchStore()
+app.include_router(verified_paper_gate_router)
+app.include_router(signed_paper_signal_router)
 
 
 @app.middleware("http")
@@ -871,6 +875,9 @@ def evaluate_stored_observation_endpoint(p: dict[str, Any] = Body(...)):
 
 from .durable_paper_ledger import router as durable_paper_ledger_router
 app.include_router(durable_paper_ledger_router)
+
+from .paper_execution import router as paper_execution_router
+app.include_router(paper_execution_router)
 
 from .admin_routes import router as admin_router
 app.include_router(admin_router)
