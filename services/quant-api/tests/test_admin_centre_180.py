@@ -347,3 +347,28 @@ def test_synthetic_adapter_smoke_still_admitted_when_not_suspended():
         adapter, instruments=["SYNTH-PERP"], now=NOW
     )
     assert result["counts"]["admitted"] > 0
+
+
+def test_alert_store_missing_file_is_empty_and_not_created(tmp_path):
+    from osiris_api.admin_alert_store import record_raised_alerts
+    path = tmp_path / "missing" / "alerts.sqlite3"
+    result = record_raised_alerts(str(path), [], now=NOW)
+    assert result["initialized"] is False
+    assert result["active"] == [] and result["acknowledged"] == []
+    assert not path.exists() and not path.parent.exists()
+
+
+def test_alert_store_rejects_foreign_sqlite_without_modifying(tmp_path):
+    import sqlite3
+    from osiris_api.admin_alert_store import AlertStoreError, record_raised_alerts
+    path = tmp_path / "foreign.sqlite3"
+    db = sqlite3.connect(path)
+    db.execute("CREATE TABLE foreign_data (value TEXT)")
+    db.execute("INSERT INTO foreign_data VALUES ('keep')")
+    db.commit()
+    db.close()
+    with pytest.raises(AlertStoreError, match="alert_store_unavailable"):
+        record_raised_alerts(str(path), [{"kind": "ingestion_disabled", "key": "global", "severity": "warning", "message": "disabled"}], now=NOW)
+    db = sqlite3.connect(path)
+    assert db.execute("SELECT value FROM foreign_data").fetchone()[0] == "keep"
+    db.close()
