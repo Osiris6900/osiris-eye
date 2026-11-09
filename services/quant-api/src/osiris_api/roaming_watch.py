@@ -9,11 +9,14 @@ A "hidden spirit" layer over the global market watch — with honest edges:
    host cools down and becomes eligible for later requests — the watcher
    never disguises itself, rotates identities, or bypasses a deliberate
    block: it simply uses the other public doors the venue itself opened.
-2. **Fastest-path ordering** — every attempt is timed; healthy endpoints
-   are ranked by smoothed round-trip (EWMA), so each node always asks its
-   measured-fastest door first. This is the fastest *public* path available
-   to this node — never claimed to beat physical co-location, which lives
-   in microseconds inside the exchange's own data centre.
+2. **Health-scored ordering** — every attempt is timed. Eligible endpoints
+   are ranked by a health score: known-good doors first (higher success
+   ratio and lower smoothed round-trip score higher), never-tried doors
+   next, and doors that have only failed last. Cooling doors are skipped.
+   This is the healthiest *public* path this node has measured — never
+   claimed to beat physical co-location, which lives in microseconds inside
+   the exchange's own data centre. A 429 or 418 cools that door for the
+   bounded Retry-After and does not immediately try a sibling door.
 3. **Coverage truth** — :func:`coverage_report` shows which instruments
    kept how many independent sources this cycle, which sources went silent
    or failed, and which instruments are down to a single lifeline.
@@ -39,6 +42,7 @@ from .data_store import ResearchStore
 # Single source of truth for plain HTTP: the watch layer's own getter.
 from .global_market_watch import Transport, watch_and_ingest
 from .global_market_watch import _http_get as _default_http_get
+from .market_connectivity import RateLimited, endpoint_health_score
 from .watch_coverage import coverage_report  # noqa: F401 - compatibility re-export
 
 MIN_INTERVAL_SECONDS = 15.0     # consistent with the Rust bridge bounds
@@ -86,11 +90,14 @@ class RoamingTransport:
     """Transport with official-alternate failover and fastest-path ranking.
 
     Wraps any base ``Transport``. Every request is offered to the primary
-    host plus its documented alternates, ordered by smoothed round-trip:
-    healthy endpoints first (fastest measured first), never-tried endpoints
-    next. Endpoints with an active cooldown are skipped. Only transport-level
-    unavailability (``RuntimeError``) triggers the next door. A well-formed but
-    unwanted response (``ValueError``) is surfaced, not retried, because retrying a
+    host plus its documented alternates, ordered by health score: known-good
+    endpoints first (higher success ratio and lower smoothed round-trip rank
+    higher), never-tried endpoints next, known-bad endpoints last. Endpoints
+    with an active cooldown are skipped. Only transport-level unavailability
+    (``RuntimeError``) triggers the next door. :class:`RateLimited` cools the
+    door that returned 429 or 418 for the bounded Retry-After and stops the
+    walk — sibling hosts often share one quota. A well-formed but unwanted
+    response (``ValueError``) is surfaced, not retried, because retrying a
     content problem on another host just multiplies load.
 
     A failing endpoint cools down for ``cooldown_seconds`` and is then
@@ -132,6 +139,7 @@ class RoamingTransport:
             "last_rtt_ms": None,
             "cooldown_until": 0.0,
             "last_error": None,
+            "rate_limits": 0,
         })
 
     def _ordered_candidates(self, url: str) -> list[str]:
@@ -140,17 +148,15 @@ class RoamingTransport:
         if not host:
             return [url] if self._entry(url)["cooldown_until"] <= now else []
         group = tuple(dict.fromkeys((host,) + self._hosts.get(host, ())))
-
-        def rank(candidate: str) -> tuple[float, float]:
-            entry = self._entry(candidate)
-            unknown = 1.0 if entry["ewma_rtt_ms"] is None else 0.0
-            ewma = entry["ewma_rtt_ms"] if entry["ewma_rtt_ms"] is not None else 0.0
-            return (unknown, ewma)
-
-        eligible = [candidate for candidate in group
-                    if self._entry(candidate)["cooldown_until"] <= now]
-        ordered = sorted(eligible, key=rank)  # stable: unknowns keep declared order
-        return [self._swap_host(url, candidate) for candidate in ordered]
+        eligible = [
+            (index, candidate)
+            for index, candidate in enumerate(group)
+            if self._entry(candidate)["cooldown_until"] <= now
+        ]
+        # Higher health first. Declared order breaks exact ties so two
+        # never-tried doors keep the operator's sequence.
+        eligible.sort(key=lambda item: (-endpoint_health_score(self._entry(item[1])), item[0]))
+        return [self._swap_host(url, candidate) for _, candidate in eligible]
 
     @staticmethod
     def _swap_host(url: str, new_host: str) -> str:
@@ -174,6 +180,12 @@ class RoamingTransport:
             started = self._clock()
             try:
                 body = self._base(candidate, timeout)
+            except RateLimited as exc:
+                entry["failures"] += 1
+                entry["rate_limits"] += 1
+                entry["last_error"] = str(exc)
+                entry["cooldown_until"] = self._clock() + exc.retry_after_seconds
+                raise
             except RuntimeError as exc:
                 entry["failures"] += 1
                 entry["last_error"] = str(exc)
@@ -196,12 +208,15 @@ class RoamingTransport:
         raise RuntimeError("watch_endpoints_cooling_down")  # defensive: no eligible attempt
 
     def stats(self) -> dict[str, dict[str, Any]]:
-        """Per-host transparency: attempts, successes, failures, smoothed
-        round-trip, cooldown state. No hidden state — the node's roaming
-        behaviour is fully inspectable."""
-        return {
-            host: dict(entry) for host, entry in sorted(self._stats.items())
-        }
+        """Per-host transparency: attempts, successes, failures, rate limits,
+        smoothed round-trip, cooldown, and health score. No hidden state —
+        the node's roaming behaviour is fully inspectable."""
+        published = {}
+        for host, entry in sorted(self._stats.items()):
+            view = dict(entry)
+            view["health_score"] = endpoint_health_score(entry)
+            published[host] = view
+        return published
 
 
 # -------------------------------------------------------------------- daemon

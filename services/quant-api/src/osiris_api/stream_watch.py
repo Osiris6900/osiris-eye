@@ -47,6 +47,7 @@ from .global_market_watch import (
     _now_utc,
     _observation,
 )
+from .market_connectivity import jittered_reconnect_delay
 from .p2p_ingestion import IngestionRejection, ingest_p2p_observation
 from .watch_coverage import coverage_report
 
@@ -328,6 +329,7 @@ async def _run_venue(
         "rejected": 0,
         "parse_errors": 0,
         "reconnects": 0,
+        "last_reconnect_delay_seconds": None,
         "last_error": None,
         "stop_reason": "duration_elapsed",
     }
@@ -400,10 +402,13 @@ async def _run_venue(
             stats["last_error"] = f"{type(exc).__name__}:{exc}"
             if attempts_left > 0 and clock() < deadline:
                 stats["reconnects"] += 1
-                backoff = min(
-                    _RECONNECT_BASE_SECONDS * (2 ** stats["reconnects"] - 1),
-                    _RECONNECT_CAP_SECONDS,
+                backoff = jittered_reconnect_delay(
+                    stats["reconnects"],
+                    material=provider,
+                    base_seconds=_RECONNECT_BASE_SECONDS,
+                    cap_seconds=_RECONNECT_CAP_SECONDS,
                 )
+                stats["last_reconnect_delay_seconds"] = backoff
                 await sleep(min(backoff, max(0.0, deadline - clock())))
 
     if attempts_left <= 0 and stats["last_error"]:
