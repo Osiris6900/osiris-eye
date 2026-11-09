@@ -24,7 +24,10 @@ async def main(count: int = 100_000) -> None:
             raise RuntimeError(f"tick {sequence} rejected")
     elapsed_ns = time.perf_counter_ns() - started
     await engine.stop()
-    if engine.rejected or engine.buffer.dropped or engine.buffer.count != count:
+    drained = engine.drain(count)
+    if len(drained) != count or any(tick.sequence != i for i, tick in enumerate(drained, 1)):
+        raise RuntimeError("benchmark FIFO drain lost or reordered ticks")
+    if engine.rejected or engine.buffer.dropped or engine.buffer.count != 0:
         raise RuntimeError("benchmark lost or rejected ticks")
     print(json.dumps({
         "count": count,
