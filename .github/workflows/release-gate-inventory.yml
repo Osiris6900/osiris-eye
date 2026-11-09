@@ -34,6 +34,8 @@ jobs:
           python-version: "3.11"
       - name: Check release-gate inventory
         run: |
+          python scripts/check_action_pins.py
+          python -m unittest discover -s scripts -p 'test_check_action_pins.py' -v
           python scripts/check_release_gate_status.py
           python -m unittest discover -s scripts -p 'test_check_release_gate_status.py' -v
 
@@ -50,5 +52,7 @@ jobs:
           python-version: "3.11"
       - name: Verify every release acceptance gate
         run: |
+          python scripts/check_action_pins.py
+          python -m unittest discover -s scripts -p 'test_check_action_pins.py' -v
           python scripts/check_release_gate_status.py --strict
           python -m unittest discover -s scripts -p 'test_check_release_gate_status.py' -v
