@@ -6,8 +6,8 @@ materials, reachability proof, or a cryptographic/independent security audit.
 
 ## Rust resolution
 
-`services/p2p-node/Cargo.lock` uses lock format 4 and records 389 packages:
-the local node plus 388 crates.io packages. Every registry entry has a checksum.
+`services/p2p-node/Cargo.lock` uses lock format 4 and records 452 packages:
+the local node plus 451 crates.io packages. Every registry entry has a checksum.
 No Git dependencies, alternate registries, or manifest `[patch]` overrides were
 found. These facts describe the configured sources; they do not establish that
 the dependencies are free of vulnerabilities.
@@ -26,7 +26,8 @@ the dependencies are free of vulnerabilities.
 | chacha20poly1305 | 0.10.1 |
 | hkdf (direct node dependency) | 0.12.4 |
 | sha2 (direct node dependency) | 0.10.9 |
-| rusqlite | 0.32.1 |
+| rusqlite | 0.41.1 |
+| libsqlite3-sys | 0.39.1 |
 
 The CI node build and tests use `--locked`, so dependency resolution cannot
 silently update this lockfile during those commands. Commit the lockfile with
@@ -66,7 +67,7 @@ is still not a whole-environment inventory.
 
 `scripts/generate_dependency_sbom.py` generates deterministic CycloneDX 1.5 JSON
 from the Cargo lock, the npm lock, and the hashed Python deployment lock. The
-Cargo and npm portions are three local applications, 388 crates.io libraries
+Cargo and npm portions are three local applications, 451 crates.io libraries
 and 132 npm libraries. Each of the 24 deployment pins is an additional library
 whose `pkg:pypi` purl, version, license expression, and every `--hash=sha256`
 digest come from the lock and `docs/PYTHON_LICENSE_PROVENANCE.json`. Those
@@ -105,16 +106,17 @@ inconsistent. The checks derive expected counts from the current lock inputs;
 they do not require a fixed number of advisories after remediation.
 
 The retained report is `docs/P2P_DEPENDENCY_ADVISORIES.json`, queried at
-`2026-11-08T16:20:16Z` with source commit
-`58290743079880aa6c32d871e0d823851501becc`. That commit contains every hashed
+`2026-11-09T18:47:33Z` with source commit
+`2501a07441c7a3e124a7494f2384903c85f5b6ca`. That commit contains every hashed
 input: the Cargo lock, the npm lock, `services/quant-api/pyproject.toml`, and
-`services/quant-api/requirements-lock.txt`. The query covered 544 packages
-(388 crates.io, 132 npm, 24 PyPI). One raw match was normalized into one
+`services/quant-api/requirements-lock.txt`. The query covered 607 packages
+(451 crates.io, 132 npm, 24 PyPI). One raw match was normalized into one
 alias-aware maintenance-only group. No vulnerability group was returned, and
 `--fail-on-vulnerability` exited 0. Python deployment coverage in this
-retained report is `scanned`, not `unresolved`. An earlier report named
-`587dbc71e58de3e6dc88748814ab551641a359e0`; that commit does not contain
-`requirements-lock.txt`, so it is not the retained source identity.
+retained report is `scanned`, not `unresolved`. `libsqlite3-sys` 0.39.1 and
+`rusqlite` 0.41.1 were in that query and were not matched. An earlier report
+named `58290743079880aa6c32d871e0d823851501becc`; its Cargo lock hash is not
+the lock in this commit, so it is not the retained source identity.
 
 | Package | Classification | Advisory group IDs |
 |---|---|---|
@@ -129,9 +131,8 @@ The libp2p 0.57.1 remediation is already on `main` via PR #173
 (`974de9ce04585e1d38824136514325f231b2bdaf`). At baseline
 `5176eae8843a1e5144ac903f37843fe9bb46cdd9`, `services/p2p-node/Cargo.lock`
 resolves hickory-proto, hickory-resolver, and hickory-net 0.26.3 and a single
-yamux 0.14.1 through libp2p-yamux 0.48.0. Those bytes are unchanged on this
-branch. The retained OSV report above is the advisory evidence for those
-inputs.
+yamux 0.14.1 through libp2p-yamux 0.48.0. Those versions are unchanged.
+The retained OSV report above is the advisory evidence for the current lock.
 
 `cargo metadata --manifest-path services/p2p-node/Cargo.toml --locked
 --format-version 1` records the enabled libp2p features `autonat`, `dcutr`,
@@ -144,27 +145,36 @@ hickory-resolver 0.26.3 edge, and libp2p-quic / libp2p-metrics, because the
 lock records optional dependencies as well as enabled ones. Those locked
 copies are already on the patched Hickory line. They were left in the lock.
 
+`libsqlite3-sys` 0.30.1, required by `rusqlite` 0.32.1 with the `bundled`
+feature, matched `RUSTSEC-2026-0459` (`CVE-2026-119375`, `GHSA-72w2-rjgg-q729`).
+The OSV range introduces the issue in 0.6.0 and records the fix in 0.39.0,
+which bundles SQLite 3.54.0. `libsqlite3-sys` 0.39.1 bundles SQLite 3.54.1 and
+is published with `rusqlite` 0.41. This lock resolves `rusqlite` 0.41.1 and
+`libsqlite3-sys` 0.39.1. An OSV query on 2026-11-09 returned no vulnerability
+for either version. The node enables `bundled`, not `bundled-sqlcipher`. No
+older `libsqlite3-sys` copy remains in the lock.
+
 `paste` 1.0.15 remains on an enabled Linux path. `cargo tree --locked` shows
 the proc-macro required by netlink-packet-core 0.8.2, required by if-watch
 3.2.2, required by both libp2p-tcp 0.45.0 and libp2p-mdns 0.49.0. The OSV
 record for `RUSTSEC-2024-0436` is informational (`unmaintained`), covers every
-paste release, and names no fixed version. crates.io still lists paste 1.0.15
-as the newest release. netlink-packet-core 0.9.0 (published 2026-08-18) drops
-paste by removing the `buffer!` macros, and that release notes the removal as
-breaking. if-watch 3.2.2 requires `netlink-packet-core` `^0.8.1`; 3.2.2 is the
-newest if-watch release, and libp2p 0.57.1 (also the newest libp2p release)
-depends on it. No semver-compatible bump removes paste. The minimal next step
-is an upstream if-watch release on the netlink-packet-core 0.9 line, then a
-libp2p release that consumes it. Until that exists, the maintenance finding
-stays, separate from the vulnerability gate.
+paste release, and names no fixed version. Rechecked on 2026-11-09: crates.io
+still lists paste 1.0.15, if-watch 3.2.2, and libp2p 0.57.1 as the newest
+releases. netlink-packet-core 0.9.0 (published 2026-08-18) drops paste by
+removing the `buffer!` macros, and that release notes the removal as breaking.
+if-watch 3.2.2 requires `netlink-packet-core` `^0.8.1`. No semver-compatible
+bump removes paste. The minimal next step is an upstream if-watch release on
+the netlink-packet-core 0.9 line, then a libp2p release that consumes it.
+Until that exists, the maintenance finding stays, separate from the
+vulnerability gate.
 
 `scripts/check_p2p_known_vulnerable_locks.py` rejects any locked
 hickory-proto below 0.26.1, hickory-resolver below 0.26.2, hickory-net below
-0.26.1, or yamux below 0.13.10, including when a patched copy is locked beside
-an older one. Pre-releases, build metadata, leading zeros, and other
-non-stable version strings for those crates are rejected rather than treated
-as meeting the fix line. paste is printed as `REVIEW` and does not fail the
-command.
+0.26.1, yamux below 0.13.10, or libsqlite3-sys below 0.39.0, including when a
+patched copy is locked beside an older one. Pre-releases, build metadata,
+leading zeros, and other non-stable version strings for those crates are
+rejected rather than treated as meeting the fix line. paste is printed as
+`REVIEW` and does not fail the command.
 Dependency-security CI runs the gate on every pull request. The gate is
 regression protection for versions already on main. It is not a new upgrade
 and it does not clear license, provenance, or a universal vulnerability claim.
@@ -244,7 +254,7 @@ python scripts/check_p2p_known_vulnerable_locks.py services/p2p-node/Cargo.lock
 python scripts/test_check_p2p_known_vulnerable_locks.py
 python scripts/test_scan_dependency_advisories.py
 python scripts/scan_dependency_advisories.py \
-  --source-commit 58290743079880aa6c32d871e0d823851501becc \
+  --source-commit 2501a07441c7a3e124a7494f2384903c85f5b6ca \
   --output docs/P2P_DEPENDENCY_ADVISORIES.json
 python3.11 -m venv /tmp/lockenv && /tmp/lockenv/bin/pip install pip-tools
 /tmp/lockenv/bin/python scripts/resolve_python_lock.py
@@ -257,7 +267,7 @@ python scripts/test_check_license_provenance.py
 
 `cargo test --locked --manifest-path services/p2p-node/Cargo.toml --all-targets`
 on Rust 1.99.1 (the stable toolchain CI selects through
-`dtolnay/rust-toolchain`) exited 0: 185 tests passed and 0 failed. Those
+`dtolnay/rust-toolchain`) exited 0: 210 tests passed and 0 failed. Those
 same-host results do not establish independent-host, cross-network,
 hostile-load, production-capacity, external-audit, or exploitability evidence.
 
