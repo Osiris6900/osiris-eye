@@ -11,8 +11,10 @@ path = "src/main.rs"
 
 [features]
 audio = ["dep:cpal"]
+angel-desktop = ["dep:eframe"]
 
 [dependencies]
+eframe = { version = "0.27", optional = true }
 cpal = { version = "0.15", optional = true }
 futures = "0.3"
 ed25519-dalek = "2.1"
@@ -66,3 +68,7 @@ path = "src/neural_lace.rs"
 [[bin]]
 name = "void_walker"
 path = "src/void_walker.rs"
+
+[[bin]]
+name = "angel_desktop"
+path = "src/angel_desktop.rs"
