@@ -19,6 +19,10 @@ is unchanged by the follow-up work:
 No further supported bump of those crates is available. libp2p 0.57.1 and
 yamux 0.14.1 are the newest crates.io releases.
 
+## Newly observed SQLite security blocker (2026-11-09)
+
+The earlier retained OSV snapshot below is historical and **does not establish current vulnerability-free status**. GitHub Actions Dependency Security Audit run `42659492678` on PR #294 failed the Rust `cargo audit` job on `RUSTSEC-2026-0459` / `CVE-2026-119375` (medium, 6.8). The P2P lock resolves `rusqlite 0.32.1` to vulnerable `libsqlite3-sys 0.30.1`; the advisory reports a fixed `libsqlite3-sys >=0.39.0`. A compatible `rusqlite` upgrade, regenerated lockfile, Rust tests and a passing audit are required before closing #171. Draft PR #302 tracks attempted remediation; its initial security audit also failed, so it is **not** evidence of a fix. Do not waive this finding.
+
 ## Regression gate
 
 PR #276 adds `scripts/check_p2p_known_vulnerable_locks.py`. It fails when a
