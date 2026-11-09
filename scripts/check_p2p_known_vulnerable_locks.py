@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Fail closed when the P2P lock resolves a version below a reviewed fix line.
 
-The patched Hickory and Yamux versions are already resolved on main. This
-ratchet stops a later lock refresh from bringing a vulnerable version back.
-It is not an OSV scan, a reachability proof, or a paste remediation.
+The patched Hickory, Yamux, and libsqlite3-sys versions are already resolved.
+This ratchet stops a later lock refresh from bringing a vulnerable version
+back. It is not an OSV scan, a reachability proof, or a paste remediation.
 """
 import argparse
 from pathlib import Path
@@ -11,12 +11,15 @@ import re
 import sys
 import tomllib
 
-# Minimum versions OSV records as fixed, checked against api.osv.dev on 2026-11-08.
+# Minimum versions OSV records as fixed. Hickory and Yamux were checked against
+# api.osv.dev on 2026-11-08. libsqlite3-sys was rechecked on 2026-11-09:
+# RUSTSEC-2026-0459 / CVE-2026-119375 is fixed in 0.39.0 (bundled SQLite 3.54.0).
 FLOORS = (
     ("hickory-proto", "0.26.1", "RUSTSEC-2026-0118 / RUSTSEC-2026-0119"),
     ("hickory-resolver", "0.26.2", "GHSA-5j98-2g5x-46v6 / GHSA-6f2x-v7q7-m7m5"),
     ("hickory-net", "0.26.1", "RUSTSEC-2026-0120 / GHSA-3v94-mw7p-v465"),
     ("yamux", "0.13.10", "GHSA-vxx9-2994-q338 / CVE-2026-32314"),
+    ("libsqlite3-sys", "0.39.0", "RUSTSEC-2026-0459 / CVE-2026-119375"),
 )
 # RUSTSEC-2024-0436 covers every paste release and names no fixed version.
 MAINTENANCE = {"paste": "RUSTSEC-2024-0436 (unmaintained; no fixed crates.io release)"}
