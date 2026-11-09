@@ -24,7 +24,7 @@ jobs:
       - name: Upgrade rusqlite and regenerate lockfile
         working-directory: services/p2p-node
         run: |
-          cargo add rusqlite@latest --features bundled
+          cargo add rusqlite --features bundled
           cargo tree -i libsqlite3-sys
           cargo update
           cargo test --locked
