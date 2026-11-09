@@ -1,6 +1,6 @@
 {
   "schema": "osiris.release-gate-inventory.v1",
-  "baseline_commit": "2036888bbada42213a221526914b09d50fc1f1df",
+  "baseline_commit": "5868fb45fe6b3d85651a74caab4e4f81cf6233a7",
   "live_trading_authorized": false,
   "facts": {
     "mutable_action_uses": 0,
@@ -113,10 +113,9 @@
       "open_prs": [
         269,
         280,
-        283,
-        291
+        283
       ],
-      "blocker": "100-peer independent-host soak is not retained. #279 merged the log throttle only."
+      "blocker": "#291 merged as 5868fb45. No three-peer mesh run on that commit shows BOOTSTRAP_RECONNECT=PASS and THREE_PEER_MESH_AND_RECOVERY=PASS. Run 42673931152 failed on 2036888. T04 stays Remaining. Next evidence is a passing mesh run on 5868fb45 plus the 100-peer independent-host soak."
     },
     {
       "id": "T05",
