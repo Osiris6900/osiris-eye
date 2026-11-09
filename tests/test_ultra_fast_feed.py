@@ -65,6 +65,19 @@ def test_wire_contract_and_invalid_payloads():
             ZeroCopyDeserializer.from_binary(payload)
 
 
+def test_stop_blocks_new_admission_but_preserves_queued_ticks():
+    async def run():
+        engine = UltraFastEngine(capacity=2, max_stale_ms=1000)
+        await engine.start()
+        assert await engine.ingest_raw_packet(packet(1), "BTC")
+        await engine.stop()
+        assert not engine.is_running
+        with pytest.raises(RuntimeError, match="not started"):
+            await engine.ingest_raw_packet(packet(2), "BTC")
+        assert [tick.sequence for tick in engine.buffer.get_batch()] == [1]
+    asyncio.run(run())
+
+
 def test_ingestion_rejects_stale_future_and_replay():
     async def run():
         engine = UltraFastEngine(capacity=2, max_stale_ms=1000)
