@@ -1,0 +1,24 @@
+{
+  "schema": "osiris.evidence-template.v1",
+  "id": "independent_crypto_risk_review",
+  "tracker_items": ["T06", "T20"],
+  "owners": ["#177", "#179", "#182"],
+  "retention": "docs/evidence/captured/independent-review.json",
+  "pass_criteria": [
+    "Reviewer and organization are named and are not the change author.",
+    "Scope covers cryptography and paper-risk controls on one commit.",
+    "decision is approved and unresolved critical or high findings are zero.",
+    "live_trading_authorized is false."
+  ],
+  "required_fields": [
+    {"name": "commit_sha", "type": "sha40"},
+    {"name": "reviewer", "type": "string"},
+    {"name": "organization", "type": "string"},
+    {"name": "review_date", "type": "iso_date"},
+    {"name": "scope", "type": "string"},
+    {"name": "decision", "type": "approved"},
+    {"name": "findings", "type": "list"},
+    {"name": "unresolved_critical_high", "type": "zero"},
+    {"name": "live_trading_authorized", "type": "false"}
+  ]
+}

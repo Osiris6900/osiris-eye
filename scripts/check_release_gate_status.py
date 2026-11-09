@@ -134,6 +134,43 @@ def validate(manifest: dict, facts: dict) -> list[str]:
             errors.append(f"{item.get('id')}: blocker required")
         if not isinstance(item.get("open_prs"), list) or any(not isinstance(number, int) for number in item["open_prs"]):
             errors.append(f"{item.get('id')}: open_prs must be integers")
+        errors.extend(validate_expected_artifact(item))
+    return errors
+
+
+def validate_expected_artifact(item: dict) -> list[str]:
+    """Templates describe a future capture. They are not a passing CI run."""
+    artifact = item.get("expected_artifact")
+    needs = item["id"] in {"T03", "T04", "T06", "T09", "T14", "T20"}
+    if not needs:
+        return [f"{item['id']}: unexpected expected_artifact"] if artifact else []
+    if not isinstance(artifact, str) or not artifact.endswith(".schema.json"):
+        return [f"{item['id']}: expected_artifact template required"]
+    path = ROOT / artifact
+    if not path.is_file():
+        return [f"{item['id']}: expected_artifact missing"]
+    try:
+        template = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return [f"{item['id']}: expected_artifact is not JSON"]
+    errors = []
+    if template.get("schema") != "osiris.evidence-template.v1":
+        errors.append(f"{item['id']}: evidence template schema mismatch")
+    if item["id"] not in template.get("tracker_items", []):
+        errors.append(f"{item['id']}: template does not name this tracker item")
+    retention = template.get("retention")
+    if not isinstance(retention, str) or not retention.startswith("docs/evidence/captured/") or not retention.endswith(".json"):
+        errors.append(f"{item['id']}: retention must be docs/evidence/captured/*.json")
+    criteria = template.get("pass_criteria")
+    if not isinstance(criteria, list) or not criteria or any(not isinstance(line, str) or not line.strip() for line in criteria):
+        errors.append(f"{item['id']}: pass_criteria required")
+    fields = template.get("required_fields")
+    if not isinstance(fields, list) or not fields or any(
+        not isinstance(field, dict) or not isinstance(field.get("name"), str) or not field["name"].strip()
+        or not isinstance(field.get("type"), str) or not field["type"].strip()
+        for field in fields
+    ):
+        errors.append(f"{item['id']}: required_fields required")
     return errors
 
 

@@ -55,6 +55,17 @@ class ReleaseGateInventoryTests(unittest.TestCase):
     def test_document_must_repeat_status(self):
         self.assertTrue(any("T02" in error for error in validate_document(self.manifest, "T02 missing")))
 
+    def test_blocking_steps_name_a_template(self):
+        for item_id in ("T03", "T04", "T06", "T09", "T14", "T20"):
+            item = next(row for row in self.manifest["items"] if row["id"] == item_id)
+            self.assertTrue(str(item.get("expected_artifact", "")).endswith(".schema.json"))
+            self.assertNotEqual(item["status"], "Implemented with evidence")
+
+    def test_missing_template_file_is_rejected(self):
+        manifest = copy.deepcopy(self.manifest)
+        manifest["items"][2]["expected_artifact"] = "docs/evidence/missing.schema.json"
+        self.assertTrue(any("missing" in error for error in validate(manifest, self.facts)))
+
 
 if __name__ == "__main__":
     unittest.main()

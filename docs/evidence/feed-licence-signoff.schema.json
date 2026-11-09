@@ -1,0 +1,21 @@
+{
+  "schema": "osiris.evidence-template.v1",
+  "id": "feed_licence_signoff",
+  "tracker_items": ["T09"],
+  "owners": ["#178"],
+  "retention": "docs/evidence/captured/feed-licence-signoff.json",
+  "pass_criteria": [
+    "Each admitted vendor has an entitlement reference and a redistribution decision.",
+    "The signoff names the commit and the signer.",
+    "A fail-closed code check is not a substitute for this signoff.",
+    "live_trading_authorized is false."
+  ],
+  "required_fields": [
+    {"name": "commit_sha", "type": "sha40"},
+    {"name": "signer", "type": "string"},
+    {"name": "signed_on", "type": "iso_date"},
+    {"name": "vendors", "type": "entitlement_list"},
+    {"name": "redistribution", "type": "per_vendor"},
+    {"name": "live_trading_authorized", "type": "false"}
+  ]
+}
