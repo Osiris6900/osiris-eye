@@ -118,9 +118,15 @@ above can `ack`; acknowledgements record role and timestamp.
   time; idempotency keys omitted), `cost_basis_gross` from ledger positions, and
   `market_value` only when every position has a mark. `open_orders` is `null`
   with reason `not_stored`.
-- Alert list adds `durable: false` and `storage: process_memory_not_durable`.
-  Counts match the arrays returned. The dashboard prints that limitation only
-  for this known storage value and does not render arbitrary storage text.
+- Alert history is the local SQLite file `OSIRIS_ADMIN_ALERT_DB` (otherwise
+  `./data/osiris-admin-alerts.sqlite3`). The file is created only when the system
+  raises an alert. A missing file is an empty history (`initialized: false`),
+  not a made-up count. A corrupt or foreign file stays unavailable (`durable: false`,
+  null lists) and is not rewritten. Stored rows are only alerts `evaluate_alerts`
+  raises. Acknowledging one does not delete it, and the same id is not reopened
+  on the next read. Counts match the arrays. The dashboard prints durability only for the
+  known `sqlite` and `process_memory_not_durable` storage values and cannot
+  acknowledge alerts.
 - The React dashboard is read-only: it does not call kill-switch, feed revoke,
   or alert ack. Those POST routes remain server-side and RBAC-gated.
 - Unrealized P&L is `null` without external marks (`marks_available: false`).

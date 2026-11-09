@@ -247,7 +247,9 @@ test('blank token, loading, errors, empty states and disconnect stay honest', as
   fireEvent.click(screen.getByRole('button', { name: 'alerts' }));
   expect(await screen.findByText('No active alerts.')).toBeInTheDocument();
   expect(screen.getByText('No acknowledged alerts.')).toBeInTheDocument();
-  expect(screen.getByText(/lost on restart/)).toBeInTheDocument();
+  expect(screen.getByText(/Alert durability unavailable/)).toBeInTheDocument();
+  expect(screen.getByText(/cannot acknowledge alerts/)).toBeInTheDocument();
+  expect(screen.queryByText(/lost on restart/)).not.toBeInTheDocument();
   expect(screen.queryByText('vtk-operator-7c1d55e0')).not.toBeInTheDocument();
   first.forEach(item => item.resolve({
     status: 200, ok: true, json: async () => bodyFor(item.url, '1111', 'viewer'),
@@ -326,6 +328,31 @@ test('enrolled registry lists nodes and hides key material', async () => {
   expect(screen.queryByText(/supersecretvalue/)).not.toBeInTheDocument();
   expect(screen.queryByText(/not-a-node/)).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Revoke' })).not.toBeInTheDocument();
+});
+
+test('durable alert history is distinct from an empty store', async () => {
+  stubFetch(allOk({
+    '/admin/alerts': reply(200, {
+      storage: 'sqlite', durable: true, initialized: true,
+      active_count: 1, acknowledged_count: 0,
+      active: [{
+        alert_id: 'ingestion_disabled:global', severity: 'warning',
+        message: 'P2P ingestion kill switch is disabled',
+        raised_at: '2026-11-08T12:00:00+00:00',
+        acknowledged_by: 'token=should-not-render',
+      }],
+      acknowledged: [],
+    }),
+  }));
+  render(<AdminCentre />);
+  connect();
+  await screen.findByText('operator');
+  fireEvent.click(screen.getByRole('button', { name: 'alerts' }));
+  expect(await screen.findByText(/kept in the local database across restarts/)).toBeInTheDocument();
+  expect(screen.getByText(/P2P ingestion kill switch is disabled/)).toBeInTheDocument();
+  expect(screen.getByText(/cannot acknowledge alerts/)).toBeInTheDocument();
+  expect(screen.queryByText(/should-not-render/)).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Ack' })).not.toBeInTheDocument();
 });
 
 test('uninitialized paper is distinct from an empty position book', async () => {

@@ -33,6 +33,7 @@ def client(monkeypatch, tmp_path):
     monkeypatch.setenv("OSIRIS_PAPER_LEDGER_DB", str(tmp_path / "paper.sqlite3"))
     monkeypatch.delenv(admin_centre.OUTBOX_PATH_ENV, raising=False)
     monkeypatch.setenv(admin_centre.IDENTITY_DB_ENV, str(tmp_path / "p2p.sqlite3"))
+    monkeypatch.setenv(admin_centre.ALERT_DB_ENV, str(tmp_path / "alerts.sqlite3"))
     admin_centre.reset_admin_state()
     yield TestClient(app)
     admin_centre.reset_admin_state()
@@ -302,25 +303,82 @@ def test_admin_exemption_does_not_weaken_outer_middleware(client, monkeypatch):
     ).status_code == 200
 
 
-def test_alerts_report_process_memory_and_require_authentication(client):
+def test_durable_alerts_survive_restart_and_require_authentication(client, tmp_path):
     anonymous = client.get("/admin/alerts")
     assert anonymous.status_code == 401
     assert anonymous.json()["detail"] == "admin_authentication_required"
     allowed = client.get("/admin/alerts", headers=_headers("viewer"))
     assert allowed.status_code == 200
     body = allowed.json()
-    assert body["storage"] == "process_memory_not_durable"
-    assert body["durable"] is False
+    assert body["storage"] == "sqlite"
+    assert body["durable"] is True
+    assert body["initialized"] is True
     assert body["active_count"] == len(body["active"])
     assert body["acknowledged_count"] == len(body["acknowledged"])
-    assert isinstance(body["active"], list)
-    assert isinstance(body["acknowledged"], list)
+    assert any(alert["kind"] == "ingestion_disabled" for alert in body["active"])
+    raised_at = next(alert["raised_at"] for alert in body["active"] if alert["kind"] == "ingestion_disabled")
+    assert (tmp_path / "alerts.sqlite3").is_file()
+    assert str(tmp_path / "alerts.sqlite3") not in allowed.text
+    admin_centre.ALERTS.clear()
+    again = client.get("/admin/alerts", headers=_headers("viewer"))
+    assert again.status_code == 200
+    kept = next(alert for alert in again.json()["active"] if alert["kind"] == "ingestion_disabled")
+    assert kept["raised_at"] == raised_at
     denied = client.get("/admin/alerts", headers={"Authorization": "Bearer not-a-role-token"})
     assert denied.status_code == 401
     for secret in TOKENS.values():
         assert secret not in allowed.text
+        assert secret not in again.text
         assert secret not in anonymous.text
         assert secret not in denied.text
+
+
+def test_alert_history_stays_empty_until_an_alert_is_raised(client, monkeypatch, tmp_path):
+    from osiris_api import durable_paper_ledger
+
+    monkeypatch.setenv(admin_centre.ENABLE_ENV, "1")
+    durable_paper_ledger.initialize_account("1000")
+    response = client.get("/admin/alerts", headers=_headers("viewer"))
+    assert response.status_code == 200
+    body = response.json()
+    assert body["durable"] is True
+    assert body["initialized"] is False
+    assert body["active"] == []
+    assert body["acknowledged"] == []
+    assert body["active_count"] == 0
+    assert not (tmp_path / "alerts.sqlite3").exists()
+
+
+def test_corrupt_alert_store_is_unavailable_and_unmodified(client, tmp_path):
+    path = tmp_path / "alerts.sqlite3"
+    path.write_bytes(b"not a database")
+    before = path.read_bytes()
+    response = client.get("/admin/alerts", headers=_headers("viewer"))
+    assert response.status_code == 200
+    body = response.json()
+    assert body["durable"] is False
+    assert body["storage"] == "unavailable"
+    assert body["reason"] == "alert_store_unreadable"
+    assert body["active"] is None
+    assert body["active_count"] is None
+    assert path.read_bytes() == before
+    assert str(path) not in response.text
+
+
+def test_acknowledged_alert_survives_memory_reset(client):
+    listed = client.get("/admin/alerts", headers=_headers("operator"))
+    assert listed.status_code == 200
+    alert_id = next(alert["alert_id"] for alert in listed.json()["active"] if alert["kind"] == "ingestion_disabled")
+    denied = client.post(f"/admin/alerts/{alert_id}/ack", headers=_headers("viewer"))
+    assert denied.status_code == 403
+    acked = client.post(f"/admin/alerts/{alert_id}/ack", headers=_headers("operator"))
+    assert acked.status_code == 200
+    assert acked.json()["alert"]["status"] == "acknowledged"
+    assert acked.json()["alert"]["acknowledged_by"] == "operator"
+    admin_centre.ALERTS.clear()
+    again = client.get("/admin/alerts", headers=_headers("viewer")).json()
+    assert any(alert["alert_id"] == alert_id for alert in again["acknowledged"])
+    assert all(alert["alert_id"] != alert_id for alert in again["active"])
 
 
 def test_paper_fills_are_readable_by_research_roles_only(client):

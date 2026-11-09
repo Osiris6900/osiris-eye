@@ -31,6 +31,15 @@ from typing import Any, Iterable, Mapping
 from urllib.parse import quote
 
 from . import authorized_feeds
+from .admin_alert_store import (
+    ALERT_DB_ENV,
+    AlertStoreError,
+    acknowledge_stored_alert,
+    clear_stored_alerts,
+    record_raised_alerts,
+    resolve_alert_db_path,
+    unavailable_alert_history,
+)
 from .durable_paper_ledger import snapshot as paper_ledger_snapshot
 from .p2p_ingestion import ENABLE_ENV
 
@@ -735,6 +744,30 @@ def risk_status(
     }
 
 
+def sync_durable_alerts(
+    risk: Mapping[str, Any], *, now: datetime | None = None,
+) -> dict[str, Any]:
+    """Persist current risk flags. A missing store file stays an empty history."""
+    path = resolve_alert_db_path()
+    if path is None:
+        return unavailable_alert_history("not_configured")
+    flags = risk.get("flags") if isinstance(risk, Mapping) else None
+    try:
+        return record_raised_alerts(path, flags or [], now=now)
+    except AlertStoreError:
+        return unavailable_alert_history("alert_store_unreadable")
+
+
+def acknowledge_durable_alert(
+    alert_id: str, role: str, *, now: datetime | None = None,
+) -> dict[str, Any] | None:
+    """Acknowledge a stored alert. Raises AlertStoreError when the store cannot be used."""
+    path = resolve_alert_db_path()
+    if path is None:
+        raise AlertStoreError("not_configured")
+    return acknowledge_stored_alert(path, alert_id, role, now=now)
+
+
 def evaluate_alerts(
     registry: AlertsRegistry,
     risk: Mapping[str, Any],
@@ -780,5 +813,8 @@ def reset_admin_state() -> None:
     """Test isolation hook: clears audit, alerts and adapter suspensions."""
     AUDIT_LOG.clear()
     ALERTS.clear()
+    configured = os.environ.get(ALERT_DB_ENV)
+    if isinstance(configured, str) and configured.strip():
+        clear_stored_alerts(configured)
     for name in list(authorized_feeds.suspended_adapters()):
         authorized_feeds.restore_adapter(name)

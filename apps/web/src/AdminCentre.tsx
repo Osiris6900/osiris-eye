@@ -378,10 +378,18 @@ export function AdminCentre({ apiBase = '/api' }: { apiBase?: string }) {
 
       {view === 'alerts' && <section className="panel" aria-label="Alerts">
         {renderSection('alerts', <>
-          <p className="muted">Storage: {alerts?.storage === 'process_memory_not_durable' ? 'process memory, not durable' : 'unavailable'}. This view cannot acknowledge alerts.</p>
-          <p className="muted">{alerts?.durable === false
-            ? 'Alerts are lost on restart. They are not a durable audit log.'
-            : 'Alert durability unavailable.'}</p>
+          <p className="muted">Storage: {alerts?.storage === 'sqlite' && alerts?.durable === true
+            ? 'local alert database'
+            : alerts?.storage === 'process_memory_not_durable' && alerts?.durable === false
+              ? 'process memory, not durable'
+              : 'unavailable'}. This view cannot acknowledge alerts.</p>
+          <p className="muted">{alerts?.storage === 'sqlite' && alerts?.durable === true
+            ? (alerts?.initialized === false
+              ? 'No alert has been stored yet. Alerts the system raises are kept in the local database across restarts.'
+              : 'Raised alerts are kept in the local database across restarts. This is not a compliance archive.')
+            : alerts?.storage === 'process_memory_not_durable' && alerts?.durable === false
+              ? 'Alerts are lost on restart. They are not a durable audit log.'
+              : 'Alert durability unavailable.'}</p>
           <p className="muted">Active count: {countText(alerts?.active_count)} · Acknowledged count: {countText(alerts?.acknowledged_count)}</p>
           {activeAlerts === null && <p className="muted">Active alerts unavailable.</p>}
           {activeAlerts?.map(alert => <div className="setting" key={String(alert.alert_id)}>
@@ -389,9 +397,15 @@ export function AdminCentre({ apiBase = '/api' }: { apiBase?: string }) {
           </div>)}
           {activeAlerts?.length === 0 && <p className="status">No active alerts.</p>}
           {acknowledgedAlerts === null && <p className="muted">Acknowledged alerts unavailable.</p>}
-          {acknowledgedAlerts?.map(alert => <p key={`ack-${String(alert.alert_id)}`} className="muted">
-            Acknowledged: {String(alert.alert_id)} by {String(alert.acknowledged_by)}
-          </p>)}
+          {acknowledgedAlerts?.map(alert => {
+            const alertId = typeof alert.alert_id === 'string' && /^[a-z0-9_-]{1,80}:[a-z0-9_-]{1,80}$/.test(alert.alert_id)
+              ? alert.alert_id : '';
+            if (!alertId) return null;
+            const by = typeof alert.acknowledged_by === 'string'
+              && ['viewer', 'analyst', 'operator', 'risk_officer', 'security_admin'].includes(alert.acknowledged_by)
+              ? alert.acknowledged_by : 'unclassified';
+            return <p key={`ack-${alertId}`} className="muted">Acknowledged: {alertId} by {by}</p>;
+          })}
           {acknowledgedAlerts?.length === 0 && <p className="muted">No acknowledged alerts.</p>}
         </>)}
       </section>}

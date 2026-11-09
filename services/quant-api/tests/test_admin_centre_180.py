@@ -269,6 +269,30 @@ def test_identity_registry_truncates_the_node_list(tmp_path):
     assert network["peer_telemetry"] == "identity_enrollment_not_live_sessions"
 
 
+def test_alert_store_does_not_rewrite_a_foreign_database(tmp_path):
+    import sqlite3
+
+    from osiris_api.admin_alert_store import AlertStoreError, record_raised_alerts
+
+    path = tmp_path / "other.sqlite3"
+    database = sqlite3.connect(path)
+    database.execute("CREATE TABLE notes (body TEXT)")
+    database.execute("INSERT INTO notes VALUES ('keep-me')")
+    database.commit()
+    database.close()
+    flags = [{
+        "kind": "ingestion_disabled", "key": "global", "severity": "warning",
+        "message": "P2P ingestion kill switch is disabled",
+    }]
+    with pytest.raises(AlertStoreError, match="alert_store_unreadable"):
+        record_raised_alerts(str(path), flags, now=NOW)
+    database = sqlite3.connect(path)
+    assert database.execute("SELECT body FROM notes").fetchone()[0] == "keep-me"
+    tables = {row[0] for row in database.execute("SELECT name FROM sqlite_master")}
+    database.close()
+    assert "admin_alerts" not in tables
+
+
 def test_network_and_risk_status_flag_disabled_ingestion(monkeypatch):
     monkeypatch.setenv(admin_centre.ENABLE_ENV, "0")  # see test_admin_api_180 fixture note
     network = admin_centre.network_status(now=NOW)
