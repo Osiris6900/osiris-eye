@@ -4,12 +4,13 @@ Not lock-free or zero-copy; benchmark on target hardware before latency claims.
 Wire format: little-endian uint64 timestamp_ns, float64 price, float64 size,
 uint32 sequence (28 bytes). No live-order execution is performed here.
 """
-import asyncio
 import logging
 import math
 import struct
 import time
 from dataclasses import dataclass
+
+from .ultra_fast_config import PRODUCTION_CONFIG, UltraFastConfig
 
 logger = logging.getLogger(__name__)
 _TICK = struct.Struct("<QddI")
@@ -135,3 +136,13 @@ class UltraFastEngine:
             "rejected": self.rejected,
             "overwritten": self.buffer.dropped,
         }
+
+
+def create_engine(config: UltraFastConfig = PRODUCTION_CONFIG) -> UltraFastEngine:
+    """Construct a fail-closed engine from the explicit configuration."""
+    if not config.FAIL_CLOSED_ON_STALE:
+        raise ValueError("stale-feed rejection cannot be disabled")
+    return UltraFastEngine(
+        capacity=config.RING_BUFFER_SIZE,
+        max_stale_ms=config.MAX_STALE_MS,
+    )
