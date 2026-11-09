@@ -134,6 +134,10 @@ class UltraFastEngine:
             logger.warning("Rejected market tick: %s", exc)
             return False
 
+    def drain(self, size: int = 1000) -> list[FastTick]:
+        """Read admitted ticks in FIFO order; safe to call after stop."""
+        return self.buffer.get_batch(size)
+
     def get_stats(self) -> dict:
         elapsed = ((time.monotonic_ns() - self.start_time_ns) / 1e9
                    if self.start_time_ns else 0)
