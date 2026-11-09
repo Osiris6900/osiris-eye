@@ -72,3 +72,7 @@ path = "src/void_walker.rs"
 [[bin]]
 name = "angel_desktop"
 path = "src/angel_desktop.rs"
+
+[[bin]]
+name = "divine_arbiter"
+path = "src/divine_arbiter.rs"
