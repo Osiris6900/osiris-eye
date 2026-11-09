@@ -43,6 +43,7 @@ from .research import (
 )
 from .risk import check_order
 from .paper_integration import router as signed_paper_signal_router
+from .advanced_intelligence import router as intelligence_router
 
 app = FastAPI(
     title="OSIRIS EYE Quant API",
@@ -52,6 +53,7 @@ app = FastAPI(
 store = ResearchStore()
 app.include_router(verified_paper_gate_router)
 app.include_router(signed_paper_signal_router)
+app.include_router(intelligence_router)
 
 
 @app.middleware("http")
