@@ -91,7 +91,8 @@ def test_stop_blocks_new_admission_but_preserves_queued_ticks():
         assert not engine.is_running
         with pytest.raises(RuntimeError, match="not started"):
             await engine.ingest_raw_packet(packet(2), "BTC")
-        assert [tick.sequence for tick in engine.buffer.get_batch()] == [1]
+        assert [tick.sequence for tick in engine.drain()] == [1]
+        assert engine.drain() == []
     asyncio.run(run())
 
 
