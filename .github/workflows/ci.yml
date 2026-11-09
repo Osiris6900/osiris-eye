@@ -33,6 +33,8 @@ jobs:
         run: |
           python scripts/check_action_pinning.py
           python -m unittest discover -s scripts -p 'test_check_action_pinning.py' -v
+      - name: Verify the read-only verification planner
+        run: python scripts/test_verify_all.py
       - name: Run Python tests
         run: pytest -q services/quant-api/tests tests/test_ultra_fast_feed.py
       - name: Smoke-test bounded local tick benchmark

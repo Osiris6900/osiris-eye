@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """One-command fail-closed verification for Osiris Eye.
 
-Default is read-only. --apply-safe-fixes only runs formatters after explicit opt-in.
-No dependency upgrades, network downloads, broker orders, commits or merges.
+The default is a dry run. Pass --execute to run the checks. This does not
+upgrade dependencies, download artifacts, submit broker orders, commit, or merge.
 """
 from __future__ import annotations
 
 import argparse
 import json
-import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -44,34 +43,44 @@ def run_check(name, command, cwd, timeout):
             "output_tail": (result.stdout + "\n" + result.stderr)[-4000:]}
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--dry-run", action="store_true", help="Show checks without executing")
-    parser.add_argument("--timeout", type=int, default=900)
-    parser.add_argument("--report", type=Path, help="Optional JSON report path")
-    args = parser.parse_args()
-    if args.timeout < 1:
-        parser.error("--timeout must be positive")
-    if not (ROOT / "services/p2p-node/Cargo.toml").is_file():
-        parser.error("Run from an Osiris Eye checkout containing services/p2p-node")
-    if args.dry_run:
-        for name, command, cwd in CHECKS:
-            print(f"PLAN {name}: {command} (cwd={cwd or '.'})")
-        return 0
-
-    results = [run_check(name, command, cwd, args.timeout) for name, command, cwd in CHECKS]
-    report = {
+def build_report(results):
+    """A local verification report never authorizes live trading or a merge."""
+    return {
         "schema": "osiris.verification.v1",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "live_trading_authorized": False,
         "merge_authorized": False,
         "checks": results,
-        "all_passed": all(item["status"] == "passed" for item in results),
+        "all_passed": bool(results) and all(item["status"] == "passed" for item in results),
         "external_evidence_required": [
             "independent-host 100-peer soak", "cryptographic security audit",
             "deployment and recovery evidence", "GitHub CI and required reviews",
         ],
     }
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dry-run", action="store_true", help="Show checks without executing")
+    parser.add_argument("--execute", action="store_true", help="Run the checks. Omit to dry-run.")
+    parser.add_argument("--timeout", type=int, default=900)
+    parser.add_argument("--report", type=Path, help="Optional JSON report path")
+    args = parser.parse_args()
+    if args.timeout < 1:
+        parser.error("--timeout must be positive")
+    if args.execute and args.dry_run:
+        parser.error("pass only one of --execute and --dry-run")
+    if not (ROOT / "crates/risk-kernel/Cargo.toml").is_file():
+        parser.error("Run from an Osiris Eye checkout containing the risk kernel")
+    if not (ROOT / "services/quant-api/tests").is_dir():
+        parser.error("paper and API tests are missing")
+    if not args.execute:
+        for name, command, cwd in CHECKS:
+            print(f"PLAN {name}: {command} (cwd={cwd or '.'})")
+        return 0
+
+    results = [run_check(name, command, cwd, args.timeout) for name, command, cwd in CHECKS]
+    report = build_report(results)
     print(json.dumps(report, indent=2))
     if args.report:
         path = args.report.resolve()
