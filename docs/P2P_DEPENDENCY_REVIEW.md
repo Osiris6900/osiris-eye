@@ -106,16 +106,17 @@ inconsistent. The checks derive expected counts from the current lock inputs;
 they do not require a fixed number of advisories after remediation.
 
 The retained report is `docs/P2P_DEPENDENCY_ADVISORIES.json`, queried at
-`2026-11-08T16:20:16Z` with source commit
-`58290743079880aa6c32d871e0d823851501becc`. That commit contains every hashed
+`2026-11-09T18:47:33Z` with source commit
+`2501a07441c7a3e124a7494f2384903c85f5b6ca`. That commit contains every hashed
 input: the Cargo lock, the npm lock, `services/quant-api/pyproject.toml`, and
-`services/quant-api/requirements-lock.txt`. The query covered 544 packages
-(388 crates.io, 132 npm, 24 PyPI). One raw match was normalized into one
+`services/quant-api/requirements-lock.txt`. The query covered 607 packages
+(451 crates.io, 132 npm, 24 PyPI). One raw match was normalized into one
 alias-aware maintenance-only group. No vulnerability group was returned, and
 `--fail-on-vulnerability` exited 0. Python deployment coverage in this
-retained report is `scanned`, not `unresolved`. An earlier report named
-`587dbc71e58de3e6dc88748814ab551641a359e0`; that commit does not contain
-`requirements-lock.txt`, so it is not the retained source identity.
+retained report is `scanned`, not `unresolved`. `libsqlite3-sys` 0.39.1 and
+`rusqlite` 0.41.1 were in that query and were not matched. An earlier report
+named `58290743079880aa6c32d871e0d823851501becc`; its Cargo lock hash is not
+the lock in this commit, so it is not the retained source identity.
 
 | Package | Classification | Advisory group IDs |
 |---|---|---|
@@ -130,9 +131,8 @@ The libp2p 0.57.1 remediation is already on `main` via PR #173
 (`974de9ce04585e1d38824136514325f231b2bdaf`). At baseline
 `5176eae8843a1e5144ac903f37843fe9bb46cdd9`, `services/p2p-node/Cargo.lock`
 resolves hickory-proto, hickory-resolver, and hickory-net 0.26.3 and a single
-yamux 0.14.1 through libp2p-yamux 0.48.0. Those bytes are unchanged on this
-branch. The retained OSV report above is the advisory evidence for those
-inputs.
+yamux 0.14.1 through libp2p-yamux 0.48.0. Those versions are unchanged.
+The retained OSV report above is the advisory evidence for the current lock.
 
 `cargo metadata --manifest-path services/p2p-node/Cargo.toml --locked
 --format-version 1` records the enabled libp2p features `autonat`, `dcutr`,
@@ -254,7 +254,7 @@ python scripts/check_p2p_known_vulnerable_locks.py services/p2p-node/Cargo.lock
 python scripts/test_check_p2p_known_vulnerable_locks.py
 python scripts/test_scan_dependency_advisories.py
 python scripts/scan_dependency_advisories.py \
-  --source-commit 58290743079880aa6c32d871e0d823851501becc \
+  --source-commit 2501a07441c7a3e124a7494f2384903c85f5b6ca \
   --output docs/P2P_DEPENDENCY_ADVISORIES.json
 python3.11 -m venv /tmp/lockenv && /tmp/lockenv/bin/pip install pip-tools
 /tmp/lockenv/bin/python scripts/resolve_python_lock.py
@@ -267,7 +267,7 @@ python scripts/test_check_license_provenance.py
 
 `cargo test --locked --manifest-path services/p2p-node/Cargo.toml --all-targets`
 on Rust 1.99.1 (the stable toolchain CI selects through
-`dtolnay/rust-toolchain`) exited 0: 185 tests passed and 0 failed. Those
+`dtolnay/rust-toolchain`) exited 0: 210 tests passed and 0 failed. Those
 same-host results do not establish independent-host, cross-network,
 hostile-load, production-capacity, external-audit, or exploitability evidence.
 
