@@ -5,8 +5,8 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from osiris_api.risk.input_validator import OrderInputValidator
-from osiris_api.risk.engine import RiskEngine
+from osiris_api.risk_validation.input_validator import OrderInputValidator
+from osiris_api.risk_validation.engine import RiskEngine
 
 GOOD = {"order_id": "order-1", "symbol": "BTCUSD", "side": "buy",
         "quantity": 1.0, "price": 100.0}
