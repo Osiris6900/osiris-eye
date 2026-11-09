@@ -261,6 +261,21 @@ mod tests {
     }
 
     #[test]
+    fn bundled_sqlite_meets_cve_2026_119375_fix_line() {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        let version: String = connection
+            .query_row("SELECT sqlite_version()", [], |row| row.get(0))
+            .unwrap();
+        let mut parts = version.split('.');
+        let major: u32 = parts.next().unwrap().parse().unwrap();
+        let minor: u32 = parts.next().unwrap().parse().unwrap();
+        assert!(
+            (major, minor) >= (3, 54),
+            "bundled SQLite {version} is older than 3.54.0 (RUSTSEC-2026-0459 / CVE-2026-119375)"
+        );
+    }
+
+    #[test]
     fn cache_remembers_and_reloads_across_restart() {
         let path = temp_path("restart");
         {
