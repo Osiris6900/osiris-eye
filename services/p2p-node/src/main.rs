@@ -7,10 +7,10 @@ mod peer_cache;
 mod observation_policy;
 mod announcement;
 
-use revocation::{RevocationRegistry, RevocationSyncMessage};
+use revocation::{apply_synced_revocation, RevocationRegistry, RevocationSyncMessage, SyncedRevocation};
 use rejection_log::RejectionLogThrottle;
 use e2ee::{create_key_binding, decrypt_for_recipient, encrypt_for_recipient, verify_key_binding, EncryptedEnvelope, KeyBindingRecord, TransportKeyPair};
-use peer_auth::{is_peer_allowed, parse_revoked_peers, parse_trusted_peers, read_peer_setting, run_if_peer_allowed};
+use peer_auth::{deny_peer, is_peer_allowed, parse_revoked_peers, parse_trusted_peers, read_peer_setting, run_if_peer_allowed};
 use peer_cache::{CachedPeer, PeerCache};
 use peer_key_store::PeerKeyStore;
 use osiris_p2p_node::delivery_receipt::{
@@ -482,6 +482,21 @@ mod tests {
             let mut restarted = super::ReplayGuard::open(path.clone()).unwrap();
             assert!(!restarted.record_message_id_if_new(&replay_key).unwrap());
         }
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn duplicate_decrypted_replay_key_is_rejected_and_a_new_key_still_admits() {
+        let path = replay_test_path("duplicate-then-new");
+        let mut guard = super::ReplayGuard::open(path.clone()).unwrap();
+        let data = serde_json::to_vec(&valid()).unwrap();
+        assert!(super::admit_decrypted_observation(&data, "sender:once", None, &mut guard).is_ok());
+        assert!(matches!(
+            super::admit_decrypted_observation(&data, "sender:once", None, &mut guard),
+            Err(super::EncryptedObservationError::Replay)
+        ));
+        assert!(super::admit_decrypted_observation(&data, "sender:second", None, &mut guard).is_ok());
+        drop(guard);
         let _ = std::fs::remove_file(path);
     }
 
@@ -2351,10 +2366,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 emit!("revocation_sync_page_v2_sent request_id={request_id} requester={propagation_source} records={count} next_page={}", next_cursor.is_some());
                             }
                             Ok(RevocationSyncMessage::Record(record)) => {
-                                match registry.apply(record.clone(), true) {
-                                    Ok(true) => {
-                                        let peer = record.peer_id.parse::<PeerId>()?;
-                                        revoked_peers.get_or_insert_with(HashSet::new).insert(peer);
+                                match apply_synced_revocation(registry, record.clone(), true) {
+                                    Ok(SyncedRevocation::Applied(peer)) => {
+                                        deny_peer(&mut revoked_peers, peer);
                                         swarm.behaviour_mut().peer_blocklist.block_peer(peer);
                                         let _ = peer_cache.remove(&record.peer_id);
                                         let bytes = serde_json::to_vec(&RevocationSyncMessage::Record(record))?;
@@ -2362,17 +2376,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                         emit!("signed_peer_revocation_applied peer={peer} source={propagation_source}");
                                         let _ = swarm.disconnect_peer_id(peer);
                                     }
-                                    Ok(false) => emit!("revocation_record_ignored reason=replay_or_stale"),
+                                    Ok(SyncedRevocation::StaleOrReplay) => emit!("revocation_record_ignored reason=replay_or_stale"),
                                     Err(error) => emit!("revocation_record_rejected source={propagation_source} error={error}"),
                                 }
                             }
                             Ok(RevocationSyncMessage::Snapshot(records)) => {
                                 let mut applied = 0usize;
                                 for record in records {
-                                    match registry.apply(record.clone(), true) {
-                                        Ok(true) => {
-                                            let peer = record.peer_id.parse::<PeerId>()?;
-                                            revoked_peers.get_or_insert_with(HashSet::new).insert(peer);
+                                    match apply_synced_revocation(registry, record.clone(), true) {
+                                        Ok(SyncedRevocation::Applied(peer)) => {
+                                            deny_peer(&mut revoked_peers, peer);
                                             swarm.behaviour_mut().peer_blocklist.block_peer(peer);
                                             let _ = peer_cache.remove(&record.peer_id);
                                             let bytes = serde_json::to_vec(&RevocationSyncMessage::Record(record))?;
@@ -2380,7 +2393,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                             let _ = swarm.disconnect_peer_id(peer);
                                             applied += 1;
                                         }
-                                        Ok(false) => {}
+                                        Ok(SyncedRevocation::StaleOrReplay) => {}
                                         Err(error) => emit!("revocation_snapshot_record_rejected source={propagation_source} error={error}"),
                                     }
                                 }
@@ -2395,10 +2408,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 }
                                 let mut applied = 0usize;
                                 for record in records {
-                                    match registry.apply(record.clone(), true) {
-                                        Ok(true) => {
-                                            let revoked_peer = record.peer_id.parse::<PeerId>()?;
-                                            revoked_peers.get_or_insert_with(HashSet::new).insert(revoked_peer);
+                                    match apply_synced_revocation(registry, record.clone(), true) {
+                                        Ok(SyncedRevocation::Applied(revoked_peer)) => {
+                                            deny_peer(&mut revoked_peers, revoked_peer);
                                             swarm.behaviour_mut().peer_blocklist.block_peer(revoked_peer);
                                             let _ = peer_cache.remove(&record.peer_id);
                                             let bytes = serde_json::to_vec(&RevocationSyncMessage::Record(record))?;
@@ -2406,7 +2418,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                             let _ = swarm.disconnect_peer_id(revoked_peer);
                                             applied += 1;
                                         }
-                                        Ok(false) => {}
+                                        Ok(SyncedRevocation::StaleOrReplay) => {}
                                         Err(error) => emit!("revocation_snapshot_record_rejected source={propagation_source} error={error}"),
                                     }
                                 }

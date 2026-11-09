@@ -712,6 +712,66 @@ mod adversarial_envelope_tests {
     }
 
     #[test]
+    fn impersonated_binding_and_sender_fail_closed() {
+        let f = fixture();
+        let attacker = identity::Keypair::generate_ed25519();
+        let attacker_transport = TransportKeyPair::generate();
+        let mut forged_binding = create_key_binding(
+            &attacker, &attacker_transport.public_key, 1, 100, 300,
+        ).unwrap();
+        forged_binding.peer_id = f.sender_binding.peer_id.to_string();
+        forged_binding.signature = STANDARD_NO_PAD.encode(
+            attacker.sign(&unsigned_bytes(&forged_binding).unwrap()).unwrap(),
+        );
+        assert_eq!(
+            verify_key_binding(&forged_binding, 150, 1).err(),
+            Some("key_binding_peer_id_mismatch"),
+        );
+
+        let mut impersonated = encrypt_for_recipient(
+            &attacker, 1, &f.recipient_peer.to_string(),
+            &f.recipient_transport.public_key, 1, b"forged-observation", 150, 180,
+        ).unwrap();
+        impersonated.sender_peer_id = f.sender_binding.peer_id.to_string();
+        impersonated.sender_key_epoch = f.sender_binding.key_epoch;
+        let mut signed = envelope_aad(&impersonated).unwrap();
+        signed.extend_from_slice(&STANDARD_NO_PAD.decode(&impersonated.ciphertext).unwrap());
+        impersonated.signature = STANDARD_NO_PAD.encode(attacker.sign(&signed).unwrap());
+        assert_eq!(decrypt(&f, &impersonated, 160).err(), Some("envelope_signature_invalid"));
+
+        let rotated_transport = TransportKeyPair::generate();
+        let rotated = create_key_binding(
+            &f.sender_identity, &rotated_transport.public_key, 2, 100, 300,
+        ).unwrap();
+        let rotated_binding = verify_key_binding(&rotated, 150, 1).unwrap();
+        let original = envelope(&f);
+        assert_eq!(
+            decrypt_for_recipient(
+                &original, &rotated_binding, &f.recipient_peer, 1,
+                f.recipient_transport.private_key(), 160,
+            ).err(),
+            Some("envelope_identity_or_time_check_failed"),
+        );
+        assert_eq!(decrypt(&f, &original, 160).unwrap(), b"adversarial-test-payload");
+    }
+
+    #[test]
+    fn stale_nonce_copied_onto_another_envelope_fails_closed() {
+        let f = fixture();
+        let original = envelope(&f);
+        let mut stale = envelope(&f);
+        if stale.nonce == original.nonce {
+            stale.nonce = STANDARD_NO_PAD.encode([9u8; 12]);
+        } else {
+            stale.nonce = original.nonce.clone();
+        }
+        resign(&f, &mut stale);
+        assert_eq!(decrypt(&f, &stale, 160).err(), Some("envelope_decryption_failed"));
+        assert_eq!(decrypt(&f, &original, 160).unwrap(), b"adversarial-test-payload");
+        assert_eq!(decrypt(&f, &original, 160).unwrap(), b"adversarial-test-payload");
+    }
+
+    #[test]
     fn rejects_envelope_lifetime_over_limit_at_creation() {
         let f = fixture();
         assert_eq!(

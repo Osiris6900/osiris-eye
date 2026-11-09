@@ -49,6 +49,7 @@ jobs:
         run: |
           python scripts/test_p2p_workflow_coordination.py
           python scripts/test_p2p_ssh_harness.py
+          python scripts/test_p2p_e2ee_acceptance_evidence.py
           python scripts/test_run_p2p_soak.py
           python scripts/test_check_p2p_load_acceptance.py
           python deploy/p2p/test_preflight.py
@@ -66,7 +67,7 @@ jobs:
       - name: Verify decentralized bootstrap configuration gate
         run: python -m unittest discover -s scripts -p 'test_check_decentralized_bootstrap.py' -v
       - name: Syntax-check P2P acceptance helpers
-        run: python -m py_compile scripts/test_p2p_cross_host_ssh.py scripts/test_p2p_cross_host_e2ee_ssh.py scripts/test_p2p_core_trusted_peer_allowlist.py scripts/test_p2p_bootstrap_readiness.py scripts/test_p2p_bootstrap_restart.py scripts/test_p2p_global_revocation_sync.py scripts/test_p2p_e2ee_three_process.py scripts/test_p2p_delivery_receipts.py scripts/test_verified_receipt_rust_bridge.py scripts/test_p2p_three_host_e2ee_ssh.py scripts/test_p2p_live_swarm_revocation.py scripts/test_p2p_core_relay_e2ee.py scripts/test_p2p_observation_freshness.py
+        run: python -m py_compile scripts/test_p2p_cross_host_ssh.py scripts/test_p2p_cross_host_e2ee_ssh.py scripts/test_p2p_core_trusted_peer_allowlist.py scripts/test_p2p_bootstrap_readiness.py scripts/test_p2p_bootstrap_restart.py scripts/test_p2p_global_revocation_sync.py scripts/test_p2p_e2ee_three_process.py scripts/test_p2p_delivery_receipts.py scripts/test_verified_receipt_rust_bridge.py scripts/test_p2p_three_host_e2ee_ssh.py scripts/test_p2p_live_swarm_revocation.py scripts/test_p2p_core_relay_e2ee.py scripts/test_p2p_observation_freshness.py scripts/p2p_e2ee_acceptance_evidence.py
 
   rust:
     runs-on: ubuntu-latest

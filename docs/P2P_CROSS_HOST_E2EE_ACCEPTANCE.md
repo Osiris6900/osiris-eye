@@ -65,8 +65,20 @@ The harness:
    exact instrument and payload SHA-256 digest.
 
 A successful run prints
-`CROSS_HOST_E2EE_RECIPIENT_DELIVERY=PASS`. Capture the logs and commit SHA
-with the test result.
+`CROSS_HOST_E2EE_RECIPIENT_DELIVERY=PASS` and
+`E2EE_MEASUREMENT_CLASS=...`. `--evidence` writes
+`osiris.p2p.recipient-e2ee-acceptance.v1` with each binary SHA-256, boot-id
+fingerprint, commit, payload digest, and PeerIds. The workflow passes
+`--require-distinct-hosts` and uploads that file for 14 days. Read the
+measurement class before citing the run:
+
+- `local_or_same_host` is a local or same-boot result. It is not
+  independent-host evidence.
+- `distinct_boot_id_hosts` means `/proc/sys/kernel/random/boot_id` differed
+  across the hosts. It is not an independent cryptographic audit.
+
+Capture the log lines, the evidence file, and the workflow URL. Do not invent
+a binary hash for a run that did not print one.
 
 ## What a pass does not prove
 
