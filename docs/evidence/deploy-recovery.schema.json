@@ -1,0 +1,21 @@
+{
+  "schema": "osiris.evidence-template.v1",
+  "id": "deploy_recovery_drill",
+  "tracker_items": ["T05", "T18", "T19"],
+  "owners": ["#176", "#181", "#182"],
+  "retention": "docs/evidence/captured/deploy-recovery.json",
+  "pass_criteria": [
+    "A staging deploy and rollback are executed and the service returns healthy.",
+    "A production rollback is rehearsed without placing a live order.",
+    "The retained log names the commit, the host class, and the UTC time.",
+    "live_trading_authorized is false."
+  ],
+  "required_fields": [
+    {"name": "commit_sha", "type": "sha40"},
+    {"name": "staging_deploy_run_url", "type": "url"},
+    {"name": "staging_rollback_run_url", "type": "url"},
+    {"name": "production_rollback_rehearsal_url", "type": "url"},
+    {"name": "recovered_healthy", "type": "true"},
+    {"name": "live_trading_authorized", "type": "false"}
+  ]
+}

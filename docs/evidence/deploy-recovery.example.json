@@ -1,0 +1,16 @@
+{
+  "schema": "osiris.deploy-recovery-plan.v1",
+  "live_trading_authorized": false,
+  "executes_commands": false,
+  "environments": {
+    "staging": {
+      "rollback_command": "systemctl restart osiris-staging",
+      "drill_status": "not_run"
+    },
+    "production": {
+      "rollback_command": "systemctl restart osiris-prod",
+      "drill_status": "not_run"
+    }
+  },
+  "note": "Example only. This file does not record a completed drill for T05, T18, or T19."
+}
