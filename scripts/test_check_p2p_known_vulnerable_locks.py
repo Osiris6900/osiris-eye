@@ -33,6 +33,7 @@ class VulnerableLockRatchetTests(unittest.TestCase):
             ("yamux", "0.13.9"),
             ("yamux", "0.14.1"),
             ("libsqlite3-sys", "0.30.1"),
+            ("libsqlite3-sys", "0.38.2"),
             ("paste", "1.0.15"),
         ])
         self.assertEqual(
@@ -44,6 +45,7 @@ class VulnerableLockRatchetTests(unittest.TestCase):
                 ("yamux", "0.12.1"),
                 ("yamux", "0.13.9"),
                 ("libsqlite3-sys", "0.30.1"),
+                ("libsqlite3-sys", "0.38.2"),
             ],
         )
         self.assertEqual(maintenance, [
@@ -58,6 +60,7 @@ class VulnerableLockRatchetTests(unittest.TestCase):
             ("hickory-net", "0.26.1"),
             ("yamux", "0.13.10"),
             ("libsqlite3-sys", "0.39.0"),
+            ("libsqlite3-sys", "0.39.1"),
             ("paste", "1.0.15"),
         ])
         self.assertEqual(blocked, [])
@@ -83,6 +86,8 @@ class VulnerableLockRatchetTests(unittest.TestCase):
                 [version, version],
                 version,
             )
+        blocked, _maintenance = self.inspect([("libsqlite3-sys", "0.39.0-rc.1")])
+        self.assertEqual([item[1] for item in blocked], ["0.39.0-rc.1"])
         completed = subprocess.run(
             [sys.executable, str(Path(ratchet.__file__)), str(self._write([("yamux", "0.14.0-rc.1")]))],
             check=False, capture_output=True, text=True,
@@ -127,6 +132,8 @@ class VulnerableLockRatchetTests(unittest.TestCase):
             ("yamux", "0.12.1"),
             ("yamux", "0.13.10"),
             ("libsqlite3-sys", "0.30.1"),
+            ("libsqlite3-sys", "0.38.2"),
+            ("rusqlite", "0.32.1"),
         })
         completed = subprocess.run(
             [sys.executable, str(Path(ratchet.__file__)), str(LOCK)],
