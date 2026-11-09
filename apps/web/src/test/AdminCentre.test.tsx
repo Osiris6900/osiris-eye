@@ -247,7 +247,7 @@ test('blank token, loading, errors, empty states and disconnect stay honest', as
   fireEvent.click(screen.getByRole('button', { name: 'alerts' }));
   expect(await screen.findByText('No active alerts.')).toBeInTheDocument();
   expect(screen.getByText('No acknowledged alerts.')).toBeInTheDocument();
-  expect(screen.getByText(/lost on restart/)).toBeInTheDocument();
+  expect(screen.getByText(/Alert durability unavailable/)).toBeInTheDocument();
   expect(screen.queryByText('vtk-operator-7c1d55e0')).not.toBeInTheDocument();
   first.forEach(item => item.resolve({
     status: 200, ok: true, json: async () => bodyFor(item.url, '1111', 'viewer'),
