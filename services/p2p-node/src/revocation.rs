@@ -97,6 +97,29 @@ fn encode_hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+/// Outcome of applying one sync `Record` or snapshot entry.
+/// Callers add `Applied` peers to runtime deny policy. `StaleOrReplay` does
+/// not change the registry. Invalid signatures return `Err` and leave prior
+/// revocations in place.
+#[derive(Debug, PartialEq, Eq)]
+pub enum SyncedRevocation {
+    Applied(PeerId),
+    StaleOrReplay,
+}
+
+pub fn apply_synced_revocation(
+    registry: &mut RevocationRegistry,
+    record: SignedRevocationRecord,
+    persist: bool,
+) -> Result<SyncedRevocation, Box<dyn Error>> {
+    let peer_text = record.peer_id.clone();
+    if registry.apply(record, persist)? {
+        Ok(SyncedRevocation::Applied(peer_text.parse()?))
+    } else {
+        Ok(SyncedRevocation::StaleOrReplay)
+    }
+}
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "payload", rename_all = "snake_case")]
@@ -390,5 +413,51 @@ mod tests {
         record.signature = encode_hex(&key.sign(&record.payload().unwrap()).to_bytes());
         assert!(registry.apply(record, true).is_err());
         assert!(registry.records().is_empty());
+    }
+
+    #[test]
+    fn synced_revocation_rejects_forgery_and_stale_replay() {
+        let authority = SigningKey::from_bytes(&[81u8; 32]);
+        let attacker = SigningKey::from_bytes(&[82u8; 32]);
+        let peer = PeerId::random();
+        let extra = PeerId::random();
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let path = std::env::temp_dir().join(format!("osiris-revocation-sync-{nonce}.json"));
+        let authority_hex = encode_hex(authority.verifying_key().as_bytes());
+        let record = signed_record(&authority, peer, 1);
+        let bytes = serde_json::to_vec(&RevocationSyncMessage::Record(record)).unwrap();
+        let mut follower = RevocationRegistry::open(path.clone(), authority_hex).unwrap();
+        let decoded = serde_json::from_slice::<RevocationSyncMessage>(&bytes).unwrap();
+        let RevocationSyncMessage::Record(decoded) = decoded else {
+            panic!("record sync message did not round-trip");
+        };
+        assert_eq!(
+            apply_synced_revocation(&mut follower, decoded.clone(), true).unwrap(),
+            SyncedRevocation::Applied(peer),
+        );
+        assert_eq!(
+            apply_synced_revocation(&mut follower, decoded, true).unwrap(),
+            SyncedRevocation::StaleOrReplay,
+        );
+        assert!(apply_synced_revocation(&mut follower, signed_record(&attacker, extra, 1), true).is_err());
+        let page = serde_json::to_vec(&RevocationSyncMessage::Snapshot(vec![
+            signed_record(&authority, extra, 1),
+            signed_record(&attacker, PeerId::random(), 1),
+        ])).unwrap();
+        let RevocationSyncMessage::Snapshot(records) = serde_json::from_slice(&page).unwrap() else {
+            panic!("snapshot sync message did not round-trip");
+        };
+        let mut applied = Vec::new();
+        for record in records {
+            match apply_synced_revocation(&mut follower, record, true) {
+                Ok(SyncedRevocation::Applied(revoked)) => applied.push(revoked),
+                Ok(SyncedRevocation::StaleOrReplay) => {}
+                Err(_) => {}
+            }
+        }
+        assert_eq!(applied, vec![extra]);
+        let revoked: std::collections::HashSet<_> = follower.revoked_peer_ids().unwrap().into_iter().collect();
+        assert_eq!(revoked, std::collections::HashSet::from([peer, extra]));
+        let _ = fs::remove_file(path);
     }
 }

@@ -41,19 +41,33 @@ add regional ones like Binance.US `api1/api2.binance.us`).
 - At most `MAX_ENDPOINT_ATTEMPTS` (3) doors per request — failover never
   becomes a hammer.
 
-## 2. Fastest-path ordering
+## 2. Health-scored ordering
 
-Every attempt is timed; healthy doors are ranked by smoothed round-trip
-(EWMA, α=0.3). Eligible known-good doors first (fastest first), never-tried
-doors next; active cooldowns are excluded. This ranks paths already
-measured by the node, rather than claiming to discover the globally fastest
-path. Untried or recovered doors are not proactively probed while a
-preferred healthy door works. Combined with per-quote `fetch_roundtrip_ms`
-telemetry (#136) and `source_latency_report`, the mesh always knows which
-door and which node is nearest to which exchange.
+Every attempt is timed. Eligible doors (cooldown expired) are ranked by
+`endpoint_health_score`, highest first, with declared order breaking ties:
 
-`roam.stats()` exposes everything: attempts, successes, failures,
-smoothed RTT, cooldown state. No hidden state.
+- **Known-good** (at least one success): strictly above 0.5. A higher
+  success ratio and a lower smoothed round-trip (EWMA, α=0.3) score higher,
+  so the measured-fastest healthy door is still preferred.
+- **Never tried**: 0.5.
+- **Known-bad** (failures and no success): 0. Failover prefers an untried
+  official door over one that has only failed.
+
+Active cooldowns are excluded. This ranks paths already measured by the
+node, rather than claiming to discover the globally fastest path. Untried
+or recovered doors are not proactively probed while a preferred healthy
+door works. Combined with per-quote `fetch_roundtrip_ms` telemetry (#136)
+and `source_latency_report`, the mesh always knows which door and which
+node is nearest to which exchange.
+
+A **429 or 418** is not a generic outage. The door cools down for the
+bounded `Retry-After` (1–300 seconds; missing or unparseable headers use
+60 seconds) and the same request does not try a sibling domain — those
+official alternates often share one quota. The next cycle can use a door
+that is not cooling.
+
+`roam.stats()` exposes everything: attempts, successes, failures, rate
+limits, smoothed RTT, cooldown state, and `health_score`. No hidden state.
 
 ## 3. Coverage truth (`coverage_report`)
 
@@ -118,6 +132,8 @@ errors propagate. See [P2P bridge](P2P_MARKET_WATCH_BRIDGE.md).
 | Threat | Answer |
 | --- | --- |
 | One API domain unreachable | Official alternate domain (failover + cooldown + re-probe) |
+| Venue returns 429 or 418 | That door waits out a bounded Retry-After; siblings are not hammered on the same request |
+| Door has only failed | Health score ranks it behind never-tried official doors |
 | One exchange down/blocking | Other keyless venues quote the same instrument (9 sources, USDT pairs on 3 exchanges, USD pairs on 3 exchanges) |
 | One node offline | The rest of the mesh keeps watching and gossiping observations |
 | Slow path to a venue | Fastest-path ranking picks the node's measured-fastest door |
@@ -136,4 +152,5 @@ errors propagate. See [P2P bridge](P2P_MARKET_WATCH_BRIDGE.md).
 Roaming watch, transport cooldown, coverage and market-watch bridge tests
 use scripted clocks and transports without network access. They cover total
 outages, silence, partial recovery, retained evidence, failover, endpoint state
-reuse and ingestion/broadcast gates in the standard CI Python job.
+reuse, rate-limit fault injection, health-score ordering, and ingestion/broadcast
+gates in the standard CI Python job.

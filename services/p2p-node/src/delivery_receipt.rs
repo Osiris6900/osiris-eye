@@ -869,4 +869,54 @@ mod tests {
             Err("receipt_no_pending_attempt"),
         );
     }
+
+    #[test]
+    fn tampered_forged_and_wrong_signer_receipts_leave_the_attempt_pending() {
+        let fixture = Fixture::new();
+        let attacker = identity::Keypair::generate_ed25519();
+        let mut pending = fixture.pending();
+
+        let mut tampered = fixture.receipt(1_000);
+        tampered.envelope_sha256 = "c".repeat(64);
+        assert_eq!(
+            fixture.accept(&mut pending, &tampered, 1_001, 1),
+            Err("receipt_signature_invalid"),
+        );
+
+        let mut forged_signature = fixture.receipt(1_000);
+        forged_signature.signature = STANDARD_NO_PAD.encode(
+            attacker.sign(&signing_bytes(&forged_signature).unwrap()).unwrap(),
+        );
+        assert_eq!(
+            fixture.accept(&mut pending, &forged_signature, 1_001, 1),
+            Err("receipt_signature_invalid"),
+        );
+
+        let wrong_signer = create_receipt(
+            &attacker,
+            &fixture.sender,
+            &fixture.message_id,
+            &fixture.digest,
+            1_000,
+        )
+        .unwrap();
+        assert_eq!(
+            pending.accept(
+                &wrong_signer,
+                &PeerId::from_public_key(&attacker.public()),
+                &fixture.sender,
+                &attacker.public(),
+                1_001,
+                fixture.created,
+                AdmissionPolicy::allow_local(),
+            ),
+            Err("receipt_no_pending_attempt"),
+        );
+        assert_eq!(pending.pending.len(), 1);
+        assert!(fixture.accept(&mut pending, &fixture.receipt(1_000), 1_001, 1).is_ok());
+        assert_eq!(
+            fixture.accept(&mut pending, &fixture.receipt(1_000), 1_001, 1),
+            Err("receipt_no_pending_attempt"),
+        );
+    }
 }

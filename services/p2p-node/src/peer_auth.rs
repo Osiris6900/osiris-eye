@@ -65,6 +65,11 @@ pub fn run_if_peer_allowed<T>(
     Ok(action())
 }
 
+/// Insert one peer into the runtime denylist. Revocation overrides allowlist.
+pub fn deny_peer(revoked_peers: &mut Option<HashSet<PeerId>>, peer: PeerId) {
+    revoked_peers.get_or_insert_with(HashSet::new).insert(peer);
+}
+
 pub fn is_peer_allowed(
     peer: &PeerId,
     trusted_peers: &Option<HashSet<PeerId>>,
@@ -76,7 +81,7 @@ pub fn is_peer_allowed(
 
 #[cfg(test)]
 mod tests {
-    use super::{is_peer_allowed, parse_revoked_peers, parse_trusted_peers, run_if_peer_allowed};
+    use super::{deny_peer, is_peer_allowed, parse_revoked_peers, parse_trusted_peers, run_if_peer_allowed};
     use libp2p::PeerId;
 
     #[test]
@@ -173,6 +178,23 @@ mod tests {
         let unknown = PeerId::random();
         let peers = Some([allowed].into_iter().collect());
         assert!(!is_peer_allowed(&unknown, &peers, &None));
+    }
+
+    #[test]
+    fn deny_peer_blocks_only_the_revoked_allowlisted_peer() {
+        let revoked_peer = PeerId::random();
+        let other = PeerId::random();
+        let trusted = Some([revoked_peer, other].into_iter().collect());
+        let mut revoked = None;
+        assert!(is_peer_allowed(&revoked_peer, &trusted, &revoked));
+        deny_peer(&mut revoked, revoked_peer);
+        assert!(!is_peer_allowed(&revoked_peer, &trusted, &revoked));
+        assert!(is_peer_allowed(&other, &trusted, &revoked));
+        let mut entered = false;
+        assert!(run_if_peer_allowed(&revoked_peer, &trusted, &revoked, || {
+            entered = true;
+        }).is_err());
+        assert!(!entered);
     }
 
     #[test]

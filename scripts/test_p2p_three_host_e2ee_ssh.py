@@ -2,6 +2,7 @@
 """Three-host recipient-only E2EE acceptance. Host A runs locally; B and C are SSH-launched."""
 import argparse, hashlib, json, os, subprocess, tempfile, threading, time, uuid
 from pathlib import Path
+from p2p_e2ee_acceptance_evidence import AcceptanceEvidence
 from test_p2p_cross_host_e2ee_ssh import CANDIDATES, EventLog, pump, remote_command, wait_for
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,6 +17,8 @@ def main():
     p.add_argument("--remote-binary", required=True)
     p.add_argument("--binary")
     p.add_argument("--ssh-option", action="append", default=[])
+    p.add_argument("--evidence", type=Path)
+    p.add_argument("--require-distinct-hosts", action="store_true")
     a=p.parse_args()
     binary=Path(a.binary).expanduser() if a.binary else next(
         (candidate for candidate in CANDIDATES if candidate.is_file()), None)
@@ -26,7 +29,13 @@ def main():
     payload="three-host recipient-only E2EE probe "+uuid.uuid4().hex
     digest=hashlib.sha256(payload.encode()).hexdigest()
     events=EventLog(forbidden_by_source={"C": (instrument, digest, payload)})
+    evidence=AcceptanceEvidence(
+        topology="three_host_recipient_only", marker="THREE_HOST_E2EE_RECIPIENT_ONLY",
+        require_distinct_hosts=a.require_distinct_hosts, evidence_path=a.evidence)
     try:
+      evidence.add_local_binary("host-a", "sender", binary)
+      evidence.add_remote_binary("host-b", "recipient", a.ssh_target_b, a.remote_binary, a.ssh_option)
+      evidence.add_remote_binary("host-c", "non_recipient", a.ssh_target_c, a.remote_binary, a.ssh_option)
       with tempfile.TemporaryDirectory(prefix="osiris-three-host-e2ee-") as d:
         d=Path(d); recipients=d/"recipients.txt"; recipients.write_text("")
         env={key:value for key,value in os.environ.items() if not key.startswith("OSIRIS_")}
@@ -65,10 +74,21 @@ def main():
         wait_for(events,processes,lambda n,l:n=="A" and f"encrypted_observation_published recipient={peers['B']} " in l,20,"A publishes only to B")
         wait_for(events,processes,lambda n,l:n=="B" and "encrypted_observation_received" in l and f"instrument={instrument}" in l and f"payload_sha256={digest}" in l,35,"B decrypts exact payload")
         wait_for(events,processes,lambda n,l:n=="C" and TOPIC in l,35,"C explicitly discards non-recipient ciphertext")
+        evidence.set_peer("host-a", peer_a)
+        evidence.set_peer("host-b", peers["B"])
+        evidence.set_peer("host-c", peers["C"])
+        evidence.set_delivery(payload_sha256=digest, recipient_peer_id=peers["B"],
+          recipient_digest_matched=True, non_recipient_peer_id=peers["C"], nonrecipient_discarded=True)
+        record=evidence.finish(True)
         print("THREE_HOST_E2EE_RECIPIENT_ONLY=PASS",flush=True)
         print(f"host_a_peer_id={peer_a}",flush=True); print(f"host_b_peer_id={peers['B']}",flush=True)
         print(f"host_c_peer_id={peers['C']}",flush=True); print(f"recipient={peers['B']}",flush=True)
         print(f"non_recipient={peers['C']}",flush=True); print(f"payload_sha256={digest}",flush=True)
+        print(f"measurement_class={record['measurement_class']}",flush=True)
+    except (OSError, RuntimeError, TimeoutError, subprocess.SubprocessError) as exc:
+      if not evidence.closed:
+        evidence.finish(False, error=f"{type(exc).__name__}: {exc}")
+      raise
     finally:
       for proc in [*remotes,local]:
         if proc is not None and proc.poll() is None: proc.terminate()

@@ -247,7 +247,7 @@ test('blank token, loading, errors, empty states and disconnect stay honest', as
   fireEvent.click(screen.getByRole('button', { name: 'alerts' }));
   expect(await screen.findByText('No active alerts.')).toBeInTheDocument();
   expect(screen.getByText('No acknowledged alerts.')).toBeInTheDocument();
-  expect(screen.getByText(/lost on restart/)).toBeInTheDocument();
+  expect(screen.getByText(/Alert durability unavailable/)).toBeInTheDocument();
   expect(screen.queryByText('vtk-operator-7c1d55e0')).not.toBeInTheDocument();
   first.forEach(item => item.resolve({
     status: 200, ok: true, json: async () => bodyFor(item.url, '1111', 'viewer'),
@@ -284,6 +284,50 @@ test('backend and configuration errors do not render response secrets', async ()
   expect(screen.queryByText(/vtk-should-never-render-99/)).not.toBeInTheDocument();
 });
 
+test('enrolled registry lists nodes and hides key material', async () => {
+  const trusted = 'ab'.repeat(32);
+  const untrusted = 'cd'.repeat(32);
+  stubFetch(allOk({
+    '/admin/overview': reply(200, {
+      ...OVERVIEW, peer_health: 'enrolled_registry', enrolled_peer_count: 2,
+    }),
+    '/admin/network/status': reply(200, {
+      ...NETWORK,
+      peer_telemetry: 'identity_enrollment_not_live_sessions',
+      peer_health: {
+        status: 'enrolled_registry',
+        peer_count: 2,
+        trusted_count: 1,
+        public_untrusted_count: 1,
+        nodes_truncated: false,
+        nodes: [
+          {
+            node_id: trusted, trust_level: 'trusted',
+            enrolled_at: '2026-11-08T12:00:00+00:00', public_key: 'should-not-render',
+          },
+          {
+            node_id: untrusted, trust_level: 'public_untrusted',
+            enrolled_at: '2026-11-08T12:01:00+00:00',
+          },
+          { node_id: 'not-a-node', trust_level: 'token=supersecretvalue', enrolled_at: 'nope' },
+        ],
+      },
+    }),
+  }));
+  render(<AdminCentre />);
+  connect();
+  expect(await screen.findByText('Enrolled registry')).toBeInTheDocument();
+  expect(screen.getByText('2')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'network' }));
+  expect(await screen.findByText(/not a live session or health probe/)).toBeInTheDocument();
+  expect(screen.getByText(new RegExp(`trusted · ${trusted}`))).toBeInTheDocument();
+  expect(screen.getByText(new RegExp(`public untrusted · ${untrusted}`))).toBeInTheDocument();
+  expect(screen.queryByText(/should-not-render/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/supersecretvalue/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/not-a-node/)).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Revoke' })).not.toBeInTheDocument();
+});
+
 test('uninitialized paper is distinct from an empty position book', async () => {
   stubFetch(allOk({
     '/admin/paper/status': reply(200, { ...PAPER, initialized: false, cash: null, positions: [], recent_fills: [] }),
@@ -309,4 +353,23 @@ test('scrubForDisplay drops credential keys at any depth', () => {
   const redacted = scrubForDisplay({ note: 'leak vtk-operator-7c1d55e0' }, 'vtk-operator-7c1d55e0');
   expect(JSON.stringify(redacted)).not.toContain('vtk-operator-7c1d55e0');
   expect(JSON.stringify(redacted)).toContain('[redacted]');
+});
+
+
+test('SQLite alert history displays durability without enabling acknowledgement', async () => {
+  stubFetch(allOk({
+    '/admin/alerts': reply(200, {
+      storage: 'sqlite', durable: true, initialized: true,
+      active_count: 1, acknowledged_count: 0,
+      active: [{ alert_id: 'ingestion_disabled:global', kind: 'ingestion_disabled', key: 'global', severity: 'warning', message: 'P2P ingestion disabled', raised_at: '2026-11-08T12:00:00+00:00' }],
+      acknowledged: [],
+    }),
+  }));
+  render(<AdminCentre />);
+  connect();
+  await screen.findByText('operator');
+  fireEvent.click(screen.getByRole('button', { name: 'alerts' }));
+  expect(await screen.findByText(/kept in the local database across restarts/)).toBeInTheDocument();
+  expect(screen.getByText(/cannot acknowledge alerts/)).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Ack' })).not.toBeInTheDocument();
 });

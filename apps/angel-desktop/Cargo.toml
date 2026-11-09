@@ -1,0 +1,20 @@
+[package]
+name = "osiris-angel-desktop"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+eframe = { version = "0.27", default-features = false, features = ["default_fonts", "glow", "x11", "wayland"] }
+futures = "0.3"
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "signal"] }
+tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
+
+[[bin]]
+name = "angel_desktop"
+path = "../../services/p2p-node/src/angel_desktop.rs"
+
+[features]
+default = ["angel-desktop"]
+angel-desktop = []

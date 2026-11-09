@@ -7,10 +7,10 @@ mod peer_cache;
 mod observation_policy;
 mod announcement;
 
-use revocation::{RevocationRegistry, RevocationSyncMessage};
+use revocation::{apply_synced_revocation, RevocationRegistry, RevocationSyncMessage, SyncedRevocation};
 use rejection_log::RejectionLogThrottle;
 use e2ee::{create_key_binding, decrypt_for_recipient, encrypt_for_recipient, verify_key_binding, EncryptedEnvelope, KeyBindingRecord, TransportKeyPair};
-use peer_auth::{is_peer_allowed, parse_revoked_peers, parse_trusted_peers, read_peer_setting, run_if_peer_allowed};
+use peer_auth::{deny_peer, is_peer_allowed, parse_revoked_peers, parse_trusted_peers, read_peer_setting, run_if_peer_allowed};
 use peer_cache::{CachedPeer, PeerCache};
 use peer_key_store::PeerKeyStore;
 use osiris_p2p_node::delivery_receipt::{
@@ -486,6 +486,21 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_decrypted_replay_key_is_rejected_and_a_new_key_still_admits() {
+        let path = replay_test_path("duplicate-then-new");
+        let mut guard = super::ReplayGuard::open(path.clone()).unwrap();
+        let data = serde_json::to_vec(&valid()).unwrap();
+        assert!(super::admit_decrypted_observation(&data, "sender:once", None, &mut guard).is_ok());
+        assert!(matches!(
+            super::admit_decrypted_observation(&data, "sender:once", None, &mut guard),
+            Err(super::EncryptedObservationError::Replay)
+        ));
+        assert!(super::admit_decrypted_observation(&data, "sender:second", None, &mut guard).is_ok());
+        drop(guard);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
     fn invalid_encrypted_envelope_is_not_committed_to_replay_cache() {
         use super::e2ee::{create_key_binding, decrypt_for_recipient, encrypt_for_recipient, verify_key_binding, TransportKeyPair};
         use libp2p::{identity, PeerId};
@@ -711,6 +726,66 @@ mod tests {
         assert_eq!(expired, vec![stale]);
         assert!(pending.contains_key(&fresh));
         assert!(!pending.contains_key(&stale));
+    }
+    #[test] fn reconnect_backoff_skips_one_then_two_then_four_then_eight_ticks() {
+        let peer = PeerId::random();
+        let other = PeerId::random();
+        let mut failures = std::collections::HashMap::new();
+        let mut tick = 0u64;
+        for (index, skips) in [1u32, 2, 4, 8, 8].into_iter().enumerate() {
+            let (attempts, delay) = super::record_reconnect_failure(&mut failures, peer, tick);
+            assert_eq!(attempts, (index as u32) + 1);
+            assert_eq!(delay, skips);
+            assert!(super::reconnect_backoff_active(&failures, &peer, tick + u64::from(skips)));
+            assert!(!super::reconnect_backoff_active(&failures, &peer, tick + u64::from(skips) + 1));
+            assert!(!super::reconnect_backoff_active(&failures, &other, tick));
+            tick += u64::from(skips) + 1;
+        }
+        failures.remove(&peer);
+        assert!(!super::reconnect_backoff_active(&failures, &peer, tick));
+        assert!(failures.is_empty());
+    }
+    #[test] fn reconnect_backoff_attempt_counter_saturates() {
+        let peer = PeerId::random();
+        let mut failures = std::collections::HashMap::new();
+        failures.insert(peer, super::ReconnectFailure { attempts: u32::MAX, resume_after_tick: 0 });
+        let (attempts, skips) = super::record_reconnect_failure(&mut failures, peer, 3);
+        assert_eq!(attempts, u32::MAX);
+        assert_eq!(skips, 8);
+        assert!(super::reconnect_backoff_active(&failures, &peer, 11));
+        assert!(!super::reconnect_backoff_active(&failures, &peer, 12));
+    }
+    #[test] fn kad_bootstrap_refresh_waits_while_every_down_peer_is_in_backoff() {
+        assert!(!super::bootstrap_refresh_blocked([]));
+        assert!(super::bootstrap_refresh_blocked([true]));
+        assert!(!super::bootstrap_refresh_blocked([false]));
+        assert!(!super::bootstrap_refresh_blocked([true, false]));
+        assert!(super::bootstrap_refresh_blocked([true, true]));
+    }
+    #[test] fn reconnect_dial_budget_rotates_and_prefers_relays() {
+        let relays = [PeerId::random(), PeerId::random()];
+        let bootstraps = [PeerId::random(), PeerId::random(), PeerId::random()];
+        let (first, cursor) = super::schedule_reconnect_dials(&relays, &bootstraps, 2, 0);
+        assert_eq!(first, vec![relays[0], relays[1]]);
+        assert_eq!(cursor, 2);
+        let (second, cursor) = super::schedule_reconnect_dials(&relays, &bootstraps, 2, cursor);
+        assert_eq!(second, vec![bootstraps[0], bootstraps[1]]);
+        assert_eq!(cursor, 4);
+        let (wrapped, cursor) = super::schedule_reconnect_dials(&relays, &bootstraps, 2, cursor);
+        assert_eq!(wrapped, vec![bootstraps[2], relays[0]]);
+        assert_eq!(cursor, 1);
+        let (none, cursor) = super::schedule_reconnect_dials(&relays, &bootstraps, 0, 3);
+        assert!(none.is_empty());
+        assert_eq!(cursor, 0);
+        let shared = PeerId::random();
+        let (unique, _) = super::schedule_reconnect_dials(&[shared], &[shared, bootstraps[0]], 8, 0);
+        assert_eq!(unique, vec![shared, bootstraps[0]]);
+    }
+    #[test] fn startup_rejoin_stays_inside_pending_outgoing_slots() {
+        assert_eq!(super::startup_rejoin_limit(0, 16, super::MAX_PENDING_OUTGOING), 16);
+        assert_eq!(super::startup_rejoin_limit(30, 16, super::MAX_PENDING_OUTGOING), 2);
+        assert_eq!(super::startup_rejoin_limit(32, 64, super::MAX_PENDING_OUTGOING), 0);
+        assert_eq!(super::startup_rejoin_limit(40, 8, super::MAX_PENDING_OUTGOING), 0);
     }
     #[test] fn rejoin_plan_skips_self_bootstrap_relays_and_policy_blocked_peers() {
         let self_peer = PeerId::random();
@@ -1074,6 +1149,12 @@ fn relay_readiness(relay_addresses: &[(PeerId, Multiaddr)], active: &HashSet<Pee
 
 const PENDING_DIAL_TTL: Duration = Duration::from_secs(60);
 const RELAY_RESERVATION_COOLDOWN: Duration = Duration::from_secs(30 * 60);
+const MAX_RECONNECT_DIALS_PER_TICK: usize = 8;
+const MAX_PENDING_OUTGOING: usize = 32;
+
+fn startup_rejoin_limit(already_dialed: usize, requested: usize, pending_outgoing_cap: usize) -> usize {
+    requested.min(pending_outgoing_cap.saturating_sub(already_dialed))
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RelayMaintainAction { Dial, RequestReservation, Hold }
@@ -1113,6 +1194,59 @@ fn expire_pending_dials(pending: &mut HashMap<PeerId, Instant>, now: Instant) ->
     expired.sort();
     for peer in &expired { pending.remove(peer); }
     expired
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ReconnectFailure {
+    attempts: u32,
+    resume_after_tick: u64,
+}
+
+/// How many upcoming reconnect ticks to skip after this failure.
+/// The sequence is 1, 2, 4, then 8 ticks. The reconnect timer is at least
+/// 5 seconds, so a shorter wall-clock delay would already have expired
+/// before the next tick. A success clears the entry.
+fn reconnect_skip_ticks(attempts: u32) -> u32 {
+    1u32 << attempts.saturating_sub(1).min(3)
+}
+
+fn record_reconnect_failure(failures: &mut HashMap<PeerId, ReconnectFailure>, peer: PeerId, observed_tick: u64) -> (u32, u32) {
+    let attempts = failures.get(&peer).map(|failure| failure.attempts.saturating_add(1)).unwrap_or(1);
+    let skips = reconnect_skip_ticks(attempts);
+    let resume_after_tick = observed_tick.saturating_add(u64::from(skips));
+    failures.insert(peer, ReconnectFailure { attempts, resume_after_tick });
+    (attempts, skips)
+}
+
+fn reconnect_backoff_active(failures: &HashMap<PeerId, ReconnectFailure>, peer: &PeerId, tick: u64) -> bool {
+    failures.get(peer).is_some_and(|failure| tick <= failure.resume_after_tick)
+}
+
+/// Kademlia's bootstrap query dials peers on its own. Skip it only when
+/// every currently disconnected configured bootstrap is inside its skip
+/// window. An empty input means nobody is down, so the refresh may run.
+fn bootstrap_refresh_blocked(down_peers_in_backoff: impl IntoIterator<Item = bool>) -> bool {
+    let mut saw_down_peer = false;
+    for in_backoff in down_peers_in_backoff {
+        saw_down_peer = true;
+        if !in_backoff { return false; }
+    }
+    saw_down_peer
+}
+
+/// Choose which configured peers to dial on this reconnect tick.
+/// Relays come before bootstrap peers. The cursor rotates so a full list
+/// cannot be starved by the peers at the front. `cap` zero dials nobody.
+fn schedule_reconnect_dials(relays: &[PeerId], bootstraps: &[PeerId], cap: usize, cursor: usize) -> (Vec<PeerId>, usize) {
+    let mut ordered = Vec::new();
+    for peer in relays.iter().chain(bootstraps.iter()) {
+        if !ordered.contains(peer) { ordered.push(*peer); }
+    }
+    if ordered.is_empty() || cap == 0 { return (Vec::new(), 0); }
+    let start = cursor % ordered.len();
+    let take = cap.min(ordered.len());
+    let selected = (0..take).map(|offset| ordered[(start + offset) % ordered.len()]).collect();
+    ((selected), (start + take) % ordered.len())
 }
 
 fn emit_diagnostic_lines(lines: Vec<String>) {
@@ -1470,7 +1604,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         connection_limits: connection_limits::Behaviour::new(
             connection_limits::ConnectionLimits::default()
                 .with_max_pending_incoming(Some(32))
-                .with_max_pending_outgoing(Some(32))
+                .with_max_pending_outgoing(Some(MAX_PENDING_OUTGOING as u32))
                 .with_max_established_incoming(Some(128))
                 .with_max_established_outgoing(Some(128))
                 .with_max_established_per_peer(Some(max_connections_per_peer))
@@ -1536,6 +1670,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // cannot block reconnect for the life of the process. Expiry is noticed
     // on that tick, so the practical delay is max(TTL, reconnect interval).
     let mut pending_dials: HashMap<PeerId, Instant> = HashMap::new();
+    // Per configured bootstrap/relay peer. Unconfigured discovery dials are
+    // not stored, so the map cannot grow with DHT churn. A success clears it.
+    let mut reconnect_failures: HashMap<PeerId, ReconnectFailure> = HashMap::new();
+    let mut reconnect_dial_cursor: usize = 0;
+    let mut reconnect_tick_count: u64 = 0;
     let bootstrap_peers = parse_bootstrap_peers(read_peer_setting("OSIRIS_BOOTSTRAP_PEERS")?.as_deref())?;
     let trusted_peers = parse_trusted_peers(read_peer_setting("OSIRIS_TRUSTED_PEERS")?.as_deref())?;
     // Server-mode kademlia auto-bootstraps whenever the routing table gains
@@ -1605,9 +1744,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
     if relay_addresses.len() > 1 {
         emit!("relay_failover=enabled relays={}", relay_addresses.len());
     }
-    // Parse and admit every configured endpoint before any outbound dial.
+    // Admit every configured endpoint to the DHT, but do not dial more
+    // bootstrap peers than one reconnect tick. The rest are covered by the
+    // rotating reconnect budget instead of filling the pending-outgoing slots.
+    let initial_bootstrap: HashSet<PeerId> = schedule_reconnect_dials(
+        &[],
+        &bootstrap_peers.iter().map(|(peer, _)| *peer).collect::<Vec<_>>(),
+        MAX_RECONNECT_DIALS_PER_TICK,
+        0,
+    ).0.into_iter().collect();
     for (bootstrap_peer, address) in &bootstrap_peers {
         swarm.behaviour_mut().kademlia.add_address(bootstrap_peer, address.clone());
+        if !initial_bootstrap.contains(bootstrap_peer) {
+            emit!("bootstrap_initial_dial_deferred peer={bootstrap_peer}");
+            continue;
+        }
         swarm.dial(address.clone())?;
         pending_dials.insert(*bootstrap_peer, Instant::now());
     }
@@ -1622,7 +1773,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let cached_peers = peer_cache.load_recent(256, peer_cache_max_age_secs, startup_now)?;
     let rejoin_plan = plan_rejoin_dials(
         &cached_peers, &peer_id, &bootstrap_peers, &relay_addresses,
-        &trusted_peers, &revoked_peers, peer_cache_dial_on_start);
+        &trusted_peers, &revoked_peers,
+        startup_rejoin_limit(pending_dials.len(), peer_cache_dial_on_start, MAX_PENDING_OUTGOING));
     emit!(
         "peer_cache=loaded cache_total={} rejoin_candidates={} rejoin_dials={} path={}",
         peer_cache.len()?, cached_peers.len(), rejoin_plan.len(), peer_cache.path().display());
@@ -1735,7 +1887,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     emit!("mdns_enabled={mdns_enabled}");
     emit!("upnp_enabled={upnp_enabled} autonat=enabled hole_punch={}", if hole_punch_enabled { "enabled" } else { "disabled" });
     emit!("relay_server={} auto_relay={auto_relay_enabled}", if relay_server_enabled { "enabled" } else { "disabled" });
-    emit!("connection_limits pending_incoming=32 pending_outgoing=32 established_total=256 established_per_peer={max_connections_per_peer}");
+    emit!("connection_limits pending_incoming=32 pending_outgoing={MAX_PENDING_OUTGOING} established_total=256 established_per_peer={max_connections_per_peer}");
     emit!("bootstrap_peers={}", bootstrap_peers.len());
     emit!("bootstrap_reconnect_interval_seconds={reconnect_interval_secs}");
     emit!("dht_protocol={DHT_PROTOCOL_NAME}");
@@ -1859,6 +2011,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
             _ = reconnect_tick.tick() => {
+                reconnect_tick_count = reconnect_tick_count.saturating_add(1);
                 let reconnect_now = Instant::now();
                 for peer in expire_pending_dials(&mut pending_dials, reconnect_now) {
                     emit!("pending_dial_expired peer={peer} ttl_seconds={}", PENDING_DIAL_TTL.as_secs());
@@ -1866,6 +2019,36 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 relay_reservation_refused.retain(|_, refused_at| {
                     reconnect_now.saturating_duration_since(*refused_at) < RELAY_RESERVATION_COOLDOWN
                 });
+                let relay_dial_candidates: Vec<PeerId> = relay_addresses.iter().filter_map(|(relay_peer, _)| {
+                    let dial = relay_maintain_action(RelayLinkView {
+                        allowed: is_peer_allowed(relay_peer, &trusted_peers, &revoked_peers),
+                        connected: swarm.is_connected(relay_peer),
+                        pending_dial: pending_dials.contains_key(relay_peer),
+                        has_listener: relay_listeners.contains_key(relay_peer),
+                        reservation_refused: relay_reservation_refused.contains_key(relay_peer),
+                        hop_capable: relay_hop_capable.contains(relay_peer),
+                    }) == RelayMaintainAction::Dial
+                        && !reconnect_backoff_active(&reconnect_failures, relay_peer, reconnect_tick_count);
+                    dial.then_some(*relay_peer)
+                }).collect();
+                let bootstrap_dial_candidates: Vec<PeerId> = bootstrap_peers.iter().filter_map(|(bootstrap_peer, _)| {
+                    let dial = is_peer_allowed(bootstrap_peer, &trusted_peers, &revoked_peers)
+                        && !swarm.is_connected(bootstrap_peer)
+                        && !pending_dials.contains_key(bootstrap_peer)
+                        && !reconnect_backoff_active(&reconnect_failures, bootstrap_peer, reconnect_tick_count);
+                    dial.then_some(*bootstrap_peer)
+                }).collect();
+                let (scheduled_dials, next_cursor) = schedule_reconnect_dials(
+                    &relay_dial_candidates, &bootstrap_dial_candidates, MAX_RECONNECT_DIALS_PER_TICK, reconnect_dial_cursor,
+                );
+                reconnect_dial_cursor = next_cursor;
+                let scheduled_dials: HashSet<PeerId> = scheduled_dials.into_iter().collect();
+                let waiting = relay_dial_candidates.iter().chain(bootstrap_dial_candidates.iter())
+                    .filter(|peer| !scheduled_dials.contains(peer))
+                    .collect::<HashSet<_>>();
+                if !waiting.is_empty() {
+                    emit!("reconnect_dials_deferred selected={} waiting={}", scheduled_dials.len(), waiting.len());
+                }
                 for (relay_peer, address) in &relay_addresses {
                     match relay_maintain_action(RelayLinkView {
                         allowed: is_peer_allowed(relay_peer, &trusted_peers, &revoked_peers),
@@ -1876,12 +2059,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         hop_capable: relay_hop_capable.contains(relay_peer),
                     }) {
                         RelayMaintainAction::Hold => {}
+                        RelayMaintainAction::Dial if !scheduled_dials.contains(relay_peer) => {}
                         RelayMaintainAction::Dial => match swarm.dial(address.clone()) {
                             Ok(()) => {
                                 pending_dials.insert(*relay_peer, reconnect_now);
                                 emit!("relay_reconnect_attempt peer={relay_peer}");
                             }
-                            Err(error) => emit!("relay_reconnect_error peer={relay_peer} error={error}"),
+                            Err(error) => {
+                                let (attempts, skips) = record_reconnect_failure(&mut reconnect_failures, *relay_peer, reconnect_tick_count);
+                                emit!("relay_reconnect_error peer={relay_peer} error={error}");
+                                emit!("reconnect_backoff peer={relay_peer} skip_ticks={skips} attempts={attempts}");
+                            }
                         },
                         RelayMaintainAction::RequestReservation => {
                             match swarm.listen_on(address.clone().with(libp2p::multiaddr::Protocol::P2pCircuit)) {
@@ -1919,20 +2107,31 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 for (bootstrap_peer, address) in &bootstrap_peers {
                     if is_peer_allowed(bootstrap_peer, &trusted_peers, &revoked_peers)
                         && !swarm.is_connected(bootstrap_peer)
-                        && !pending_dials.contains_key(bootstrap_peer) {
+                        && !pending_dials.contains_key(bootstrap_peer)
+                        && scheduled_dials.contains(bootstrap_peer) {
                         match swarm.dial(address.clone()) {
                             Ok(()) => {
                                 pending_dials.insert(*bootstrap_peer, reconnect_now);
                                 emit!("bootstrap_reconnect_attempt peer={bootstrap_peer}");
                             }
-                            Err(error) => emit!("bootstrap_reconnect_error peer={bootstrap_peer} error={error}"),
+                            Err(error) => {
+                                let (attempts, skips) = record_reconnect_failure(&mut reconnect_failures, *bootstrap_peer, reconnect_tick_count);
+                                emit!("bootstrap_reconnect_error peer={bootstrap_peer} error={error}");
+                                emit!("reconnect_backoff peer={bootstrap_peer} skip_ticks={skips} attempts={attempts}");
+                            }
                         }
                     }
                 }
                 if !bootstrap_peers.is_empty() && trusted_peers.is_none() {
-                    match swarm.behaviour_mut().kademlia.bootstrap() {
-                        Ok(query_id) => emit!("dht_bootstrap_refresh={query_id:?}"),
-                        Err(error) => emit!("dht_bootstrap_refresh_skipped={error:?}"),
+                    if bootstrap_refresh_blocked(bootstrap_peers.iter().filter(|(peer, _)| !swarm.is_connected(peer)).map(|(peer, _)| {
+                        reconnect_backoff_active(&reconnect_failures, peer, reconnect_tick_count)
+                    })) {
+                        emit!("dht_bootstrap_refresh_skipped=reconnect_backoff");
+                    } else {
+                        match swarm.behaviour_mut().kademlia.bootstrap() {
+                            Ok(query_id) => emit!("dht_bootstrap_refresh={query_id:?}"),
+                            Err(error) => emit!("dht_bootstrap_refresh_skipped={error:?}"),
+                        }
                     }
                 }
             }
@@ -2013,6 +2212,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 SwarmEvent::OutgoingConnectionError { peer_id: target, connection_id, error } => {
                     if let Some(target_peer) = target {
                         pending_dials.remove(&target_peer);
+                        let configured = bootstrap_peers.iter().any(|(peer, _)| *peer == target_peer)
+                            || relay_addresses.iter().any(|(peer, _)| *peer == target_peer);
+                        if configured {
+                            let (attempts, skips) = record_reconnect_failure(&mut reconnect_failures, target_peer, reconnect_tick_count);
+                            emit!("reconnect_backoff peer={target_peer} skip_ticks={skips} attempts={attempts}");
+                        }
                     }
                     emit!("outgoing_connection_error peer={target:?} connection={connection_id:?} error={error}");
                 }
@@ -2032,6 +2237,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         let _ = swarm.disconnect_peer_id(peer_id);
                         continue;
                     }
+                    reconnect_failures.remove(&peer_id);
                     emit!("peer_connected={peer_id}");
                     emit!("peer_connection_path peer={peer_id} relayed={}", endpoint.is_relayed());
                     let connected_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
@@ -2351,10 +2557,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 emit!("revocation_sync_page_v2_sent request_id={request_id} requester={propagation_source} records={count} next_page={}", next_cursor.is_some());
                             }
                             Ok(RevocationSyncMessage::Record(record)) => {
-                                match registry.apply(record.clone(), true) {
-                                    Ok(true) => {
-                                        let peer = record.peer_id.parse::<PeerId>()?;
-                                        revoked_peers.get_or_insert_with(HashSet::new).insert(peer);
+                                match apply_synced_revocation(registry, record.clone(), true) {
+                                    Ok(SyncedRevocation::Applied(peer)) => {
+                                        deny_peer(&mut revoked_peers, peer);
                                         swarm.behaviour_mut().peer_blocklist.block_peer(peer);
                                         let _ = peer_cache.remove(&record.peer_id);
                                         let bytes = serde_json::to_vec(&RevocationSyncMessage::Record(record))?;
@@ -2362,17 +2567,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                         emit!("signed_peer_revocation_applied peer={peer} source={propagation_source}");
                                         let _ = swarm.disconnect_peer_id(peer);
                                     }
-                                    Ok(false) => emit!("revocation_record_ignored reason=replay_or_stale"),
+                                    Ok(SyncedRevocation::StaleOrReplay) => emit!("revocation_record_ignored reason=replay_or_stale"),
                                     Err(error) => emit!("revocation_record_rejected source={propagation_source} error={error}"),
                                 }
                             }
                             Ok(RevocationSyncMessage::Snapshot(records)) => {
                                 let mut applied = 0usize;
                                 for record in records {
-                                    match registry.apply(record.clone(), true) {
-                                        Ok(true) => {
-                                            let peer = record.peer_id.parse::<PeerId>()?;
-                                            revoked_peers.get_or_insert_with(HashSet::new).insert(peer);
+                                    match apply_synced_revocation(registry, record.clone(), true) {
+                                        Ok(SyncedRevocation::Applied(peer)) => {
+                                            deny_peer(&mut revoked_peers, peer);
                                             swarm.behaviour_mut().peer_blocklist.block_peer(peer);
                                             let _ = peer_cache.remove(&record.peer_id);
                                             let bytes = serde_json::to_vec(&RevocationSyncMessage::Record(record))?;
@@ -2380,7 +2584,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                             let _ = swarm.disconnect_peer_id(peer);
                                             applied += 1;
                                         }
-                                        Ok(false) => {}
+                                        Ok(SyncedRevocation::StaleOrReplay) => {}
                                         Err(error) => emit!("revocation_snapshot_record_rejected source={propagation_source} error={error}"),
                                     }
                                 }
@@ -2395,10 +2599,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 }
                                 let mut applied = 0usize;
                                 for record in records {
-                                    match registry.apply(record.clone(), true) {
-                                        Ok(true) => {
-                                            let revoked_peer = record.peer_id.parse::<PeerId>()?;
-                                            revoked_peers.get_or_insert_with(HashSet::new).insert(revoked_peer);
+                                    match apply_synced_revocation(registry, record.clone(), true) {
+                                        Ok(SyncedRevocation::Applied(revoked_peer)) => {
+                                            deny_peer(&mut revoked_peers, revoked_peer);
                                             swarm.behaviour_mut().peer_blocklist.block_peer(revoked_peer);
                                             let _ = peer_cache.remove(&record.peer_id);
                                             let bytes = serde_json::to_vec(&RevocationSyncMessage::Record(record))?;
@@ -2406,7 +2609,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                             let _ = swarm.disconnect_peer_id(revoked_peer);
                                             applied += 1;
                                         }
-                                        Ok(false) => {}
+                                        Ok(SyncedRevocation::StaleOrReplay) => {}
                                         Err(error) => emit!("revocation_snapshot_record_rejected source={propagation_source} error={error}"),
                                     }
                                 }

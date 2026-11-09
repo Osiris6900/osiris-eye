@@ -26,11 +26,17 @@ and [three-host recipient isolation](https://github.com/Osiris6900/osiris-eye/ac
 passed on separate GitHub runners over Tailscale. Controller logs confirm the
 exact recipient payload digest and explicit non-recipient discard. A sanitized
 [summary](P2P_REMOTE_ACCEPTANCE_2026_11_07.json) records the run URLs, candidate
-and payload digests. These workflows did not retain binary hashes; retain them
-for final release evidence. Later Python retry-reporting changes do not alter
-the tested Rust/SSH code, but are not covered by those source revisions.
-These runs do not establish public deployment, sustained load or an independent
-audit.
+and payload digests. These workflows did not retain binary hashes. A later
+three-host success,
+[run 42430583187](https://github.com/Osiris6900/osiris-eye/actions/runs/42430583187)
+at `bd56475fc3b171982eba17a8cc6ef8b806b3934c`, also omitted binary hashes.
+Current `main` `2036888bbada42213a221526914b09d50fc1f1df` has no recipient-only
+two-host or three-host success. The node `main.rs` changed after `bd56475`, so
+those runs are not evidence for `2036888`. The harness now writes binary
+SHA-256 and a `local_or_same_host` or `distinct_boot_id_hosts` class; the next
+dispatch has to pass and retain that file. These runs do not establish public
+deployment, sustained load, or an independent cryptographic audit. An
+independent cryptographic audit has not been done.
 
 | Gate | Acceptance criterion | Current evidence boundary |
 |---|---|---|
@@ -39,8 +45,8 @@ audit.
 | Observation freshness | Configured receiver rejects malformed, stale and future event times and continues accepting a fresh encrypted observation | Passed in integrated CI at `ce16dbde`; later candidates require rerun |
 | Replay and durable keys | Restart retains accepted message IDs and key-epoch floors; malformed, replaced or exhausted state fails closed | Local suites passed at `ce16dbde`; each state path supports one writer; later candidates require rerun |
 | Revocation and rotation | Signed revocation persists, disconnects a live peer and blocks reconnect/message admission; operator rotation preserves epoch rules across restart | Local tests and rotation runbook exist; operational recovery exercise still required |
-| Two independent hosts | Same-commit binaries on separate machines establish authenticated connectivity and deliver the exact encrypted recipient observation | Passed on separate GitHub runners at `154a651`; final release candidate and binary hashes still require retained evidence |
-| Three independent hosts | A encrypts only for B; B reports exact decrypted digest; excluded C reports recipient-gated discard without plaintext identifiers | Passed on three separate GitHub runners at `154a651`; final release candidate and binary hashes still require retained evidence |
+| Two independent hosts | Same-commit binaries on separate machines establish authenticated connectivity and deliver the exact encrypted recipient observation | Passed on separate GitHub runners at `154a651` without binary hashes. Not a run of `2036888`. The harness now retains hashes; that dispatch is still required |
+| Three independent hosts | A encrypts only for B; B reports exact decrypted digest; excluded C reports recipient-gated discard without plaintext identifiers | Passed on separate GitHub runners at `154a651` and `bd56475` without binary hashes. Not a run of `2036888`. The harness now retains hashes; that dispatch is still required |
 | Outage and load | Record recovery time, latency distribution, loss/rejection counts, RSS, CPU and disk growth for a declared peer/message workload, including relay/bootstrap outage | [Numerical policy and fail-closed evidence checker](P2P_OUTAGE_LOAD_ACCEPTANCE.md) implemented; actual final-candidate multi-host soak and retained passing artifact outstanding |
 | Public operations | Operator-controlled endpoints pass the intended networks' connectivity, health, restart and monitoring checks | Configuration/profile exists; deployment, uptime and live peer count are not established |
 | Feed provenance | Each admitted feed has an authorized source, permitted redistribution, availability timestamps and independently checked quality | Fail-closed operator policy and durable attestation implemented; actual rights, entitlements and independent quality evidence remain required |

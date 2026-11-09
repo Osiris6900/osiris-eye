@@ -63,15 +63,22 @@ The hardening branch adds core relay support, stricter validation and workflow
 repair; it requires fresh test evidence for its exact commit.
 
 Two-host and three-host E2EE SSH harnesses and manual GitHub workflows are
-implemented. A successful independent-host E2EE run has not been established.
-Workflow repair or a green compile alone does not complete that gate. Retain
-recipient digest, explicit non-recipient discard, public PeerIds, commit SHA,
-workflow URL and sanitized logs. The local relay/E2EE harness does not prove
-public Internet/NAT reachability.
+implemented. Passing runs exist only for older commits, and those runs did not
+retain node binary SHA-256. See the evidence table in
+[P2P_SECURITY_MODEL.md](P2P_SECURITY_MODEL.md). `main` at
+`2036888bbada42213a221526914b09d50fc1f1df` has no successful recipient-only
+two-host or three-host run. The harness now records binary SHA-256, boot-id
+fingerprints, commit, payload digest, and a measurement class.
+`local_or_same_host` must not be described as independent-host evidence.
+`distinct_boot_id_hosts` means the boot-id fingerprints differed. Workflow
+repair, a green compile, or a same-host process test does not complete the
+gate. The local relay/E2EE harness does not prove public Internet/NAT
+reachability.
 
-An independent cryptographic audit and operational load/recovery review remain
-outstanding. Do not describe the network as production-ready, independently
-audited or globally deployed from source code or local CI alone.
+An independent cryptographic audit has not been done. Operational
+load/recovery review remains outstanding. Do not describe the network as
+production-ready, independently audited, or globally deployed from source code
+or local CI alone.
 
 ## Security boundaries
 

@@ -1,8 +1,9 @@
 """Durable paper execution. Live broker routing is disabled and not configurable.
 
-Orders are risk-gated, idempotent, and stored in SQLite. A crash before commit
-leaves no partial fill. Restart reads the same cash, positions, P&L, and audit
-chain. This is a simulation ledger, not a production trading system.
+Orders are risk-gated, idempotent, and stored in SQLite. A working order can
+fill in parts. Each move follows the paper state machine. A crash before commit
+leaves the previous state in place. Restart reads the same cash, positions,
+P&L, and audit chain. This is a simulation ledger, not a production trading system.
 """
 from __future__ import annotations
 
@@ -24,8 +25,33 @@ from .risk import RiskLimits, check_execution
 # There is no branch that submits a broker order. A true value still refuses.
 LIVE_EXECUTION_ENABLED = False
 
+# Paper-only lifecycle. "new" is transient and is never stored.
+ORDER_STATES = (
+    "new", "accepted", "partially_filled", "filled", "cancelled", "rejected",
+)
+OPEN_ORDER_STATES = frozenset({"accepted", "partially_filled"})
+_ORDER_TRANSITIONS = {
+    "new": frozenset({"accepted", "rejected"}),
+    "accepted": frozenset({"partially_filled", "filled", "cancelled"}),
+    "partially_filled": frozenset({"partially_filled", "filled", "cancelled"}),
+    "filled": frozenset(),
+    "cancelled": frozenset(),
+    "rejected": frozenset(),
+}
+
 router = APIRouter()
 _lock = Lock()
+
+
+def order_transition(current: str, target: str) -> str:
+    """Return ``target`` when the paper-order move is legal.
+
+    This does not submit a broker order. Illegal moves raise
+    ``invalid_order_transition``.
+    """
+    if target not in _ORDER_TRANSITIONS.get(current, frozenset()):
+        raise ValueError("invalid_order_transition")
+    return target
 
 
 def _audit_live_refusal() -> None:
@@ -123,22 +149,78 @@ def _connect() -> sqlite3.Connection:
         kill_switch INTEGER NOT NULL,
         max_order_notional TEXT NOT NULL, max_position_notional TEXT NOT NULL,
         max_daily_loss TEXT NOT NULL, max_gross_exposure TEXT NOT NULL,
-        max_market_age_seconds TEXT NOT NULL, max_future_skew_seconds TEXT NOT NULL)""")
+        max_market_age_seconds TEXT NOT NULL, max_future_skew_seconds TEXT NOT NULL,
+        unrealized_pnl TEXT NOT NULL DEFAULT '0')""")
     conn.execute("""CREATE TABLE IF NOT EXISTS paper_exec_positions (
         symbol TEXT PRIMARY KEY, quantity TEXT NOT NULL, average_cost TEXT NOT NULL)""")
     conn.execute("""CREATE TABLE IF NOT EXISTS paper_exec_orders (
         client_order_id TEXT PRIMARY KEY, symbol TEXT NOT NULL, side TEXT NOT NULL,
         quantity TEXT NOT NULL, price TEXT NOT NULL, fee TEXT NOT NULL,
         status TEXT NOT NULL, reason TEXT NOT NULL, limits_evaluated INTEGER NOT NULL,
-        risk_decision_id TEXT NOT NULL, created_at TEXT NOT NULL)""")
+        risk_decision_id TEXT NOT NULL, created_at TEXT NOT NULL,
+        state TEXT NOT NULL, filled_quantity TEXT NOT NULL, leaves_quantity TEXT NOT NULL,
+        execution_mode TEXT NOT NULL)""")
     conn.execute("""CREATE TABLE IF NOT EXISTS paper_exec_fills (
-        seq INTEGER PRIMARY KEY, client_order_id TEXT NOT NULL UNIQUE,
+        seq INTEGER PRIMARY KEY, client_order_id TEXT NOT NULL,
+        client_fill_id TEXT NOT NULL UNIQUE,
         symbol TEXT NOT NULL, side TEXT NOT NULL, quantity TEXT NOT NULL,
         price TEXT NOT NULL, fee TEXT NOT NULL, realized_pnl TEXT NOT NULL)""")
     conn.execute("""CREATE TABLE IF NOT EXISTS paper_exec_audit (
         seq INTEGER PRIMARY KEY, client_order_id TEXT, event TEXT NOT NULL,
         payload TEXT NOT NULL, prev_hash TEXT NOT NULL, row_hash TEXT NOT NULL)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS paper_exec_marks (
+        symbol TEXT PRIMARY KEY, price TEXT NOT NULL, observed_at TEXT NOT NULL)""")
+    _migrate(conn)
     return conn
+
+
+def _column_names(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Open ledgers written before the order-lifecycle columns."""
+    meta = _column_names(conn, "paper_exec_meta")
+    if "unrealized_pnl" not in meta:
+        conn.execute(
+            "ALTER TABLE paper_exec_meta ADD COLUMN unrealized_pnl TEXT NOT NULL DEFAULT '0'"
+        )
+    orders = _column_names(conn, "paper_exec_orders")
+    added_order_columns = False
+    for name, ddl in (
+        ("state", "state TEXT NOT NULL DEFAULT ''"),
+        ("filled_quantity", "filled_quantity TEXT NOT NULL DEFAULT '0'"),
+        ("leaves_quantity", "leaves_quantity TEXT NOT NULL DEFAULT '0'"),
+        ("execution_mode", "execution_mode TEXT NOT NULL DEFAULT 'immediate'"),
+    ):
+        if name not in orders:
+            conn.execute(f"ALTER TABLE paper_exec_orders ADD COLUMN {ddl}")
+            added_order_columns = True
+    if added_order_columns:
+        conn.execute(
+            """UPDATE paper_exec_orders SET
+               state = CASE status WHEN 'filled' THEN 'filled' ELSE 'rejected' END,
+               filled_quantity = CASE status WHEN 'filled' THEN quantity ELSE '0' END,
+               leaves_quantity = '0',
+               execution_mode = 'immediate'"""
+        )
+    fills = _column_names(conn, "paper_exec_fills")
+    if "client_fill_id" not in fills:
+        conn.execute("""CREATE TABLE paper_exec_fills_v2 (
+            seq INTEGER PRIMARY KEY, client_order_id TEXT NOT NULL,
+            client_fill_id TEXT NOT NULL UNIQUE,
+            symbol TEXT NOT NULL, side TEXT NOT NULL, quantity TEXT NOT NULL,
+            price TEXT NOT NULL, fee TEXT NOT NULL, realized_pnl TEXT NOT NULL)""")
+        for row in conn.execute("SELECT * FROM paper_exec_fills"):
+            conn.execute(
+                """INSERT INTO paper_exec_fills_v2(
+                    seq, client_order_id, client_fill_id, symbol, side, quantity, price, fee, realized_pnl)
+                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                (row["seq"], row["client_order_id"], row["client_order_id"], row["symbol"],
+                 row["side"], row["quantity"], row["price"], row["fee"], row["realized_pnl"]),
+            )
+        conn.execute("DROP TABLE paper_exec_fills")
+        conn.execute("ALTER TABLE paper_exec_fills_v2 RENAME TO paper_exec_fills")
 
 
 def _parse_time(value: object) -> datetime | None:
@@ -262,6 +344,89 @@ def _recompute(conn: sqlite3.Connection) -> tuple[Decimal, Decimal, dict[str, tu
     return cash, realized, positions
 
 
+def _marks(conn: sqlite3.Connection) -> dict[str, Decimal]:
+    return {
+        row["symbol"]: Decimal(row["price"])
+        for row in conn.execute("SELECT symbol, price FROM paper_exec_marks")
+    }
+
+
+def _expected_unrealized(
+    positions: dict[str, tuple[Decimal, Decimal]], marks: dict[str, Decimal],
+) -> tuple[Decimal, list[str]]:
+    """Mark long paper inventory. An unmarked name contributes zero and is listed."""
+    total = Decimal("0")
+    unmarked: list[str] = []
+    for symbol, (qty, avg) in sorted(positions.items()):
+        if symbol not in marks:
+            unmarked.append(symbol)
+            continue
+        total += qty * (marks[symbol] - avg)
+    return total, unmarked
+
+
+def _order_breaks(conn: sqlite3.Connection) -> list[str]:
+    breaks: list[str] = []
+    filled_by_order: dict[str, Decimal] = {}
+    fee_by_order: dict[str, Decimal] = {}
+    seen_orders: set[str] = set()
+    for fill in conn.execute("SELECT * FROM paper_exec_fills ORDER BY seq"):
+        qty = Decimal(fill["quantity"])
+        price = Decimal(fill["price"])
+        fee = Decimal(fill["fee"])
+        if qty <= 0 or price <= 0 or fee < 0:
+            breaks.append(f"fill_economics:{fill['client_fill_id']}")
+        seen_orders.add(fill["client_order_id"])
+        filled_by_order[fill["client_order_id"]] = (
+            filled_by_order.get(fill["client_order_id"], Decimal("0")) + qty
+        )
+        fee_by_order[fill["client_order_id"]] = (
+            fee_by_order.get(fill["client_order_id"], Decimal("0")) + fee
+        )
+    known: set[str] = set()
+    for order in conn.execute("SELECT * FROM paper_exec_orders"):
+        key = order["client_order_id"]
+        known.add(key)
+        state = order["state"]
+        qty = Decimal(order["quantity"])
+        filled = Decimal(order["filled_quantity"])
+        leaves = Decimal(order["leaves_quantity"])
+        actual = filled_by_order.get(key, Decimal("0"))
+        if state not in ORDER_STATES or state == "new":
+            breaks.append(f"order_state:{key}")
+        if actual != filled:
+            breaks.append(f"filled_quantity:{key}")
+        if fee_by_order.get(key, Decimal("0")) > Decimal(order["fee"]):
+            breaks.append(f"fill_fee:{key}")
+        if state == "rejected" and (filled != 0 or leaves != 0):
+            breaks.append(f"rejected_residue:{key}")
+        elif state == "accepted" and (filled != 0 or leaves != qty):
+            breaks.append(f"accepted_residue:{key}")
+        elif state == "partially_filled" and (
+            filled <= 0 or leaves <= 0 or filled + leaves != qty
+        ):
+            breaks.append(f"partial_residue:{key}")
+        elif state == "filled" and (leaves != 0 or filled != qty):
+            breaks.append(f"filled_residue:{key}")
+        elif state == "cancelled" and (leaves != 0 or filled > qty):
+            breaks.append(f"cancelled_residue:{key}")
+        if order["execution_mode"] not in ("immediate", "working"):
+            breaks.append(f"execution_mode:{key}")
+        for fill in conn.execute(
+            "SELECT * FROM paper_exec_fills WHERE client_order_id=?", (key,)
+        ):
+            worse = (
+                order["side"] == "BUY" and Decimal(fill["price"]) > Decimal(order["price"])
+            ) or (
+                order["side"] == "SELL" and Decimal(fill["price"]) < Decimal(order["price"])
+            )
+            if worse:
+                breaks.append(f"fill_price:{fill['client_fill_id']}")
+    for key in seen_orders - known:
+        breaks.append(f"orphan_fill:{key}")
+    return breaks
+
+
 def _reconcile_breaks(conn: sqlite3.Connection) -> list[str]:
     account = conn.execute("SELECT * FROM paper_exec_meta WHERE id=1").fetchone()
     if account is None:
@@ -284,6 +449,11 @@ def _reconcile_breaks(conn: sqlite3.Connection) -> list[str]:
     for symbol, (qty, avg) in positions.items():
         if stored.get(symbol) != (qty, avg):
             breaks.append(f"position:{symbol}")
+    expected_unrealized, _unmarked = _expected_unrealized(positions, _marks(conn))
+    recorded_unrealized = Decimal(account["unrealized_pnl"]) if "unrealized_pnl" in account.keys() else Decimal("0")
+    if recorded_unrealized != expected_unrealized:
+        breaks.append("unrealized_pnl")
+    breaks.extend(_order_breaks(conn))
     return breaks
 
 
@@ -313,11 +483,16 @@ def _public(order: sqlite3.Row, fill: sqlite3.Row | None, *, replay: bool) -> di
         "client_order_id": order["client_order_id"],
         "status": "idempotent_replay" if replay else order["status"],
         "original_status": order["status"],
+        "state": order["state"],
+        "filled_quantity": order["filled_quantity"],
+        "leaves_quantity": order["leaves_quantity"],
+        "execution_mode": order["execution_mode"],
         "reason": order["reason"],
         "limits_evaluated": bool(order["limits_evaluated"]),
         "risk_decision_id": order["risk_decision_id"],
         "fill": None if fill is None else {
             "seq": int(fill["seq"]),
+            "client_fill_id": fill["client_fill_id"],
             "quantity": fill["quantity"],
             "price": fill["price"],
             "realized_pnl": fill["realized_pnl"],
@@ -327,6 +502,105 @@ def _public(order: sqlite3.Row, fill: sqlite3.Row | None, *, replay: bool) -> di
         "mode": "paper_only",
     }
     return body
+
+
+def _position(conn: sqlite3.Connection, symbol: str) -> tuple[Decimal, Decimal]:
+    row = conn.execute(
+        "SELECT quantity, average_cost FROM paper_exec_positions WHERE symbol=?", (symbol,)
+    ).fetchone()
+    if row is None:
+        return Decimal("0"), Decimal("0")
+    return Decimal(row["quantity"]), Decimal(row["average_cost"])
+
+
+def _charged_fee(conn: sqlite3.Connection, client_order_id: str) -> Decimal:
+    total = Decimal("0")
+    for row in conn.execute(
+        "SELECT fee FROM paper_exec_fills WHERE client_order_id=?", (client_order_id,)
+    ):
+        total += Decimal(row["fee"])
+    return total
+
+
+def _reserved(conn: sqlite3.Connection) -> tuple[Decimal, dict[str, Decimal]]:
+    """Cash and shares already committed to open paper orders."""
+    cash = Decimal("0")
+    sells: dict[str, Decimal] = {}
+    rows = conn.execute(
+        """SELECT * FROM paper_exec_orders
+           WHERE state IN ('accepted', 'partially_filled')"""
+    )
+    for row in rows:
+        leaves = Decimal(row["leaves_quantity"])
+        remaining_fee = Decimal(row["fee"]) - _charged_fee(conn, row["client_order_id"])
+        if remaining_fee < 0:
+            remaining_fee = Decimal("0")
+        if row["side"] == "BUY":
+            cash += leaves * Decimal(row["price"]) + remaining_fee
+        else:
+            sells[row["symbol"]] = sells.get(row["symbol"], Decimal("0")) + leaves
+    return cash, sells
+
+
+def _open_buy_exposure(conn: sqlite3.Connection, symbol: str) -> tuple[Decimal, Decimal]:
+    symbol_notional = Decimal("0")
+    gross = Decimal("0")
+    rows = conn.execute(
+        """SELECT symbol, leaves_quantity, price FROM paper_exec_orders
+           WHERE state IN ('accepted', 'partially_filled') AND side='BUY'"""
+    )
+    for row in rows:
+        notion = Decimal(row["leaves_quantity"]) * Decimal(row["price"])
+        gross += notion
+        if row["symbol"] == symbol:
+            symbol_notional += notion
+    return symbol_notional, gross
+
+
+def _refresh_unrealized(conn: sqlite3.Connection) -> None:
+    positions = {
+        row["symbol"]: (Decimal(row["quantity"]), Decimal(row["average_cost"]))
+        for row in conn.execute("SELECT symbol, quantity, average_cost FROM paper_exec_positions")
+    }
+    expected, _unmarked = _expected_unrealized(positions, _marks(conn))
+    conn.execute(
+        "UPDATE paper_exec_meta SET unrealized_pnl=? WHERE id=1", (_canonical(expected),)
+    )
+
+
+def _persist_application(
+    conn: sqlite3.Connection, account: sqlite3.Row, symbol: str, side: str,
+    qty: Decimal, px: Decimal, fee: Decimal,
+) -> Decimal | None:
+    held, avg = _position(conn, symbol)
+    applied = _apply(Decimal(account["cash"]), held, avg, side, qty, px, fee)
+    if applied is None:
+        return None
+    new_cash, new_qty, new_avg, realized_delta = applied
+    new_realized = Decimal(account["realized_pnl"]) + realized_delta
+    conn.execute(
+        "UPDATE paper_exec_meta SET cash=?, realized_pnl=? WHERE id=1",
+        (_canonical(new_cash), _canonical(new_realized)),
+    )
+    if new_qty == 0:
+        conn.execute("DELETE FROM paper_exec_positions WHERE symbol=?", (symbol,))
+    else:
+        conn.execute(
+            """INSERT INTO paper_exec_positions(symbol, quantity, average_cost)
+               VALUES (?,?,?) ON CONFLICT(symbol) DO UPDATE SET
+               quantity=excluded.quantity, average_cost=excluded.average_cost""",
+            (symbol, _canonical(new_qty), _canonical(new_avg)),
+        )
+    _refresh_unrealized(conn)
+    return realized_delta
+
+
+def _latest_fill(conn: sqlite3.Connection, client_order_id: str) -> sqlite3.Row | None:
+    return conn.execute(
+        """SELECT * FROM paper_exec_fills WHERE client_order_id=?
+           ORDER BY seq DESC LIMIT 1""",
+        (client_order_id,),
+    ).fetchone()
 
 
 def initialize_paper_account(
@@ -348,14 +622,19 @@ def initialize_paper_account(
             if conn.execute("SELECT 1 FROM paper_exec_meta WHERE id=1").fetchone():
                 raise ValueError("account_already_initialized")
             conn.execute(
-                """INSERT INTO paper_exec_meta VALUES (1,?,?,?,?,?,?,?,?,?,?)""",
+                """INSERT INTO paper_exec_meta(
+                    id, initial_cash, cash, realized_pnl, kill_switch,
+                    max_order_notional, max_position_notional, max_daily_loss,
+                    max_gross_exposure, max_market_age_seconds, max_future_skew_seconds,
+                    unrealized_pnl)
+                   VALUES (1,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     _canonical(cash), _canonical(cash), "0", 0,
                     _canonical(Decimal(str(limits.max_order_notional))),
                     _canonical(Decimal(str(limits.max_position_notional))),
                     _canonical(Decimal(str(limits.max_daily_loss))),
                     _canonical(Decimal(str(limits.max_gross_exposure))),
-                    _canonical(max_age), _canonical(skew),
+                    _canonical(max_age), _canonical(skew), "0",
                 ),
             )
             _append_audit(conn, "account_initialized", None, {
@@ -407,16 +686,30 @@ def _fresh(account: sqlite3.Row, observed_at: object, now: object) -> bool:
     return -skew <= age <= max_age
 
 
+def _execution_reject(side: str, qty: Decimal, px: Decimal, cost: Decimal, held: Decimal) -> str:
+    if side == "BUY":
+        return "insufficient_paper_cash"
+    if qty <= held and qty * px - cost < 0:
+        return "fee_exceeds_sell_proceeds"
+    return "insufficient_paper_position"
+
+
 def _submit_new_order(
     conn: sqlite3.Connection, *, key: str, symbol: str, side: str,
     qty: Decimal, px: Decimal, cost: Decimal, qty_s: str, px_s: str, fee_s: str,
     observed_at: object, now: object, risk_service_available: object,
-    kill_switch_active: object, simulate_crash: bool,
+    kill_switch_active: object, working: bool, simulate_crash: bool,
 ) -> dict[str, Any]:
     account = conn.execute("SELECT * FROM paper_exec_meta WHERE id=1").fetchone()
     effective_kill = bool(account["kill_switch"]) or kill_switch_active is True
     fresh = _fresh(account, observed_at, now)
-    position_notional, gross = _book(conn, symbol, px)
+    filled_notional, filled_gross = _book(conn, symbol, px)
+    if side == "BUY":
+        extra_symbol, extra_gross = _open_buy_exposure(conn, symbol)
+        position_notional = filled_notional + extra_symbol
+        gross = filled_gross + extra_gross
+    else:
+        position_notional, gross = filled_notional, filled_gross
     try:
         approved, reason, limits_evaluated = check_execution(
             side=side, quantity=_as_float(qty), price=_as_float(px),
@@ -429,39 +722,46 @@ def _submit_new_order(
         )
     except Exception:
         approved, reason, limits_evaluated = False, "risk_service_unavailable", False
-    status = "filled" if approved else "risk_rejected"
     realized_delta = Decimal("0")
-    if approved:
-        cash = Decimal(account["cash"])
-        row = conn.execute(
-            "SELECT * FROM paper_exec_positions WHERE symbol=?", (symbol,)
-        ).fetchone()
-        held = Decimal(row["quantity"]) if row else Decimal("0")
-        avg = Decimal(row["average_cost"]) if row else Decimal("0")
-        applied = _apply(cash, held, avg, side, qty, px, cost)
-        if applied is None:
+    filled_quantity = Decimal("0")
+    leaves_quantity = Decimal("0")
+    execution_mode = "working" if working else "immediate"
+    if not approved:
+        status = "risk_rejected"
+        state = order_transition("new", "rejected")
+    else:
+        reserved_cash, reserved_sell = _reserved(conn)
+        held, _avg = _position(conn, symbol)
+        available_cash = Decimal(account["cash"]) - reserved_cash
+        available_qty = held - reserved_sell.get(symbol, Decimal("0"))
+        blocked = False
+        if side == "BUY" and qty * px + cost > available_cash:
+            blocked = True
+        elif side == "SELL" and (qty > available_qty or qty * px - cost < 0):
+            blocked = True
+        if blocked:
             status = "execution_rejected"
-            reason = "insufficient_paper_cash" if side == "BUY" else "insufficient_paper_position"
-            if side == "SELL" and qty <= held and qty * px - cost < 0:
-                reason = "fee_exceeds_sell_proceeds"
+            reason = _execution_reject(side, qty, px, cost, held)
+            state = order_transition("new", "rejected")
+        elif working:
+            status = "accepted"
+            state = order_transition("new", "accepted")
+            leaves_quantity = qty
         else:
-            new_cash, new_qty, new_avg, realized_delta = applied
-            new_realized = Decimal(account["realized_pnl"]) + realized_delta
-            conn.execute(
-                "UPDATE paper_exec_meta SET cash=?, realized_pnl=? WHERE id=1",
-                (_canonical(new_cash), _canonical(new_realized)),
-            )
-            if new_qty == 0:
-                conn.execute("DELETE FROM paper_exec_positions WHERE symbol=?", (symbol,))
+            applied = _persist_application(conn, account, symbol, side, qty, px, cost)
+            if applied is None:
+                status = "execution_rejected"
+                reason = _execution_reject(side, qty, px, cost, held)
+                state = order_transition("new", "rejected")
             else:
-                conn.execute(
-                    """INSERT INTO paper_exec_positions(symbol, quantity, average_cost)
-                       VALUES (?,?,?) ON CONFLICT(symbol) DO UPDATE SET
-                       quantity=excluded.quantity, average_cost=excluded.average_cost""",
-                    (symbol, _canonical(new_qty), _canonical(new_avg)),
-                )
+                realized_delta = applied
+                status = "filled"
+                order_transition("new", "accepted")
+                state = order_transition("accepted", "filled")
+                filled_quantity = qty
     payload = {
         "status": status, "reason": reason, "limits_evaluated": limits_evaluated,
+        "state": state, "execution_mode": execution_mode,
         "symbol": symbol, "side": side, "quantity": qty_s, "price": px_s, "fee": fee_s,
         "live_execution": False, "broker_order_submitted": False,
     }
@@ -469,12 +769,12 @@ def _submit_new_order(
     if status == "filled":
         conn.execute(
             """INSERT INTO paper_exec_fills(
-                seq, client_order_id, symbol, side, quantity, price, fee, realized_pnl)
-               VALUES (?,?,?,?,?,?,?,?)""",
-            (audit_seq, key, symbol, side, qty_s, px_s, fee_s, _canonical(realized_delta)),
+                seq, client_order_id, client_fill_id, symbol, side, quantity, price, fee, realized_pnl)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (audit_seq, key, key, symbol, side, qty_s, px_s, fee_s, _canonical(realized_delta)),
         )
         _append_audit(conn, "fill_recorded", key, {
-            "fill_seq": audit_seq, "risk_decision_id": digest,
+            "fill_seq": audit_seq, "client_fill_id": key, "risk_decision_id": digest,
             "realized_pnl": _canonical(realized_delta), "quantity": qty_s, "price": px_s,
             "live_execution": False, "broker_order_submitted": False,
         })
@@ -482,10 +782,12 @@ def _submit_new_order(
     conn.execute(
         """INSERT INTO paper_exec_orders(
             client_order_id, symbol, side, quantity, price, fee, status, reason,
-            limits_evaluated, risk_decision_id, created_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            limits_evaluated, risk_decision_id, created_at, state, filled_quantity,
+            leaves_quantity, execution_mode)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (key, symbol, side, qty_s, px_s, fee_s, status, reason,
-         1 if limits_evaluated else 0, digest, created),
+         1 if limits_evaluated else 0, digest, created, state,
+         _canonical(filled_quantity), _canonical(leaves_quantity), execution_mode),
     )
     _assert_ready(conn)
     if simulate_crash:
@@ -494,10 +796,7 @@ def _submit_new_order(
     stored = conn.execute(
         "SELECT * FROM paper_exec_orders WHERE client_order_id=?", (key,)
     ).fetchone()
-    stored_fill = conn.execute(
-        "SELECT * FROM paper_exec_fills WHERE client_order_id=?", (key,)
-    ).fetchone()
-    return _public(stored, stored_fill, replay=False)
+    return _public(stored, _latest_fill(conn, key), replay=False)
 
 
 def submit_paper_order(
@@ -513,6 +812,7 @@ def submit_paper_order(
     risk_service_available: object = True,
     kill_switch_active: object = False,
     live_execution: object = False,
+    working: bool = False,
     simulate_crash: bool = False,
 ) -> dict[str, Any]:
     _refuse_live(live_execution)
@@ -546,9 +846,11 @@ def submit_paper_order(
                 "SELECT * FROM paper_exec_orders WHERE client_order_id=?", (key,)
             ).fetchone()
             if prior is not None:
+                mode = "working" if working is True else "immediate"
                 same = (
                     prior["symbol"], prior["side"], prior["quantity"], prior["price"], prior["fee"],
-                ) == (normalized_symbol, normalized_side, qty_s, px_s, fee_s)
+                    prior["execution_mode"],
+                ) == (normalized_symbol, normalized_side, qty_s, px_s, fee_s, mode)
                 event = "idempotent_replay" if same else "idempotency_conflict"
                 _append_audit(conn, event, key, {
                     "original_risk_decision_id": prior["risk_decision_id"],
@@ -561,10 +863,7 @@ def submit_paper_order(
                 if not same:
                     conflict = True
                 else:
-                    fill = conn.execute(
-                        "SELECT * FROM paper_exec_fills WHERE client_order_id=?", (key,)
-                    ).fetchone()
-                    result = _public(prior, fill, replay=True)
+                    result = _public(prior, _latest_fill(conn, key), replay=True)
             else:
                 result = _submit_new_order(
                     conn, key=key, symbol=normalized_symbol, side=normalized_side,
@@ -572,6 +871,7 @@ def submit_paper_order(
                     observed_at=observed_at, now=now,
                     risk_service_available=risk_service_available,
                     kill_switch_active=kill_switch_active,
+                    working=working is True,
                     simulate_crash=simulate_crash,
                 )
         except Exception:
@@ -584,6 +884,486 @@ def submit_paper_order(
     if result is None:
         raise RuntimeError("paper_order_result_missing")
     return result
+
+
+def _text_id(value: Any, error: str) -> str:
+    if not isinstance(value, str) or not 1 <= len(value.strip()) <= 128:
+        raise ValueError(error)
+    return value.strip()
+
+
+def _allocated_fee(order_fee: Decimal, leaves: Decimal, fill_qty: Decimal, charged: Decimal) -> Decimal:
+    remaining = order_fee - charged
+    if remaining < 0:
+        raise ValueError("fill_fee_exceeds_order")
+    if fill_qty == leaves:
+        return remaining
+    if leaves <= 0:
+        raise ValueError("invalid_fill_quantity")
+    return remaining * fill_qty / leaves
+
+
+def _reject_fill(conn: sqlite3.Connection, key: str, event: str, payload: dict[str, Any]) -> None:
+    _append_audit(conn, event, key, payload)
+    _assert_ready(conn)
+    conn.commit()
+
+
+def apply_paper_fill(
+    *,
+    client_order_id: Any,
+    client_fill_id: Any,
+    quantity: Any,
+    price: Any = None,
+    fee: Any = None,
+    observed_at: object = None,
+    now: object = None,
+    live_execution: object = False,
+    simulate_crash: bool = False,
+) -> dict[str, Any]:
+    """Fill some or all of an accepted paper order. A crash rolls the fill back."""
+    _refuse_live(live_execution)
+    key = _text_id(client_order_id, "invalid_client_order_id")
+    fill_id = _text_id(client_fill_id, "invalid_client_fill_id")
+    fill_qty = _number(quantity, positive=True)
+    explicit_price = None if price is None else _number(price, positive=True)
+    explicit_fee = None if fee is None else _number(fee)
+    error: str | None = None
+    result: dict[str, Any] | None = None
+    with _lock:
+        conn = _connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            _assert_ready(conn)
+            order = conn.execute(
+                "SELECT * FROM paper_exec_orders WHERE client_order_id=?", (key,)
+            ).fetchone()
+            if order is None:
+                raise ValueError("order_not_found")
+            existing = conn.execute(
+                "SELECT * FROM paper_exec_fills WHERE client_fill_id=?", (fill_id,)
+            ).fetchone()
+            if existing is not None:
+                price_s = existing["price"] if explicit_price is None else _canonical(explicit_price)
+                fee_s = existing["fee"] if explicit_fee is None else _canonical(explicit_fee)
+                same = (
+                    existing["client_order_id"] == key
+                    and existing["quantity"] == _canonical(fill_qty)
+                    and existing["price"] == price_s
+                    and existing["fee"] == fee_s
+                )
+                event = "idempotent_replay" if same else "idempotency_conflict"
+                _append_audit(conn, event, key, {
+                    "client_fill_id": fill_id,
+                    "original_status": order["status"],
+                    "live_execution": False,
+                    "broker_order_submitted": False,
+                })
+                _assert_ready(conn)
+                conn.commit()
+                if same:
+                    result = _public(order, existing, replay=True)
+                else:
+                    error = "idempotency_key_conflict"
+            else:
+                account = conn.execute("SELECT * FROM paper_exec_meta WHERE id=1").fetchone()
+                leaves = Decimal(order["leaves_quantity"])
+                limit = Decimal(order["price"])
+                fill_px = limit if explicit_price is None else explicit_price
+                charged = _charged_fee(conn, key)
+                try:
+                    fill_fee = (
+                        _allocated_fee(Decimal(order["fee"]), leaves, fill_qty, charged)
+                        if explicit_fee is None else explicit_fee
+                    )
+                except ValueError as exc:
+                    fill_fee = Decimal("0")
+                    problem = str(exc)
+                else:
+                    problem = None
+                if problem is None and explicit_fee is not None:
+                    remaining_fee = Decimal(order["fee"]) - charged
+                    if explicit_fee > remaining_fee:
+                        problem = "fill_fee_exceeds_order"
+                worse = (
+                    (order["side"] == "BUY" and fill_px > limit)
+                    or (order["side"] == "SELL" and fill_px < limit)
+                )
+                if problem is None and fill_qty > leaves:
+                    problem = "invalid_fill_quantity"
+                if problem is None and worse:
+                    problem = "fill_price_exceeds_limit"
+                if problem is None and bool(account["kill_switch"]):
+                    problem = "kill_switch_active"
+                if problem is None and not _fresh(account, observed_at, now):
+                    problem = "stale_market_data"
+                if order["state"] not in OPEN_ORDER_STATES:
+                    problem = "invalid_order_transition"
+                if problem is not None:
+                    event = (
+                        "invalid_order_transition"
+                        if problem == "invalid_order_transition" else "fill_rejected"
+                    )
+                    _reject_fill(conn, key, event, {
+                        "client_fill_id": fill_id, "reason": problem,
+                        "state": order["state"],
+                        "live_execution": False, "broker_order_submitted": False,
+                    })
+                    error = problem
+                else:
+                    try:
+                        new_leaves = leaves - fill_qty
+                        target = "filled" if new_leaves == 0 else "partially_filled"
+                        order_transition(order["state"], target)
+                    except ValueError:
+                        _reject_fill(conn, key, "invalid_order_transition", {
+                            "client_fill_id": fill_id,
+                            "from": order["state"], "to": "filled",
+                            "live_execution": False, "broker_order_submitted": False,
+                        })
+                        error = "invalid_order_transition"
+                    else:
+                        realized = _persist_application(
+                            conn, account, order["symbol"], order["side"], fill_qty, fill_px, fill_fee,
+                        )
+                        if realized is None:
+                            reason = _execution_reject(
+                                order["side"], fill_qty, fill_px, fill_fee,
+                                _position(conn, order["symbol"])[0],
+                            )
+                            _reject_fill(conn, key, "fill_rejected", {
+                                "client_fill_id": fill_id, "reason": reason,
+                                "state": order["state"],
+                                "live_execution": False, "broker_order_submitted": False,
+                            })
+                            error = reason
+                        else:
+                            new_filled = Decimal(order["filled_quantity"]) + fill_qty
+                            previous = conn.execute(
+                                "SELECT seq FROM paper_exec_audit ORDER BY seq DESC LIMIT 1"
+                            ).fetchone()
+                            fill_seq = 1 if previous is None else int(previous["seq"]) + 1
+                            qty_s = _canonical(fill_qty)
+                            px_s = _canonical(fill_px)
+                            fee_s = _canonical(fill_fee)
+                            _append_audit(conn, "fill_recorded", key, {
+                                "fill_seq": fill_seq, "client_fill_id": fill_id,
+                                "risk_decision_id": order["risk_decision_id"],
+                                "realized_pnl": _canonical(realized),
+                                "quantity": qty_s, "price": px_s, "state": target,
+                                "live_execution": False, "broker_order_submitted": False,
+                            })
+                            conn.execute(
+                                """INSERT INTO paper_exec_fills(
+                                    seq, client_order_id, client_fill_id, symbol, side,
+                                    quantity, price, fee, realized_pnl)
+                                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                                (fill_seq, key, fill_id, order["symbol"], order["side"],
+                                 qty_s, px_s, fee_s, _canonical(realized)),
+                            )
+                            conn.execute(
+                                """UPDATE paper_exec_orders
+                                   SET status=?, state=?, filled_quantity=?, leaves_quantity=?
+                                   WHERE client_order_id=?""",
+                                (target, target, _canonical(new_filled), _canonical(new_leaves), key),
+                            )
+                            _assert_ready(conn)
+                            if simulate_crash:
+                                raise RuntimeError("simulated_crash_before_commit")
+                            conn.commit()
+                            stored = conn.execute(
+                                "SELECT * FROM paper_exec_orders WHERE client_order_id=?", (key,)
+                            ).fetchone()
+                            stored_fill = conn.execute(
+                                "SELECT * FROM paper_exec_fills WHERE client_fill_id=?", (fill_id,)
+                            ).fetchone()
+                            result = _public(stored, stored_fill, replay=False)
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+    if error is not None:
+        raise ValueError(error)
+    if result is None:
+        raise RuntimeError("paper_fill_result_missing")
+    return result
+
+
+def cancel_paper_order(
+    *,
+    client_order_id: Any,
+    live_execution: object = False,
+    simulate_crash: bool = False,
+) -> dict[str, Any]:
+    """Cancel the remainder of an open paper order. A second cancel replays."""
+    _refuse_live(live_execution)
+    key = _text_id(client_order_id, "invalid_client_order_id")
+    error: str | None = None
+    result: dict[str, Any] | None = None
+    with _lock:
+        conn = _connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            _assert_ready(conn)
+            order = conn.execute(
+                "SELECT * FROM paper_exec_orders WHERE client_order_id=?", (key,)
+            ).fetchone()
+            if order is None:
+                raise ValueError("order_not_found")
+            if order["state"] == "cancelled":
+                _append_audit(conn, "cancel_replay", key, {
+                    "original_status": order["status"],
+                    "filled_quantity": order["filled_quantity"],
+                    "live_execution": False, "broker_order_submitted": False,
+                })
+                _assert_ready(conn)
+                conn.commit()
+                result = _public(order, _latest_fill(conn, key), replay=True)
+            else:
+                try:
+                    order_transition(order["state"], "cancelled")
+                except ValueError:
+                    _append_audit(conn, "invalid_order_transition", key, {
+                        "from": order["state"], "to": "cancelled",
+                        "live_execution": False, "broker_order_submitted": False,
+                    })
+                    _assert_ready(conn)
+                    conn.commit()
+                    error = "invalid_order_transition"
+                else:
+                    conn.execute(
+                        """UPDATE paper_exec_orders
+                           SET status='cancelled', state='cancelled', leaves_quantity='0'
+                           WHERE client_order_id=?""",
+                        (key,),
+                    )
+                    _append_audit(conn, "order_cancelled", key, {
+                        "filled_quantity": order["filled_quantity"],
+                        "released_quantity": order["leaves_quantity"],
+                        "live_execution": False, "broker_order_submitted": False,
+                    })
+                    _assert_ready(conn)
+                    if simulate_crash:
+                        raise RuntimeError("simulated_crash_before_commit")
+                    conn.commit()
+                    stored = conn.execute(
+                        "SELECT * FROM paper_exec_orders WHERE client_order_id=?", (key,)
+                    ).fetchone()
+                    result = _public(stored, _latest_fill(conn, key), replay=False)
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+    if error is not None:
+        raise ValueError(error)
+    if result is None:
+        raise RuntimeError("paper_cancel_result_missing")
+    return result
+
+
+def _normalize_symbol(symbol: Any) -> str:
+    if not isinstance(symbol, str) or not 1 <= len(symbol.strip()) <= 64:
+        raise ValueError("invalid_symbol")
+    normalized = symbol.strip().upper()
+    if not normalized.isascii() or any(
+        ch not in "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:/-" for ch in normalized
+    ):
+        raise ValueError("invalid_symbol")
+    return normalized
+
+
+def mark_to_market(marks: Any, *, observed_at: object, now: object) -> dict[str, Any]:
+    """Store fresh marks and the unrealized P&L they imply. This does not trade."""
+    _refuse_live(False)
+    if not isinstance(marks, dict) or not marks:
+        raise ValueError("invalid_marks")
+    parsed: dict[str, Decimal] = {}
+    for symbol, price in marks.items():
+        parsed[_normalize_symbol(symbol)] = _number(price, positive=True)
+    with _lock:
+        conn = _connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            _assert_ready(conn)
+            account = conn.execute("SELECT * FROM paper_exec_meta WHERE id=1").fetchone()
+            if not _fresh(account, observed_at, now):
+                raise ValueError("stale_market_data")
+            held = {
+                row["symbol"] for row in conn.execute("SELECT symbol FROM paper_exec_positions")
+            }
+            merged = _marks(conn)
+            merged.update(parsed)
+            missing = sorted(symbol for symbol in held if symbol not in merged)
+            if missing:
+                raise ValueError("mark_required")
+            observed = observed_at if isinstance(observed_at, str) else ""
+            for symbol, price in parsed.items():
+                conn.execute(
+                    """INSERT INTO paper_exec_marks(symbol, price, observed_at) VALUES (?,?,?)
+                       ON CONFLICT(symbol) DO UPDATE SET
+                       price=excluded.price, observed_at=excluded.observed_at""",
+                    (symbol, _canonical(price), observed),
+                )
+            _refresh_unrealized(conn)
+            _append_audit(conn, "mark_to_market", None, {
+                "marks": {symbol: _canonical(price) for symbol, price in sorted(parsed.items())},
+                "live_execution": False, "broker_order_submitted": False,
+            })
+            _assert_ready(conn)
+            conn.commit()
+            unrealized = conn.execute(
+                "SELECT unrealized_pnl FROM paper_exec_meta WHERE id=1"
+            ).fetchone()["unrealized_pnl"]
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+    return {
+        "unrealized_pnl": unrealized,
+        "live_execution": False, "broker_order_submitted": False, "mode": "paper_only",
+    }
+
+
+def _money_field(name: str, expected: Decimal, recorded: Decimal) -> dict[str, Any]:
+    return {
+        "field": name,
+        "expected": _canonical(expected),
+        "recorded": _canonical(recorded),
+        "match": expected == recorded,
+    }
+
+
+def _build_reconciliation_report(conn: sqlite3.Connection, account: sqlite3.Row) -> dict[str, Any]:
+    breaks = _reconcile_breaks(conn)
+    try:
+        cash, realized, positions = _recompute(conn)
+        unmarked: list[str] = []
+        expected_unrealized, unmarked = _expected_unrealized(positions, _marks(conn))
+    except ValueError:
+        cash = realized = expected_unrealized = None
+        positions = {}
+        unmarked = []
+    recorded_positions = {
+        row["symbol"]: (Decimal(row["quantity"]), Decimal(row["average_cost"]))
+        for row in conn.execute("SELECT * FROM paper_exec_positions")
+    }
+    position_rows = []
+    if cash is not None:
+        for symbol in sorted(set(positions) | set(recorded_positions)):
+            expected = positions.get(symbol)
+            recorded = recorded_positions.get(symbol)
+            position_rows.append({
+                "symbol": symbol,
+                "expected_quantity": None if expected is None else _canonical(expected[0]),
+                "recorded_quantity": None if recorded is None else _canonical(recorded[0]),
+                "expected_average_cost": None if expected is None else _canonical(expected[1]),
+                "recorded_average_cost": None if recorded is None else _canonical(recorded[1]),
+                "match": expected == recorded,
+            })
+    recorded_unrealized = Decimal(account["unrealized_pnl"])
+    fields = []
+    if cash is None or realized is None or expected_unrealized is None:
+        mismatches = [{"field": "ledger", "expected": "recomputable", "recorded": "recompute_failed"}]
+    else:
+        fields = [
+            _money_field("cash", cash, Decimal(account["cash"])),
+            _money_field("realized_pnl", realized, Decimal(account["realized_pnl"])),
+            _money_field("unrealized_pnl", expected_unrealized, recorded_unrealized),
+        ]
+        mismatches = [row for row in fields if not row["match"]]
+        mismatches.extend(
+            {"field": f"position:{row['symbol']}", "expected": row["expected_quantity"],
+             "recorded": row["recorded_quantity"]}
+            for row in position_rows if not row["match"]
+        )
+    open_orders = [
+        {
+            "client_order_id": row["client_order_id"], "symbol": row["symbol"],
+            "side": row["side"], "state": row["state"],
+            "filled_quantity": row["filled_quantity"], "leaves_quantity": row["leaves_quantity"],
+        }
+        for row in conn.execute(
+            """SELECT * FROM paper_exec_orders
+               WHERE state IN ('accepted', 'partially_filled')
+               ORDER BY client_order_id"""
+        )
+    ]
+    return {
+        "initialized": True,
+        "passed": not breaks,
+        "breaks": breaks,
+        "mismatches": mismatches,
+        "fields": fields,
+        "positions": position_rows,
+        "warnings": [f"unmarked:{symbol}" for symbol in unmarked],
+        "open_orders": open_orders,
+        "daily_loss_basis": "realized_pnl",
+        "live_execution": False,
+        "broker_order_submitted": False,
+        "mode": "paper_only",
+    }
+
+
+def reconciliation_report(*, record_mismatch: bool = False) -> dict[str, Any]:
+    """Expected-versus-recorded cash, positions, and P&L. Mismatches can be audited."""
+    with _lock:
+        conn = _connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            account = conn.execute("SELECT * FROM paper_exec_meta WHERE id=1").fetchone()
+            if account is None:
+                conn.rollback()
+                return {
+                    "initialized": False, "passed": False, "breaks": ["account_not_initialized"],
+                    "mismatches": [{
+                        "field": "account", "expected": "initialized", "recorded": None,
+                    }],
+                    "fields": [], "positions": [], "warnings": [], "open_orders": [],
+                    "daily_loss_basis": "realized_pnl",
+                    "live_execution": False, "broker_order_submitted": False, "mode": "paper_only",
+                }
+            try:
+                _verify_audit(conn)
+            except ValueError:
+                conn.rollback()
+                return {
+                    "initialized": True, "passed": False, "breaks": ["audit_chain_corrupt"],
+                    "mismatches": [{
+                        "field": "audit", "expected": "intact", "recorded": "corrupt",
+                    }],
+                    "fields": [], "positions": [], "warnings": [], "open_orders": [],
+                    "daily_loss_basis": "realized_pnl",
+                    "live_execution": False, "broker_order_submitted": False, "mode": "paper_only",
+                }
+            report = _build_reconciliation_report(conn, account)
+            if record_mismatch and report["breaks"]:
+                payload = {
+                    "breaks": report["breaks"],
+                    "live_execution": False,
+                    "broker_order_submitted": False,
+                }
+                encoded = _canon_json(payload)
+                last = conn.execute(
+                    "SELECT event, payload FROM paper_exec_audit ORDER BY seq DESC LIMIT 1"
+                ).fetchone()
+                if (
+                    last is None
+                    or last["event"] != "reconciliation_mismatch"
+                    or last["payload"] != encoded
+                ):
+                    _append_audit(conn, "reconciliation_mismatch", None, payload)
+                conn.commit()
+            else:
+                conn.rollback()
+            return report
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
 
 def snapshot() -> dict[str, Any]:
@@ -610,10 +1390,25 @@ def snapshot() -> dict[str, Any]:
                 "broker_order_submitted": False,
                 "cash": account["cash"], "initial_cash": account["initial_cash"],
                 "realized_pnl": account["realized_pnl"],
+                "unrealized_pnl": account["unrealized_pnl"],
                 "kill_switch_active": bool(account["kill_switch"]),
                 "fill_count": conn.execute("SELECT COUNT(*) FROM paper_exec_fills").fetchone()[0],
                 "order_count": conn.execute("SELECT COUNT(*) FROM paper_exec_orders").fetchone()[0],
-                "positions": positions, "audit": audit,
+                "positions": positions,
+                "open_orders": [
+                    {
+                        "client_order_id": row["client_order_id"],
+                        "symbol": row["symbol"], "side": row["side"], "state": row["state"],
+                        "quantity": row["quantity"], "filled_quantity": row["filled_quantity"],
+                        "leaves_quantity": row["leaves_quantity"], "price": row["price"],
+                    }
+                    for row in conn.execute(
+                        """SELECT * FROM paper_exec_orders
+                           WHERE state IN ('accepted', 'partially_filled')
+                           ORDER BY client_order_id"""
+                    )
+                ],
+                "audit": audit,
             }
         finally:
             conn.close()
@@ -649,6 +1444,7 @@ def recover() -> dict[str, Any]:
         finally:
             conn.close()
     report["snapshot"] = snapshot()
+    report["open_orders"] = report["snapshot"].get("open_orders", [])
     return report
 
 
@@ -739,6 +1535,50 @@ def api_submit(p: dict = Body(...)):
         risk_service_available=p.get("risk_service_available", True) is True,
         kill_switch_active=p.get("kill_switch_active") is True,
         live_execution=p.get("live_execution") is True,
+        working=p.get("working") is True,
+    )
+
+
+@router.post("/paper/execution/orders/{client_order_id}/fills")
+def api_fill(client_order_id: str, p: dict = Body(...)):
+    # simulate_crash is a library fault hook and is not accepted over HTTP.
+    return _guard(
+        apply_paper_fill,
+        client_order_id=client_order_id,
+        client_fill_id=p.get("client_fill_id"),
+        quantity=p.get("quantity"),
+        price=p.get("price"),
+        fee=p.get("fee"),
+        observed_at=p.get("observed_at"),
+        now=p.get("now"),
+        live_execution=p.get("live_execution") is True,
+    )
+
+
+@router.get("/paper/execution/reconciliation-report")
+def api_reconciliation_report():
+    return _guard(reconciliation_report)
+
+
+@router.post("/paper/execution/reconciliation-report")
+def api_reconciliation_report_record():
+    return _guard(reconciliation_report, record_mismatch=True)
+
+
+@router.post("/paper/execution/orders/{client_order_id}/cancel")
+def api_cancel(client_order_id: str, p: dict | None = Body(default=None)):
+    payload = p or {}
+    return _guard(
+        cancel_paper_order,
+        client_order_id=client_order_id,
+        live_execution=payload.get("live_execution") is True,
+    )
+
+
+@router.post("/paper/execution/marks")
+def api_marks(p: dict = Body(...)):
+    return _guard(
+        mark_to_market, p.get("marks"), observed_at=p.get("observed_at"), now=p.get("now"),
     )
 
 

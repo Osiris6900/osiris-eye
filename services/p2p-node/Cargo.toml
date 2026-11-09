@@ -9,7 +9,12 @@ description = "First peer-to-peer node for the OSIRIS EYE network"
 name = "osiris-p2p-node"
 path = "src/main.rs"
 
+[features]
+audio = ["dep:cpal"]
+
 [dependencies]
+zeroize = "1.8"
+cpal = { version = "0.15", optional = true }
 futures = "0.3"
 ed25519-dalek = "2.1"
 libp2p = { version = "0.57.1", features = ["tokio", "tcp", "noise", "yamux", "gossipsub", "kad", "mdns", "identify", "relay", "dcutr", "autonat", "upnp", "macros"] }
@@ -22,5 +27,52 @@ chacha20poly1305 = "0.10"
 hkdf = "0.12"
 rand_core = { version = "0.6", features = ["getrandom"] }
 x25519-dalek = { version = "2", features = ["static_secrets", "zeroize"] }
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
 ureq = { version = "2", default-features = false, features = ["tls"] }
+
+tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
+
+[[bin]]
+name = "ghost_sniffer"
+path = "src/ghost_sniffer.rs"
+
+[[bin]]
+name = "vampire_core"
+path = "src/vampire_core.rs"
+
+[[bin]]
+name = "shadow_network"
+path = "src/shadow_network.rs"
+
+[[bin]]
+name = "oracle_engine"
+path = "src/oracle_engine.rs"
+
+[[bin]]
+name = "web_weaver"
+path = "src/web_weaver.rs"
+
+[[bin]]
+name = "hive_mind"
+path = "src/hive_mind.rs"
+
+[[bin]]
+name = "poltergeist"
+path = "src/poltergeist.rs"
+
+[[bin]]
+name = "neural_lace"
+path = "src/neural_lace.rs"
+
+[[bin]]
+name = "void_walker"
+path = "src/void_walker.rs"
+
+
+[[bin]]
+name = "divine_arbiter"
+path = "src/divine_arbiter.rs"
+
+[[bin]]
+name = "seraphim"
+path = "src/seraphim.rs"
