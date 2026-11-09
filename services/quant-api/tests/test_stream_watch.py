@@ -352,6 +352,44 @@ def test_reconnect_after_drop_recovers(store, enabled):
     assert venue["stop_reason"] == "frame_budget_spent"
 
 
+def test_reconnect_backoff_is_jittered_bounded_and_per_venue(store, enabled):
+    clock = Clock()
+    delays: list[tuple[str, float]] = []
+
+    async def record_sleep(seconds):
+        delays.append(seconds)
+
+    def router(url):
+        raise ConnectionError("refused")
+
+    result = run_stream_watch(
+        store,
+        stream_seconds=60.0,
+        inactivity_seconds=5.0,
+        watchlist={PROVIDER_OKX: ("BTCUSDT",), PROVIDER_BYBIT: ("BTCUSDT",)},
+        max_reconnects=1,
+        connect=router,
+        clock=clock,
+        now_fn=lambda: NOW,
+        sleep=record_sleep,
+    )
+    okx = result["venues"][PROVIDER_OKX]
+    bybit = result["venues"][PROVIDER_BYBIT]
+    assert okx["reconnects"] == 1 and bybit["reconnects"] == 1
+    assert okx["stop_reason"] == bybit["stop_reason"] == "reconnects_exhausted"
+    assert okx["last_reconnect_delay_seconds"] != bybit["last_reconnect_delay_seconds"]
+    for delay in (
+        okx["last_reconnect_delay_seconds"],
+        bybit["last_reconnect_delay_seconds"],
+        *delays,
+    ):
+        assert 0.5 <= delay <= 1.0
+    assert sorted(delays) == sorted([
+        okx["last_reconnect_delay_seconds"],
+        bybit["last_reconnect_delay_seconds"],
+    ])
+
+
 def test_reconnects_exhausted_stops_honestly(store, enabled):
     clock = Clock()
     sockets = [FakeSocket(enter_error=ConnectionError("refused")) for _ in range(3)]

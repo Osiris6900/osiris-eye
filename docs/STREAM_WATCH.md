@@ -67,7 +67,10 @@ per-venue frame budget, bounded reconnects.
 - **Inactivity watchdog** — no frame for `inactivity_seconds` (5–300,
   default 30) and the connection is declared dead and re-established.
 - **Bounded reconnects** — `max_reconnects` (0–10, default 3) with
-  exponential backoff (1 s, 3 s, 7 s, … capped at 30 s). A venue that
+  jittered exponential backoff. Attempt n waits in `[ceiling/2, ceiling]`
+  where `ceiling = min(30s, 1s × 2^(n-1))`. The offset is a SHA-256 of the
+  venue and the attempt, so venues do not reconnect in lockstep and a
+  restart reproduces the same delay. The floor is never zero. A venue that
   cannot stay connected stops honestly:
   `stop_reason: reconnects_exhausted`, with `last_error` recorded — and
   never takes the other venues down with it.
@@ -96,8 +99,8 @@ shows up exactly like a dead poll source.
 
 ## Tests
 
-`services/quant-api/tests/test_stream_watch.py` — 22 cases: per-venue
-parsers (including confirmation/heartbeat rejection and bad-price
-raises), scripted fake sockets for sessions (throttle, dedupe, kill
-switch, reconnect, exhaustion, two-venue concurrency), and bound
-validation. No network access.
+`services/quant-api/tests/test_stream_watch.py` covers per-venue parsers
+(including confirmation/heartbeat rejection and bad-price raises),
+scripted fake sockets for sessions (throttle, dedupe, kill switch,
+reconnect, exhaustion, two-venue concurrency), jittered reconnect bounds,
+and bound validation. No network access.
