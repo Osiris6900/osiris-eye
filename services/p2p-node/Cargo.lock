@@ -4237,6 +4237,7 @@ dependencies = [
  "tokio-tungstenite",
  "ureq",
  "x25519-dalek 2.0.1",
+ "zeroize",
 ]
 
 [[package]]
