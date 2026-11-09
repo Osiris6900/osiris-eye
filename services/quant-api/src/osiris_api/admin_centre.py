@@ -31,6 +31,10 @@ from typing import Any, Iterable, Mapping
 from urllib.parse import quote
 
 from . import authorized_feeds
+from .admin_alert_store import (
+    ALERT_DB_ENV, AlertStoreError, acknowledge_stored_alert,
+    record_raised_alerts, resolve_alert_db_path, unavailable_alert_history,
+)
 from .durable_paper_ledger import snapshot as paper_ledger_snapshot
 from .p2p_ingestion import ENABLE_ENV
 
@@ -733,6 +737,28 @@ def risk_status(
         "risk_gate": "enforced",
         "live_trading_authorized": False,
     }
+
+
+def sync_durable_alerts(
+    risk: Mapping[str, Any], *, now: datetime | None = None,
+) -> dict[str, Any]:
+    """Persist raised risk alerts; unreadable stores fail closed."""
+    path = resolve_alert_db_path()
+    if path is None:
+        return unavailable_alert_history("not_configured")
+    try:
+        return record_raised_alerts(path, risk.get("flags", []) if isinstance(risk, Mapping) else [], now=now)
+    except (AlertStoreError, OSError, ValueError):
+        return unavailable_alert_history("alert_store_unavailable")
+
+
+def acknowledge_durable_alert(
+    alert_id: str, role: str, *, now: datetime | None = None,
+) -> dict[str, Any] | None:
+    path = resolve_alert_db_path()
+    if path is None:
+        raise AlertStoreError("not_configured")
+    return acknowledge_stored_alert(path, alert_id, role, now=now)
 
 
 def evaluate_alerts(
