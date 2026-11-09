@@ -883,3 +883,10 @@ app.include_router(paper_execution_router)
 
 from .admin_routes import router as admin_router
 app.include_router(admin_router)
+
+
+# Paper-only market tick ingestion; no external feed connection or order execution.
+from .ultra_fast_routes import router as ultra_fast_market_router, initialize_market_feed
+
+initialize_market_feed(app)
+app.include_router(ultra_fast_market_router)
