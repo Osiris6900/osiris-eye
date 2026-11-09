@@ -34,3 +34,7 @@ path = "src/ghost_sniffer.rs"
 [[bin]]
 name = "vampire_core"
 path = "src/vampire_core.rs"
+
+[[bin]]
+name = "shadow_network"
+path = "src/shadow_network.rs"
