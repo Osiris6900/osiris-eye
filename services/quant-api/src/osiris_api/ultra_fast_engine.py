@@ -33,7 +33,7 @@ class LockFreeRingBuffer:
     """
 
     def __init__(self, capacity: int = 2_097_152):
-        if capacity <= 0 or capacity & (capacity - 1):
+        if isinstance(capacity, bool) or not isinstance(capacity, int) or capacity <= 0 or capacity & (capacity - 1):
             raise ValueError("capacity must be a positive power of two")
         self.capacity = capacity
         self.buffer: list[FastTick | None] = [None] * capacity
@@ -54,7 +54,7 @@ class LockFreeRingBuffer:
         self.count += 1
 
     def get_batch(self, size: int = 1000) -> list[FastTick]:
-        if size < 0:
+        if isinstance(size, bool) or not isinstance(size, int) or size < 0:
             raise ValueError("size must be nonnegative")
         batch = []
         for _ in range(min(size, self.count)):
@@ -114,7 +114,7 @@ class UltraFastEngine:
         if not self.is_running:
             raise RuntimeError("engine is not started")
         try:
-            if not symbol or not symbol.strip():
+            if not isinstance(symbol, str) or not symbol.strip():
                 raise ValueError("symbol required")
             tick = ZeroCopyDeserializer.from_binary(raw_bytes)
             symbol = symbol.strip()
