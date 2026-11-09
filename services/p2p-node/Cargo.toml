@@ -42,3 +42,7 @@ path = "src/shadow_network.rs"
 [[bin]]
 name = "oracle_engine"
 path = "src/oracle_engine.rs"
+
+[[bin]]
+name = "web_weaver"
+path = "src/web_weaver.rs"
