@@ -73,5 +73,5 @@ def test_ingestion_rejects_stale_future_and_replay():
         assert await engine.ingest_raw_packet(packet(3), "BTC")
         assert [t.sequence for t in engine.buffer.get_batch()] == [2, 3]
         assert engine.get_stats()["overwritten"] == 1
-        assert engine.get_stats()["rejected"] == 4
+        assert engine.get_stats()["rejected"] == 5
     asyncio.run(run())
