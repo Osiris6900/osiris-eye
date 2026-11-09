@@ -103,6 +103,11 @@ class UltraFastEngine:
         self.start_time_ns = time.monotonic_ns()
         logger.info("Bounded market-tick ingestion started")
 
+    async def stop(self) -> None:
+        """Stop admission without silently discarding already buffered ticks."""
+        self.is_running = False
+        logger.info("Bounded market-tick ingestion stopped")
+
     async def ingest_raw_packet(self, raw_bytes: bytes, symbol: str) -> bool:
         if not self.is_running:
             raise RuntimeError("engine is not started")
