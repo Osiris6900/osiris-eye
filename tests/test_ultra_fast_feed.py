@@ -65,6 +65,22 @@ def test_wire_contract_and_invalid_payloads():
             ZeroCopyDeserializer.from_binary(payload)
 
 
+def test_symbol_normalization_prevents_duplicate_sequence_alias():
+    async def run():
+        engine = UltraFastEngine(capacity=2, max_stale_ms=1000)
+        await engine.start()
+        assert await engine.ingest_raw_packet(packet(1), " BTC ")
+        assert not await engine.ingest_raw_packet(packet(1), "BTC")
+        assert [tick.symbol for tick in engine.buffer.get_batch()] == ["BTC"]
+    asyncio.run(run())
+
+
+def test_stale_threshold_requires_integer():
+    for value in (1.5, "100", True):
+        with pytest.raises(ValueError, match="integer"):
+            UltraFastEngine(max_stale_ms=value)
+
+
 def test_stop_blocks_new_admission_but_preserves_queued_ticks():
     async def run():
         engine = UltraFastEngine(capacity=2, max_stale_ms=1000)
