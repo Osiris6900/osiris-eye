@@ -33,6 +33,7 @@ def client(monkeypatch, tmp_path):
     monkeypatch.setenv("OSIRIS_PAPER_LEDGER_DB", str(tmp_path / "paper.sqlite3"))
     monkeypatch.delenv(admin_centre.OUTBOX_PATH_ENV, raising=False)
     monkeypatch.setenv(admin_centre.IDENTITY_DB_ENV, str(tmp_path / "p2p.sqlite3"))
+    monkeypatch.setenv(admin_centre.ALERT_DB_ENV, str(tmp_path / "alerts.sqlite3"))
     admin_centre.reset_admin_state()
     yield TestClient(app)
     admin_centre.reset_admin_state()
@@ -302,15 +303,16 @@ def test_admin_exemption_does_not_weaken_outer_middleware(client, monkeypatch):
     ).status_code == 200
 
 
-def test_alerts_report_process_memory_and_require_authentication(client):
+def test_alerts_report_durable_history_and_require_authentication(client):
     anonymous = client.get("/admin/alerts")
     assert anonymous.status_code == 401
     assert anonymous.json()["detail"] == "admin_authentication_required"
     allowed = client.get("/admin/alerts", headers=_headers("viewer"))
     assert allowed.status_code == 200
     body = allowed.json()
-    assert body["storage"] == "process_memory_not_durable"
-    assert body["durable"] is False
+    assert body["storage"] == "sqlite"
+    assert body["durable"] is True
+    assert body["initialized"] is True
     assert body["active_count"] == len(body["active"])
     assert body["acknowledged_count"] == len(body["acknowledged"])
     assert isinstance(body["active"], list)
@@ -455,3 +457,35 @@ def test_enrolled_registry_is_read_only_and_hides_key_material(client, tmp_path,
     assert database.execute("SELECT COUNT(*) FROM p2p_nodes").fetchone()[0] == before
     assert database.execute("SELECT sql FROM sqlite_master ORDER BY sql").fetchall() == schema
     database.close()
+
+
+def test_alert_history_ack_survives_memory_clear(client):
+    first = client.get("/admin/alerts", headers=_headers("operator")).json()
+    alert_id = first["active"][0]["alert_id"]
+    assert client.post(f"/admin/alerts/{alert_id}/ack", headers=_headers("viewer")).status_code == 403
+    response = client.post(f"/admin/alerts/{alert_id}/ack", headers=_headers("operator"))
+    assert response.status_code == 200
+    admin_centre.ALERTS.clear()
+    after = client.get("/admin/alerts", headers=_headers("viewer")).json()
+    assert any(a["alert_id"] == alert_id for a in after["acknowledged"])
+    assert all(a["alert_id"] != alert_id for a in after["active"])
+
+
+def test_corrupt_alert_history_fails_closed(client, tmp_path):
+    path = tmp_path / "alerts.sqlite3"
+    path.write_bytes(b"foreign-or-corrupt")
+    response = client.get("/admin/alerts", headers=_headers("viewer"))
+    body = response.json()
+    assert body["reason"] == "alert_store_unavailable"
+    assert body["durable"] is False
+    assert body["active"] is None and body["acknowledged"] is None
+    assert body["active_count"] is None and body["acknowledged_count"] is None
+    assert path.read_bytes() == b"foreign-or-corrupt"
+    assert str(path) not in response.text
+
+
+def test_blank_alert_store_path_is_not_configured(client, monkeypatch):
+    monkeypatch.setenv(admin_centre.ALERT_DB_ENV, ":memory:")
+    response = client.get("/admin/alerts", headers=_headers("viewer"))
+    assert response.json()["reason"] == "not_configured"
+    assert response.json()["active"] is None
