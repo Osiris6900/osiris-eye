@@ -24,14 +24,16 @@ jobs:
       - name: Upgrade rusqlite and regenerate lockfile
         working-directory: services/p2p-node
         run: |
-          cargo add rusqlite --features bundled
+          cargo add rusqlite@0.41 --features bundled
+          cargo update -p libsqlite3-sys --precise 0.39.1
           cargo tree -i libsqlite3-sys
-          cargo update
           cargo test --locked
       - name: Verify RustSec advisory
+        working-directory: services/p2p-node
         run: |
           cargo install cargo-audit --locked
-          cargo audit --file services/p2p-node/Cargo.lock
+          cargo tree -i libsqlite3-sys
+          cargo audit --file Cargo.lock
       - name: Commit tested dependency remediation
         run: |
           if ! git diff --quiet -- services/p2p-node/Cargo.toml services/p2p-node/Cargo.lock; then
