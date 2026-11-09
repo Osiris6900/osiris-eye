@@ -12,6 +12,7 @@ from osiris_api.ultra_fast_engine import (
     LockFreeRingBuffer,
     UltraFastEngine,
     ZeroCopyDeserializer,
+    create_engine,
 )
 
 
@@ -26,6 +27,15 @@ def packet(sequence=1, *, timestamp_ns=None, price=123.5, size=2.0):
 def test_flat_config_import():
     assert isinstance(PRODUCTION_CONFIG, UltraFastConfig)
     assert PRODUCTION_CONFIG.FAIL_CLOSED_ON_STALE
+
+
+def test_engine_factory_uses_config_and_rejects_unsafe_stale_setting():
+    config = UltraFastConfig(RING_BUFFER_SIZE=8, MAX_STALE_MS=250)
+    engine = create_engine(config)
+    assert engine.buffer.capacity == 8
+    assert engine.max_stale_ns == 250_000_000
+    with pytest.raises(ValueError, match="stale-feed"):
+        create_engine(UltraFastConfig(FAIL_CLOSED_ON_STALE=False))
 
 
 def test_buffer_wrap_and_overflow():
