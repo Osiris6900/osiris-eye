@@ -378,10 +378,17 @@ export function AdminCentre({ apiBase = '/api' }: { apiBase?: string }) {
 
       {view === 'alerts' && <section className="panel" aria-label="Alerts">
         {renderSection('alerts', <>
-          <p className="muted">Storage: {alerts?.storage === 'process_memory_not_durable' ? 'process memory, not durable' : 'unavailable'}. This view cannot acknowledge alerts.</p>
-          <p className="muted">{alerts?.durable === false
-            ? 'Alerts are lost on restart. They are not a durable audit log.'
-            : 'Alert durability unavailable.'}</p>
+          <p className="muted">Storage: {alerts?.storage === 'sqlite' && alerts?.durable === true
+            ? 'local alert database'
+            : alerts?.storage === 'process_memory_not_durable' && alerts?.durable === false
+              ? 'process memory, not durable' : 'unavailable'}. This view cannot acknowledge alerts.</p>
+          <p className="muted">{alerts?.storage === 'sqlite' && alerts?.durable === true
+            ? (alerts?.initialized === false
+              ? 'No alert has been stored yet. Raised alerts are kept in the local database across restarts.'
+              : 'Raised alerts are kept in the local database across restarts. This is not a compliance archive.')
+            : alerts?.storage === 'process_memory_not_durable' && alerts?.durable === false
+              ? 'Alerts are lost on restart. They are not a durable audit log.'
+              : 'Alert durability unavailable.'}</p>
           <p className="muted">Active count: {countText(alerts?.active_count)} · Acknowledged count: {countText(alerts?.acknowledged_count)}</p>
           {activeAlerts === null && <p className="muted">Active alerts unavailable.</p>}
           {activeAlerts?.map(alert => <div className="setting" key={String(alert.alert_id)}>
