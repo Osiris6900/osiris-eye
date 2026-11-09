@@ -284,6 +284,50 @@ test('backend and configuration errors do not render response secrets', async ()
   expect(screen.queryByText(/vtk-should-never-render-99/)).not.toBeInTheDocument();
 });
 
+test('enrolled registry lists nodes and hides key material', async () => {
+  const trusted = 'ab'.repeat(32);
+  const untrusted = 'cd'.repeat(32);
+  stubFetch(allOk({
+    '/admin/overview': reply(200, {
+      ...OVERVIEW, peer_health: 'enrolled_registry', enrolled_peer_count: 2,
+    }),
+    '/admin/network/status': reply(200, {
+      ...NETWORK,
+      peer_telemetry: 'identity_enrollment_not_live_sessions',
+      peer_health: {
+        status: 'enrolled_registry',
+        peer_count: 2,
+        trusted_count: 1,
+        public_untrusted_count: 1,
+        nodes_truncated: false,
+        nodes: [
+          {
+            node_id: trusted, trust_level: 'trusted',
+            enrolled_at: '2026-11-08T12:00:00+00:00', public_key: 'should-not-render',
+          },
+          {
+            node_id: untrusted, trust_level: 'public_untrusted',
+            enrolled_at: '2026-11-08T12:01:00+00:00',
+          },
+          { node_id: 'not-a-node', trust_level: 'token=supersecretvalue', enrolled_at: 'nope' },
+        ],
+      },
+    }),
+  }));
+  render(<AdminCentre />);
+  connect();
+  expect(await screen.findByText('Enrolled registry')).toBeInTheDocument();
+  expect(screen.getByText('2')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'network' }));
+  expect(await screen.findByText(/not a live session or health probe/)).toBeInTheDocument();
+  expect(screen.getByText(new RegExp(`trusted · ${trusted}`))).toBeInTheDocument();
+  expect(screen.getByText(new RegExp(`public untrusted · ${untrusted}`))).toBeInTheDocument();
+  expect(screen.queryByText(/should-not-render/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/supersecretvalue/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/not-a-node/)).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Revoke' })).not.toBeInTheDocument();
+});
+
 test('uninitialized paper is distinct from an empty position book', async () => {
   stubFetch(allOk({
     '/admin/paper/status': reply(200, { ...PAPER, initialized: false, cash: null, positions: [], recent_fills: [] }),
