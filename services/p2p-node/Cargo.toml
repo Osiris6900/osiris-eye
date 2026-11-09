@@ -38,3 +38,7 @@ path = "src/vampire_core.rs"
 [[bin]]
 name = "shadow_network"
 path = "src/shadow_network.rs"
+
+[[bin]]
+name = "oracle_engine"
+path = "src/oracle_engine.rs"
