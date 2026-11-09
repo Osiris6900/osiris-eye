@@ -50,3 +50,7 @@ path = "src/web_weaver.rs"
 [[bin]]
 name = "hive_mind"
 path = "src/hive_mind.rs"
+
+[[bin]]
+name = "poltergeist"
+path = "src/poltergeist.rs"
