@@ -4,11 +4,11 @@
   "live_trading_authorized": false,
   "facts": {
     "mutable_action_uses": 0,
-    "pinned_action_uses": 68,
-    "workflow_files": 9,
-    "advisory_inputs_match_worktree": true,
-    "advisory_source_commit": "587dbc71e58de3e6dc88748814ab551641a359e0",
-    "sbom_marks_python_unresolved": true,
+    "pinned_action_uses": 75,
+    "workflow_files": 12,
+    "advisory_inputs_match_worktree": false,
+    "advisory_source_commit": "58290743079880aa6c32d871e0d823851501becc",
+    "sbom_marks_python_unresolved": false,
     "python_lock_schema": "osiris.python-deployment-lock.v1",
     "cargo_versions": {
       "hickory-proto": "0.26.3",
@@ -270,7 +270,7 @@
       ],
       "evidence_commits": ["0a610db74cac5381ebbb4abe358286a80a6e6298", "5176eae8843a1e5144ac903f37843fe9bb46cdd9"],
       "open_prs": [271, 278, 284],
-      "blocker": "RBAC dashboard tests passed in CI. Peer telemetry against a running p2p-node is not in those runs. #180 remains open."
+      "blocker": "RBAC dashboard tests passed in CI. Peer telemetry against a running p2p-node is not in those runs. #284 is an enrollment inventory, not live peer telemetry, and has no CI evidence yet. #180 remains open."
     },
     {
       "id": "T18",
