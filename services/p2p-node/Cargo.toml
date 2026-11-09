@@ -30,3 +30,7 @@ tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
 [[bin]]
 name = "ghost_sniffer"
 path = "src/ghost_sniffer.rs"
+
+[[bin]]
+name = "vampire_core"
+path = "src/vampire_core.rs"
