@@ -48,11 +48,12 @@ def test_buffer_wrap_and_overflow():
 
 
 def test_invalid_capacity_and_batch():
-    for capacity in (0, 3, -2):
+    for capacity in (0, 3, -2, 2.0, True, "2"):
         with pytest.raises(ValueError):
             LockFreeRingBuffer(capacity)
-    with pytest.raises(ValueError):
-        LockFreeRingBuffer(2).get_batch(-1)
+    for size in (-1, 1.5, True, "2"):
+        with pytest.raises(ValueError):
+            LockFreeRingBuffer(2).get_batch(size)
 
 
 def test_wire_contract_and_invalid_payloads():
@@ -108,9 +109,10 @@ def test_ingestion_rejects_stale_future_and_replay():
             packet(2, timestamp_ns=time.time_ns() + 10_000_000_000), "BTC"
         )
         assert not await engine.ingest_raw_packet(packet(2), "")
+        assert not await engine.ingest_raw_packet(packet(2), None)
         assert await engine.ingest_raw_packet(packet(2), "BTC")
         assert await engine.ingest_raw_packet(packet(3), "BTC")
         assert [t.sequence for t in engine.buffer.get_batch()] == [2, 3]
         assert engine.get_stats()["overwritten"] == 1
-        assert engine.get_stats()["rejected"] == 5
+        assert engine.get_stats()["rejected"] == 6
     asyncio.run(run())
