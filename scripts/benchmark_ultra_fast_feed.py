@@ -3,6 +3,7 @@
 Usage: PYTHONPATH=services/quant-api/src python scripts/benchmark_ultra_fast_feed.py
 Numbers are host-specific; this is not an exchange/network latency benchmark.
 """
+import argparse
 import asyncio
 import json
 import struct
@@ -12,6 +13,8 @@ from osiris_api.ultra_fast_engine import UltraFastEngine
 
 
 async def main(count: int = 100_000) -> None:
+    if not 1 <= count <= 131_072:
+        raise ValueError("count must be between 1 and 131072 to avoid buffer overflow")
     engine = UltraFastEngine(capacity=131_072, max_stale_ms=60_000)
     await engine.start()
     started = time.perf_counter_ns()
@@ -20,6 +23,9 @@ async def main(count: int = 100_000) -> None:
         if not await engine.ingest_raw_packet(payload, "BENCH"):
             raise RuntimeError(f"tick {sequence} rejected")
     elapsed_ns = time.perf_counter_ns() - started
+    await engine.stop()
+    if engine.rejected or engine.buffer.dropped or engine.buffer.count != count:
+        raise RuntimeError("benchmark lost or rejected ticks")
     print(json.dumps({
         "count": count,
         "elapsed_seconds": elapsed_ns / 1e9,
@@ -32,4 +38,7 @@ async def main(count: int = 100_000) -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--count", type=int, default=100_000)
+    args = parser.parse_args()
+    asyncio.run(main(args.count))
