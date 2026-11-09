@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OSIRIS EYE — Angel Interface</title>
+<style>
+:root{color-scheme:dark;--cyan:#00f7ff;--gold:#ffd700;--bg:#05070c}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(ellipse at 50% 30%,#0a2631,var(--bg) 70%);color:#fff;font:15px 'Courier New',monospace;display:grid;place-items:center;padding:24px}
+.panel{width:min(1100px,100%);min-height:540px;background:#ffffff08;border:1px solid #ffffff22;border-radius:22px;box-shadow:0 0 45px #00f7ff18;padding:28px;display:grid;grid-template-columns:1fr 1fr;gap:26px}
+header{grid-column:1/-1;text-align:center;color:var(--cyan);font-size:clamp(19px,3vw,32px);letter-spacing:.17em;text-shadow:0 0 15px #00f7ff55}
+.status{display:flex;gap:10px;align-items:center;color:#aaa;font-size:13px;margin:15px 0}.dot{width:10px;height:10px;background:#a55;border-radius:50%;display:inline-block}
+.card{background:#0008;padding:22px;border-left:3px solid var(--cyan);margin:15px 0;border-radius:5px}.card h2{font-size:14px;letter-spacing:.08em}.card strong{font-size:clamp(22px,3vw,32px)}.gold{border-color:var(--gold);color:var(--gold)}
+.visual{display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:0}canvas{width:100%;max-width:440px;height:auto}.meta{line-height:2;color:#b5b9c1;font-size:13px}small{color:#8d9ba3}
+a{color:var(--cyan)}@media(max-width:720px){.panel{grid-template-columns:1fr;padding:18px}header{grid-column:1}.visual{min-height:260px}}
+@media(prefers-reduced-motion:reduce){canvas{display:none}}
+</style>
+</head>
+<body>
+<main class="panel">
+<header>OSIRIS EYE · ANGEL INTERFACE</header>
+<section aria-label="Market data">
+<div class="status"><span class="dot" id="dot"></span><span id="connection">Offline — no verified data feed</span></div>
+<div class="card"><h2>BTCUSDT PUBLIC TRADE PRICE</h2><strong id="price">—</strong></div>
+<div class="card gold"><h2>WEAVER LIQUIDITY ANALYSIS</h2><strong id="weaver">Not connected</strong></div>
+<div class="meta">Network nodes: <span id="nodes">Unavailable</span><br>Feed age: <span id="age">—</span><br>Source: <span id="source">Binance public trades (when connected)</span></div>
+<p><small>Trade price is not an executable quote. No artificial “sacred price” or simulated network counts.</small></p>
+</section>
+<section class="visual" aria-label="Market activity visualization">
+<canvas id="neural" width="440" height="280" role="img" aria-label="Decorative market pulse wave"></canvas>
+<p><small>NEURAL LACE · VISUAL PULSE</small></p>
+</section>
+</main>
+<script>
+'use strict';
+const price=document.getElementById('price'), connection=document.getElementById('connection'), dot=document.getElementById('dot'), age=document.getElementById('age');
+let lastTrade=0, intensity=0, ws, retry=1500, reconnectTimer;
+const endpoint='wss://stream.binance.com:9443/ws/btcusdt@trade';
+function connect(){
+  connection.textContent='Connecting to public trade feed…';
+  ws=new WebSocket(endpoint);
+  ws.onopen=()=>{connection.textContent='Connected · public trade feed';dot.style.background='#22c55e';retry=1500};
+  ws.onmessage=({data})=>{
+    try{
+      const t=JSON.parse(data);
+      if(t.e!=='trade'||t.s!=='BTCUSDT')return;
+      const p=Number(t.p),q=Number(t.q);
+      if(!Number.isFinite(p)||p<=0||!Number.isFinite(q)||q<0)return;
+      price.textContent=new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(p);
+      lastTrade=Date.now();intensity=Math.min(1,q/2);
+    }catch{}
+  };
+  ws.onerror=()=>ws.close();
+  ws.onclose=()=>{dot.style.background='#a55';connection.textContent='Disconnected · retrying';clearTimeout(reconnectTimer);reconnectTimer=setTimeout(connect,retry);retry=Math.min(30000,retry*2)};
+}
+connect();
+setInterval(()=>{age.textContent=lastTrade?((Date.now()-lastTrade)/1000).toFixed(1)+'s':'—';if(lastTrade&&Date.now()-lastTrade>10000){dot.style.background='#eab308';connection.textContent='Stale trade feed'}},1000);
+const canvas=document.getElementById('neural'),ctx=canvas.getContext('2d');let phase=0;
+function draw(){
+ ctx.clearRect(0,0,canvas.width,canvas.height);
+ ctx.strokeStyle='#00f7ff';ctx.lineWidth=2;ctx.beginPath();
+ const amplitude=8+intensity*44;
+ for(let x=0;x<canvas.width;x++){const y=canvas.height/2+Math.sin(x*.045+phase)*amplitude*Math.sin(Math.PI*x/canvas.width);x?ctx.lineTo(x,y):ctx.moveTo(x,y)}
+ ctx.stroke();phase+=.04;intensity*=.985;requestAnimationFrame(draw);
+}
+if(!matchMedia('(prefers-reduced-motion: reduce)').matches)draw();
+</script>
+</body></html>
