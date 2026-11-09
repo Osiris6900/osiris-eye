@@ -135,18 +135,120 @@ def test_invalid_batch_size_rejected():
 
 
 def test_standalone_synthetic_benchmark_counts_without_overflow():
-    from osiris_api.ultra_fast_engine import simulate_network_traffic
+    from osiris_api.synthetic_feed_benchmark import simulate_network_traffic
     stats = simulate_network_traffic(1000, buffer_size=128, batch_size=64)
     assert stats["mode"] == "synthetic_local_only"
+    assert stats["live_trading_authorized"] is False
     assert stats["total_ticks"] == 1000
     assert stats["rejected"] == 0
     assert stats["ticks_per_second"] > 0
 
 
 def test_standalone_benchmark_rejects_oversized_batch():
-    from osiris_api.ultra_fast_engine import simulate_network_traffic
+    from osiris_api.synthetic_feed_benchmark import simulate_network_traffic
     try:
         simulate_network_traffic(10, buffer_size=8, batch_size=9)
         assert False, "oversized batch accepted"
     except ValueError:
         pass
+
+
+def test_bool_and_non_integer_capacity_rejected():
+    for capacity in (True, False, 2.0, "8", 0, 3):
+        try:
+            BoundedTickBuffer(capacity)
+            assert False, f"capacity accepted: {capacity!r}"
+        except ValueError:
+            pass
+
+
+def test_symbol_alias_and_bad_types_fail_closed():
+    feed = UltraFastMarketFeed(buffer_size=8)
+    now = 1_800_000_000_000_000_000
+    assert feed.ingest(" BTCUSDT ", 10, 1, now - 1, 1, received_ns=now)
+    assert not feed.ingest("BTCUSDT", 10, 1, now - 1, 1, received_ns=now)
+    assert not feed.ingest("", 10, 1, now - 1, 2, received_ns=now)
+    assert not feed.ingest("ETHUSDT", True, 1, now - 1, 1, received_ns=now)
+    assert not feed.ingest("ETHUSDT", 10, 1, now - 1, True, received_ns=now)
+    assert not feed.ingest("ETHUSDT", "10", 1, now - 1, 1, received_ns=now)
+    assert feed.get_batch()[0].symbol == "BTCUSDT"
+    assert feed.stats()["accepted"] == 1
+
+
+def test_bool_batch_limit_rejected():
+    feed = UltraFastMarketFeed(buffer_size=8)
+    try:
+        feed.get_batch(True)
+        assert False, "boolean batch size accepted"
+    except ValueError:
+        pass
+
+
+def test_stale_rejection_cannot_be_configured_off():
+    from osiris_api.config.ultra_fast_config import UltraFastConfig
+    for kwargs in (
+        {"FAIL_CLOSED_ON_STALE": 1},
+        {"FAIL_CLOSED_ON_STALE": "true"},
+        {"RING_BUFFER_SIZE": True},
+        {"NUM_WORKERS": True},
+        {"MAX_STALE_MS": True},
+        {"STATS_INTERVAL_S": float("nan")},
+    ):
+        try:
+            UltraFastConfig(**kwargs)
+            assert False, f"unsafe configuration accepted: {kwargs}"
+        except ValueError:
+            pass
+
+
+def test_reference_engine_module_was_not_replaced_by_the_benchmark():
+    from osiris_api.ultra_fast_engine import UltraFastEngine, create_engine
+    from osiris_api.ultra_fast_config import UltraFastConfig
+    engine = create_engine(UltraFastConfig(RING_BUFFER_SIZE=8, MAX_STALE_MS=100))
+    assert isinstance(engine, UltraFastEngine)
+    assert not hasattr(engine, "ingest_binary")
+
+
+def test_performance_route_fail_closed_without_claiming_live_trading(monkeypatch):
+    from fastapi.testclient import TestClient
+    from osiris_api.main import app
+
+    monkeypatch.setenv("OSIRIS_ENV", "production")
+    monkeypatch.delenv("OSIRIS_API_TOKEN", raising=False)
+    assert TestClient(app).get("/api/v1/market-data/performance").status_code == 503
+
+    monkeypatch.setenv("OSIRIS_API_TOKEN", "paper-token")
+    assert TestClient(app).get("/api/v1/market-data/performance").status_code == 401
+    allowed = TestClient(app).get(
+        "/api/v1/market-data/performance",
+        headers={"authorization": "Bearer paper-token"},
+    )
+    assert allowed.status_code == 200
+    body = allowed.json()
+    assert body["status"] == "paper_only"
+    assert body["mode"] == "paper_only"
+    assert body["live_trading_authorized"] is False
+
+
+def test_tick_websocket_rejects_missing_token_and_bad_symbol(monkeypatch):
+    from fastapi.testclient import TestClient
+    from starlette.websockets import WebSocketDisconnect
+    from osiris_api.main import app
+
+    monkeypatch.delenv("OSIRIS_API_TOKEN", raising=False)
+    client = TestClient(app)
+    try:
+        with client.websocket_connect("/ws/market-data/ticks/BTCUSDT"):
+            assert False, "unauthenticated websocket accepted"
+    except WebSocketDisconnect as exc:
+        assert exc.code == 1008
+
+    monkeypatch.setenv("OSIRIS_API_TOKEN", "paper-token")
+    try:
+        with client.websocket_connect(
+            "/ws/market-data/ticks/bad symbol",
+            headers={"authorization": "Bearer paper-token"},
+        ):
+            assert False, "invalid symbol accepted"
+    except WebSocketDisconnect as exc:
+        assert exc.code == 1008

@@ -20,8 +20,13 @@ def _feed(app):
 @router.get("/api/v1/market-data/performance")
 async def get_market_data_performance(request: Request):
     adapter = _feed(request.app)
-    return {"status": "operational", "engine": "validated_paper_feed_v1",
-            "mode": "paper_only", "metrics": adapter.feed.stats()}
+    return {
+        "status": "paper_only",
+        "engine": "validated_paper_feed_v1",
+        "mode": "paper_only",
+        "live_trading_authorized": False,
+        "metrics": adapter.feed.stats(),
+    }
 
 
 @router.websocket("/ws/market-data/ticks/{symbol}")

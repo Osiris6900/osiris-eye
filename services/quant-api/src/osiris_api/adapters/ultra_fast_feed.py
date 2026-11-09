@@ -28,7 +28,12 @@ class BoundedTickBuffer:
     """Single-event-loop FIFO; overflow is explicit, never silently overwritten."""
 
     def __init__(self, capacity: int = 65536):
-        if capacity <= 0 or capacity & (capacity - 1):
+        if (
+            isinstance(capacity, bool)
+            or not isinstance(capacity, int)
+            or capacity <= 0
+            or capacity & (capacity - 1)
+        ):
             raise ValueError("capacity must be a positive power of two")
         self.capacity = capacity
         self._ticks: deque[TickData] = deque()
@@ -42,8 +47,8 @@ class BoundedTickBuffer:
         return True
 
     def pop_batch(self, limit: int = 1000) -> list[TickData]:
-        if limit <= 0:
-            raise ValueError("limit must be positive")
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+            raise ValueError("limit must be a positive integer")
         return [self._ticks.popleft() for _ in range(min(limit, len(self._ticks)))]
 
     @property
@@ -64,13 +69,26 @@ class UltraFastMarketFeed:
 
     def ingest(self, symbol: str, price: float, size: float, exchange_ts_ns: int,
                sequence: int, *, received_ns: int | None = None) -> bool:
-        now = time.time_ns() if received_ns is None else received_ns
-        if (not symbol or not math.isfinite(price) or price <= 0
+        try:
+            now = time.time_ns() if received_ns is None else received_ns
+            if not isinstance(symbol, str):
+                raise TypeError("symbol required")
+            symbol = symbol.strip()
+            if (
+                not symbol
+                or isinstance(price, bool) or not isinstance(price, (int, float))
+                or not math.isfinite(price) or price <= 0
+                or isinstance(size, bool) or not isinstance(size, (int, float))
                 or not math.isfinite(size) or size <= 0
+                or isinstance(exchange_ts_ns, bool) or not isinstance(exchange_ts_ns, int)
+                or isinstance(sequence, bool) or not isinstance(sequence, int)
+                or isinstance(now, bool) or not isinstance(now, int)
                 or exchange_ts_ns <= 0 or exchange_ts_ns > now
                 or now - exchange_ts_ns > self.max_age_ns or sequence < 0
-                or (symbol in self.last_sequence
-                    and sequence <= self.last_sequence[symbol])):
+                or (symbol in self.last_sequence and sequence <= self.last_sequence[symbol])
+            ):
+                raise ValueError("tick rejected")
+        except (TypeError, ValueError, OverflowError):
             self.rejected += 1
             return False
         tick = TickData(symbol, price, size, now, exchange_ts_ns, sequence, now)
