@@ -1,12 +1,15 @@
+#[path = "../src/e2ee.rs"]
+mod e2ee;
 #[path = "../src/peer_auth.rs"]
 mod peer_auth;
 #[path = "../src/revocation.rs"]
 mod revocation;
 
 use ed25519_dalek::{Signer, SigningKey};
-use libp2p::PeerId;
-use peer_auth::is_peer_allowed;
-use revocation::{RevocationRegistry, SignedRevocationRecord};
+use e2ee::{create_key_binding, decrypt_for_recipient, encrypt_for_recipient, verify_key_binding, TransportKeyPair};
+use libp2p::{identity, PeerId};
+use peer_auth::{deny_peer, is_peer_allowed, run_if_peer_allowed};
+use revocation::{apply_synced_revocation, RevocationRegistry, RevocationSyncMessage, SignedRevocationRecord, SyncedRevocation};
 use serde::Serialize;
 use std::{collections::HashSet, time::{SystemTime, UNIX_EPOCH}};
 
@@ -110,5 +113,63 @@ fn forged_revocation_cannot_enter_runtime_deny_policy() {
     assert!(registry.revoked_peer_ids().unwrap().is_empty());
     assert!(is_peer_allowed(&peer, &trusted, &revoked));
 
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn synced_revocation_blocks_decrypt_of_a_still_valid_sender_key() {
+    let sender = identity::Keypair::generate_ed25519();
+    let sender_transport = TransportKeyPair::generate();
+    let recipient = identity::Keypair::generate_ed25519();
+    let recipient_transport = TransportKeyPair::generate();
+    let sender_peer = PeerId::from(sender.public());
+    let recipient_peer = PeerId::from(recipient.public());
+    let now = 1_700_000_000u64;
+    let binding_record = create_key_binding(
+        &sender, &sender_transport.public_key, 1, now - 5, now + 300,
+    ).unwrap();
+    let binding = verify_key_binding(&binding_record, now, 1).unwrap();
+    let envelope = encrypt_for_recipient(
+        &sender, 1, &recipient_peer.to_string(), &recipient_transport.public_key,
+        1, b"revoked-sender-must-not-surface", now, now + 120,
+    ).unwrap();
+    let trusted = Some(HashSet::from([sender_peer]));
+    let mut revoked = None;
+    let mut decrypts = 0u32;
+    let recipient_secret = x25519_dalek::StaticSecret::from(recipient_transport.private_bytes());
+    let admitted = run_if_peer_allowed(&sender_peer, &trusted, &revoked, || {
+        decrypts += 1;
+        decrypt_for_recipient(
+            &envelope, &binding, &recipient_peer, 1, &recipient_secret, now,
+        ).unwrap()
+    }).unwrap();
+    assert_eq!(admitted, b"revoked-sender-must-not-surface");
+    assert_eq!(decrypts, 1);
+
+    let authority = SigningKey::from_bytes(&[91u8; 32]);
+    let path = temp_registry_path("revocation-blocks-decrypt");
+    let mut registry = RevocationRegistry::open(
+        path.clone(),
+        encode_hex(authority.verifying_key().as_bytes()),
+    ).unwrap();
+    let record = signed_revocation(&authority, sender_peer, 1);
+    let bytes = serde_json::to_vec(&RevocationSyncMessage::Record(record)).unwrap();
+    let RevocationSyncMessage::Record(decoded) = serde_json::from_slice(&bytes).unwrap() else {
+        panic!("revocation record did not round-trip");
+    };
+    assert_eq!(
+        apply_synced_revocation(&mut registry, decoded, true).unwrap(),
+        SyncedRevocation::Applied(sender_peer),
+    );
+    deny_peer(&mut revoked, sender_peer);
+    let mut entered = false;
+    assert!(run_if_peer_allowed(&sender_peer, &trusted, &revoked, || {
+        entered = true;
+        decrypt_for_recipient(
+            &envelope, &binding, &recipient_peer, 1, &recipient_secret, now,
+        ).unwrap()
+    }).is_err());
+    assert!(!entered);
+    assert!(!is_peer_allowed(&sender_peer, &trusted, &revoked));
     let _ = std::fs::remove_file(path);
 }

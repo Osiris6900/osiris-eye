@@ -1,5 +1,7 @@
 # Cross-workstream integration acceptance matrix
 
+> Release-gate status lives in [Integrated delivery gates](../INTEGRATED_DELIVERY_GATES_2026_11_08.md) and `docs/release-gate-status.json`. This file is a scenario list, not the inventory.
+
 Tracking issue: #182. This document is a test plan, **not** evidence that the gates have passed.
 
 | Gate | Scope | Reproducible acceptance evidence | Failure condition |

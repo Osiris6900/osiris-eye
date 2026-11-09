@@ -8,7 +8,7 @@
     "sha256": "a433be3be7d659874116c1c9ba877ad05d80d9fb7b5afffa4ab80d8236f3017d"
   },
   "metadata": {
-    "queried_at": "2026-11-08T11:17:11Z",
+    "queried_at": "2026-11-08T16:20:14Z",
     "service": "PyPI JSON API",
     "url_template": "https://pypi.org/pypi/{name}/{version}/json"
   },
@@ -48,7 +48,7 @@
       "license_legacy": null,
       "name": "cffi",
       "normalized_name": "cffi",
-      "resolved_expression": null,
+      "resolved_expression": "MIT-0",
       "version": "2.1.1"
     },
     {
@@ -113,7 +113,7 @@
       "license_legacy": null,
       "name": "numpy",
       "normalized_name": "numpy",
-      "resolved_expression": null,
+      "resolved_expression": "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0",
       "version": "2.4.6"
     },
     {
@@ -243,7 +243,7 @@
   ],
   "schema": "osiris.python-license-provenance.v1",
   "source": {
-    "commit": "587dbc71e58de3e6dc88748814ab551641a359e0",
+    "commit": "58290743079880aa6c32d871e0d823851501becc",
     "repository": "Osiris6900/osiris-eye"
   }
 }

@@ -43,6 +43,41 @@ def percentile(values, fraction):
     return ordered[max(0, math.ceil(len(ordered) * fraction) - 1)] if ordered else 0.0
 
 
+# Longer prefix first so `peer_not_allowed_rejected_suppressed` is not
+# mistaken for the single-event line. The space after the prefix is required.
+DIAGNOSTIC_PREFIXES = (
+    'peer_not_allowed_rejected_suppressed',
+    'peer_not_allowed_rejected',
+    'encrypted_observation_published', 'encrypted_observation_deferred',
+    'publish_rejected', 'publish_deferred', 'key_binding_rejected',
+    'encrypted_message_rejected', 'key_binding_accepted',
+    'key_binding_refreshed', 'key_binding_refresh_deferred',
+    'outgoing_connection_error', 'incoming_connection_error',
+    'bootstrap_reconnect_error', 'bootstrap_reconnect_attempt',
+)
+_DIAGNOSTIC_REASON = re.compile(r'\breason=([a-z_]{1,64})(?:\s|$)')
+_DIAGNOSTIC_COUNT = re.compile(r'\bcount=(\d+)(?:\s|$)')
+
+
+def classify_node_diagnostic(line):
+    """Return `(counter_key, amount)` for one node stdout line.
+
+    Suppressed aggregates add their `count`. A missing or zero count fails
+    closed. Lines that are not diagnostics return None.
+    """
+    prefix = next((item for item in DIAGNOSTIC_PREFIXES if line.startswith(item + ' ')), None)
+    if prefix is None:
+        return None
+    reason = _DIAGNOSTIC_REASON.search(line)
+    amount = 1
+    if prefix == 'peer_not_allowed_rejected_suppressed':
+        count = _DIAGNOSTIC_COUNT.search(line)
+        if count is None or int(count[1]) < 1:
+            raise ValueError('invalid_suppressed_rejection_count')
+        amount = int(count[1])
+    return prefix + (':' + reason[1] if reason else ''), amount
+
+
 def measurement_class(metadata, local_agents):
     fingerprints = [m.get('host_fingerprint') for m in metadata.values()]
     separate = (len(fingerprints) >= 2 and
@@ -109,24 +144,15 @@ class Agent:
 
     def read_node(self, index, proc):
         for line in proc.stdout:
-            for prefix in ('encrypted_observation_published', 'encrypted_observation_deferred',
-                           'publish_rejected', 'publish_deferred', 'key_binding_rejected',
-                           'encrypted_message_rejected', 'key_binding_accepted',
-                           'key_binding_refreshed', 'key_binding_refresh_deferred',
-                           'outgoing_connection_error', 'incoming_connection_error',
-                           'bootstrap_reconnect_error', 'bootstrap_reconnect_attempt',
-                           'peer_not_allowed_rejected', 'peer_not_allowed_rejected_suppressed'):
-                if line.startswith(prefix + ' '):
-                    reason = re.search(r'\breason=([a-z_]{1,64})(?:\s|$)', line)
-                    amount = 1
-                    if prefix == 'peer_not_allowed_rejected_suppressed':
-                        count = re.search(r'\bcount=(\d+)(?:\s|$)', line)
-                        if count is None or int(count[1]) < 1:
-                            self.emit('fatal', reason='invalid_suppressed_rejection_count', node=index)
-                            break
-                        amount = int(count[1])
-                    with self.lock:
-                        self.diagnostics[prefix + (':' + reason[1] if reason else '')] += amount
+            try:
+                classified = classify_node_diagnostic(line)
+            except ValueError:
+                self.emit('fatal', reason='invalid_suppressed_rejection_count', node=index)
+                classified = None
+            if classified is not None:
+                key, amount = classified
+                with self.lock:
+                    self.diagnostics[key] += amount
             if len(line) > 32768:
                 self.emit('fatal', reason='oversized_node_output', node=index)
                 break

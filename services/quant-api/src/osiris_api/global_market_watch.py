@@ -32,6 +32,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from .data_store import ResearchStore
+from .market_connectivity import classify_transport_failure
 from .p2p_ingestion import IngestionRejection, ingest_p2p_observation
 from .watch_coverage import coverage_report
 
@@ -116,7 +117,7 @@ def _http_get(url: str, timeout: float) -> bytes:
         with urlopen(request, timeout=timeout) as response:
             body = response.read(MAX_RESPONSE_BYTES + 1)
     except (HTTPError, URLError, TimeoutError, OSError) as exc:
-        raise RuntimeError("watch_source_unavailable") from exc
+        raise classify_transport_failure(exc) from exc
     if len(body) > MAX_RESPONSE_BYTES:
         raise ValueError("watch_response_too_large")
     return body

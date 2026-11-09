@@ -1,0 +1,22 @@
+# side,qty,price,position,gross,daily_pnl,max_order,max_position,max_loss,max_gross,kill,fresh,risk_up,expected
+buy,1,100,0,0,0,1000,2000,100,5000,0,1,1,approved
+buy,1,100,100,100,0,1000,200,100,5000,0,1,1,approved
+buy,1,100,0,4900,0,1000,9000,100,5000,0,1,1,approved
+buy,1,100,101,101,0,1000,200,100,5000,0,1,1,position_limit
+buy,2,100,0,4900,0,1000,9000,100,5000,0,1,1,exposure_budget
+buy,20,100,0,0,0,1000,9000,100,9000,0,1,1,order_limit
+buy,1,100,0,0,-100,1000,2000,100,5000,0,1,1,daily_loss_limit
+buy,1,100,0,0,-99.99,1000,2000,100,5000,0,1,1,approved
+buy,1,100,0,0,0,1000,2000,100,5000,1,1,1,kill_switch_active
+buy,1,100,0,0,0,1000,2000,100,5000,0,0,1,stale_market_data
+buy,1,100,0,0,0,1000,2000,100,5000,0,1,0,risk_service_unavailable
+buy,1,100,0,0,0,1000,2000,100,5000,1,0,0,risk_service_unavailable
+buy,nan,100,0,0,0,1000,2000,100,5000,1,1,1,kill_switch_active
+buy,nan,100,0,0,0,1000,2000,100,5000,0,1,1,non_finite_input
+buy,0,100,0,0,0,1000,2000,100,5000,0,1,1,invalid_order
+buy,1,100,0,0,0,1000,2000,100,0,0,1,1,invalid_order
+buy,1,100,-1,0,0,1000,2000,100,5000,0,1,1,invalid_order
+sell,1,100,100,100,-100,1000,2000,50,5000,0,1,1,approved
+sell,1,100,100,100,0,1000,2000,100,5000,1,1,1,kill_switch_active
+sell,2,100,100,100,0,1000,2000,100,5000,0,1,1,invalid_order
+sell,20,100,5000,5000,0,1000,9000,100,9000,0,1,1,order_limit

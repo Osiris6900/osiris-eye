@@ -125,6 +125,12 @@ def main():
                 20, "initial bootstrap connection",
             )
             print("INITIAL_BOOTSTRAP_CONNECTION=PASS", flush=True)
+            # Count before the outage. The replacement process can dial the
+            # client from its peer cache as soon as it listens, which may be
+            # before this test finishes observing listener_ready.
+            connected_before_outage = sum(
+                value == f"peer_connected={bootstrap_peer_id}" for value in client.history
+            )
 
             bootstrap.stop()
             client.wait_for(
@@ -138,12 +144,9 @@ def main():
             if restarted_addr.rsplit("/p2p/", 1)[-1] != bootstrap_peer_id:
                 raise AssertionError("bootstrap Peer ID changed after restart with persisted identity")
 
-            connected_events_before_restart = sum(
-                value == f"peer_connected={bootstrap_peer_id}" for value in client.history
-            )
             client.wait_for_count(
                 lambda value: value == f"peer_connected={bootstrap_peer_id}",
-                connected_events_before_restart + 1,
+                connected_before_outage + 1,
                 45,
                 "automatic reconnection to restarted bootstrap",
             )

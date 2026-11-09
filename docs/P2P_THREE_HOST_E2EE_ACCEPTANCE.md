@@ -74,10 +74,20 @@ authorized by this test.
 ## Current evidence and completion gate
 
 The baseline local three-process E2EE test passed recipient delivery and
-non-recipient rejection. The three-host harness and workflow exist, but no
-passing three-host run has been established. The hardening branch repairs
-workflow syntax, host coordination and SSH host-key pinning; those changes still
-require execution on separate hosts with the configured test overlay.
+non-recipient rejection. That is same-host process evidence.
+
+Separate-runner three-host successes exist only for older commits, and neither
+retained node binary SHA-256:
+
+- [run 42424833409](https://github.com/Osiris6900/osiris-eye/actions/runs/42424833409) at `154a65111d92cbd344ad2cc1b49a80ed8f53cd28`
+- [run 42430583187](https://github.com/Osiris6900/osiris-eye/actions/runs/42430583187) at `bd56475fc3b171982eba17a8cc6ef8b806b3934c`
+
+`main` at `2036888bbada42213a221526914b09d50fc1f1df` has no successful
+three-host recipient run. The node admission path changed after `bd56475`.
+The harness now writes binary hashes and a measurement class, and the workflow
+uploads `three-e2ee-evidence-<run>-<attempt>`. That file does not exist for the
+historical runs. A new dispatch on the release commit is still required. No
+independent cryptographic audit is claimed or complete.
 
 Before marking this gate complete, retain the evidence listed above and verify
 that all three identities are distinct, every node remains connected during the

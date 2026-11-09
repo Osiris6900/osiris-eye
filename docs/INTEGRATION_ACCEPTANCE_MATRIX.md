@@ -1,5 +1,7 @@
 # End-to-end integration acceptance matrix
 
+> Release-gate status lives in [Integrated delivery gates](INTEGRATED_DELIVERY_GATES_2026_11_08.md) and `docs/release-gate-status.json`. This file is a scenario list, not the inventory.
+
 **Status:** planned acceptance tests, not passing evidence. Applies to the exact final release candidate. Related issues: #182, #207, #176–#181. Live execution remains disabled.
 
 | Boundary | Positive case | Mandatory negative/fault case | Retained evidence |

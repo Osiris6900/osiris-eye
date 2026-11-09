@@ -11,6 +11,7 @@ the secrets-hygiene scan before it leaves the process.
 from __future__ import annotations
 
 import os
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -62,19 +63,36 @@ def _outbox_counts() -> dict[str, Any]:
         return {"configured": False}
     if not Path(path).exists():
         return {"configured": True, "available": False}
-    from .observation_outbox import ObservationOutbox
+    try:
+        from .observation_outbox import ObservationOutbox
 
-    outbox = ObservationOutbox(path)
+        summary = ObservationOutbox(path).message_status()
+    except (OSError, sqlite3.Error, ValueError):
+        return {"configured": True, "available": False}
     return {
         "configured": True,
         "available": True,
-        "pending": outbox.pending_count(),
-        "rejected": outbox.rejected_count(),
+        "delivered_meaning": "local_node_process_not_remote_receipt",
+        **summary,
     }
 
 
+def _identity_registry() -> dict[str, Any]:
+    """Read enrolled nodes when a registry file already exists.
+
+    Never creates the database. An unset path uses the same default as
+    ``P2PIdentityRegistry``.
+    """
+    return admin_centre.read_enrolled_identity_registry(
+        admin_centre.resolve_identity_db_path()
+    )
+
+
 def _snapshots() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
-    network = admin_centre.network_status(outbox_counts=_outbox_counts())
+    network = admin_centre.network_status(
+        outbox_counts=_outbox_counts(),
+        identity_registry=_identity_registry(),
+    )
     feeds = admin_centre.feeds_status()
     paper = admin_centre.paper_status()
     risk = admin_centre.risk_status(feeds, network, paper)
@@ -102,6 +120,26 @@ def overview(request: Request) -> dict[str, Any]:
         "paper_initialized": paper["initialized"],
         "active_alert_count": len(admin_centre.ALERTS.active()),
         "risk_flag_count": risk["flag_count"],
+        "peer_health": (
+            network["peer_health"]["status"]
+            if network.get("peer_health", {}).get("status") in {
+                "unavailable", "enrolled_registry",
+            }
+            else "unavailable"
+        ),
+        "enrolled_peer_count": (
+            network["peer_health"]["peer_count"]
+            if network.get("peer_health", {}).get("status") == "enrolled_registry"
+            and type(network["peer_health"].get("peer_count")) is int
+            else None
+        ),
+        "outbox_pending": (
+            network["outbox"]["pending"]
+            if isinstance(network.get("outbox"), dict)
+            and network["outbox"].get("available") is True
+            and isinstance(network["outbox"].get("pending"), int)
+            else None
+        ),
         "live_trading_authorized": False,
     }
     return _respond(payload, auth, role, "read_health")
@@ -110,7 +148,10 @@ def overview(request: Request) -> dict[str, Any]:
 @router.get("/network/status")
 def network_status(request: Request) -> dict[str, Any]:
     role, auth = _authorize(request, "read_health")
-    payload = admin_centre.network_status(outbox_counts=_outbox_counts())
+    payload = admin_centre.network_status(
+        outbox_counts=_outbox_counts(),
+        identity_registry=_identity_registry(),
+    )
     return _respond(payload, auth, role, "read_health")
 
 
@@ -138,13 +179,12 @@ def risk_status(request: Request) -> dict[str, Any]:
 @router.get("/alerts")
 def alerts(request: Request) -> dict[str, Any]:
     role, auth = _authorize(request, "read_health")
-    _snapshots()  # refresh alert registry from current risk flags
+    network, _, _, risk = _snapshots()
+    recorded = admin_centre.sync_durable_alerts(risk)
     payload = {
         "schema": "osiris.admin_alert_list.v1",
-        "active": admin_centre.ALERTS.active(),
-        "acknowledged": [
-            a for a in admin_centre.ALERTS.all() if a["status"] == "acknowledged"
-        ],
+        "generated_at": network["generated_at"],
+        **recorded,
     }
     return _respond(payload, auth, role, "read_health")
 
@@ -152,7 +192,11 @@ def alerts(request: Request) -> dict[str, Any]:
 @router.post("/alerts/{alert_id}/ack")
 def ack_alert(request: Request, alert_id: str) -> dict[str, Any]:
     role, auth = _authorize(request, "ack_alert")
-    alert = admin_centre.ALERTS.ack(alert_id, role)
+    try:
+        alert = admin_centre.acknowledge_durable_alert(alert_id, role)
+    except admin_centre.AlertStoreError:
+        admin_centre.AUDIT_LOG.record(role, "ack_alert", "deny", "alert_store_unavailable")
+        raise HTTPException(status_code=503, detail="alert_store_unavailable")
     if alert is None:
         admin_centre.AUDIT_LOG.record(role, "ack_alert", "deny", "alert_not_found")
         raise HTTPException(status_code=404, detail="alert_not_found")

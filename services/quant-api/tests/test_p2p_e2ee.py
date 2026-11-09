@@ -39,6 +39,18 @@ def test_envelope_round_trip_only_recipient_can_decrypt():
     assert decrypt_from_peer(envelope, **args) == b"private payload"
 
 
+def _resign(envelope, private_key_b64):
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from osiris_api.p2p_e2ee import _b64d, _b64e, _canonical
+
+    signed = {key: value for key, value in envelope.items() if key != "signature"}
+    key = Ed25519PrivateKey.from_private_bytes(_b64d(private_key_b64, max_length=128))
+    resigned = dict(envelope)
+    resigned["signature"] = _b64e(key.sign(_canonical(signed)))
+    return resigned
+
+
 def test_rejects_wrong_sender_identity():
     _, _, _, envelope, args = make_pair()
     args["expected_sender_node_id"] = "0" * 64
@@ -53,6 +65,52 @@ def test_rejects_tampered_ciphertext_signature():
     tampered["ciphertext"] = first_character + tampered["ciphertext"][1:]
     with pytest.raises(ValueError, match="sender_signature_invalid"):
         decrypt_from_peer(tampered, **args)
+
+
+def test_impersonated_signing_key_and_unbound_node_id_fail_closed():
+    sender, _, _, envelope, args = make_pair()
+    attacker = generate_node_identity()
+    impersonated = copy.deepcopy(envelope)
+    impersonated["sender_node_id"] = attacker["node_id"]
+    impersonated["sender_signing_public_key"] = attacker["public_key"]
+    impersonated = _resign(impersonated, attacker["private_key"])
+    with pytest.raises(ValueError, match="peer_identity_mismatch"):
+        decrypt_from_peer(impersonated, **args)
+
+    unbound = copy.deepcopy(envelope)
+    fake_node_id = "ab" * 32
+    unbound["sender_node_id"] = fake_node_id
+    unbound["sender_signing_public_key"] = attacker["public_key"]
+    unbound = _resign(unbound, attacker["private_key"])
+    unbound_args = dict(args)
+    unbound_args["expected_sender_node_id"] = fake_node_id
+    unbound_args["trusted_sender_signing_public_key"] = attacker["public_key"]
+    with pytest.raises(ValueError, match="sender_node_identity_mismatch"):
+        decrypt_from_peer(unbound, **unbound_args)
+    assert decrypt_from_peer(envelope, **args) == b"private payload"
+
+
+def test_stale_nonce_fails_authentication_and_duplicate_is_rejected():
+    sender, _, transport, envelope, args = make_pair()
+    other = encrypt_for_peer(
+        b"other payload",
+        sender_node_id=sender["node_id"],
+        sender_signing_private_key=sender["private_key"],
+        sender_signing_public_key=sender["public_key"],
+        recipient_node_id=args["recipient_node_id"],
+        recipient_transport_public_key=transport["public_key"],
+    )
+    stale = copy.deepcopy(envelope)
+    if stale["nonce"] == other["nonce"]:
+        stale["nonce"] = "AQEBAQEBAQEBAQEBAQEB"
+    else:
+        stale["nonce"] = other["nonce"]
+    stale = _resign(stale, sender["private_key"])
+    with pytest.raises(ValueError, match="message_authentication_failed"):
+        decrypt_from_peer(stale, **args)
+    assert decrypt_from_peer(envelope, **args) == b"private payload"
+    with pytest.raises(ValueError, match="replayed_message"):
+        decrypt_from_peer(envelope, **args)
 
 
 def test_rejects_replayed_message():

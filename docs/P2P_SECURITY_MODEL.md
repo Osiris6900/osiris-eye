@@ -14,12 +14,41 @@ including local recipient E2EE, non-recipient rejection, core relay E2EE,
 freshness, revocation/disconnect and signed receipt checks. At `974de9ce`,
 [Tailscale cross-host observation delivery](https://github.com/Osiris6900/osiris-eye/actions/runs/42421052643)
 also passed; that workflow does not enable recipient E2EE. Subsequent changes
-require their own test results. Two-host and three-host recipient E2EE harnesses
-and workflows passed on separate GitHub runners at `154a651`; final-release
-candidate evidence, including binary hashes, remains required. See
+require their own test results. See
 [release gates](P2P_RELEASE_GATES.md) for evidence boundaries. No
 independent cryptographic audit, public-fleet uptime or production certification
 is claimed.
+
+## Recipient E2EE evidence boundary
+
+Historical recipient-only runs, all older than current `main`
+`2036888bbada42213a221526914b09d50fc1f1df`:
+
+| Run | Commit | What it is |
+|---|---|---|
+| [42424830531](https://github.com/Osiris6900/osiris-eye/actions/runs/42424830531) | `154a65111d92cbd344ad2cc1b49a80ed8f53cd28` | Two-host recipient E2EE passed on separate GitHub runners. Payload digest is in [P2P_REMOTE_ACCEPTANCE_2026_11_07.json](P2P_REMOTE_ACCEPTANCE_2026_11_07.json). Node binary SHA-256 was not retained. |
+| [42424833409](https://github.com/Osiris6900/osiris-eye/actions/runs/42424833409) | `154a65111d92cbd344ad2cc1b49a80ed8f53cd28` | Three-host recipient isolation passed. Payload digest and PeerIds are in the same summary. Node binary SHA-256 was not retained. |
+| [42430583187](https://github.com/Osiris6900/osiris-eye/actions/runs/42430583187) | `bd56475fc3b171982eba17a8cc6ef8b806b3934c` | Three-host recipient isolation passed again on `fix/network-release-validation`. Node binary SHA-256 was not retained. |
+
+`services/p2p-node/src/main.rs` changed after `bd56475`. Those runs are not
+evidence for `2036888`. No successful two-host or three-host recipient-only
+workflow run is recorded on `2036888`.
+
+[Run 42663066950](https://github.com/Osiris6900/osiris-eye/actions/runs/42663066950)
+succeeded on `main` at `37f5d847b930eebeb1959e9b63de7cfa461999df` with binary
+SHA-256 `b2b7dead79781cf2f8986efb10b2c9bf982888f81ddc30561c8e83f2c03080e8` on
+four hosts. That dispatch set the soak input. It is encrypted multi-host soak
+evidence for that commit, not the recipient-only E2EE harness, and not a hash
+of the `2036888` binary. `Cargo.toml` for the node gained dependencies after
+`37f5d847`.
+
+The SSH harnesses now write `osiris.p2p.recipient-e2ee-acceptance.v1` with each
+node binary SHA-256 and boot-id fingerprint. `local_or_same_host` is not
+independent-host evidence. `distinct_boot_id_hosts` only means those
+fingerprints differed. The workflows upload that JSON for 14 days and print the
+hashes in the log. A future dispatch still has to pass before `2036888` or any
+later commit can cite it. This repository has no independent cryptographic
+audit.
 
 ## Implemented controls
 
@@ -104,8 +133,12 @@ threshold authority rotation. See [revocation protocol](GLOBAL_REVOCATION_PROTOC
 
 ## Remaining release gates
 
-- Retain passing two-host and three-host recipient-only E2EE evidence for the
-  exact release commit, with public identifiers and sanitized logs.
+- Dispatch the two-host and three-host recipient workflows on the release
+  commit and retain the new evidence file (binary SHA-256, boot-id class,
+  payload digest, workflow URL). Historical runs above do not cover
+  `2036888`.
+- Commission an independent cryptographic audit. Tests and maintainer runs do
+  not complete that gate.
 - Verify relay delivery across separate networks with direct dialing blocked;
   test reservation expiry, reconnect, quotas and rejection paths.
 - Verify key rotation/revocation recovery after restart, partitions and offline

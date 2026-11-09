@@ -101,8 +101,28 @@ above can `ack`; acknowledgements record role and timestamp.
 
 ## Honesty boundaries
 
-- `peer_telemetry: "unavailable_in_quant_api_process"` — the quant API has no
-  live P2P peer table; nothing is fabricated.
+- Peer health reads the local identity registry (`OSIRIS_P2P_DB_PATH`, otherwise
+  `./data/osiris-p2p.sqlite3`) only when that file already exists. A missing file
+  stays `peer_health.status: unavailable` with `peer_count: null` and is not created.
+  When the `p2p_nodes` table can be read, status is `enrolled_registry`: counts and
+  node ids only (no public keys, no filesystem path). `liveness` is `not_observed`.
+  `last_seen_at` is shown as the last enrollment or re-enrollment, not a live session.
+  There is still no transport peer table. `peer_telemetry` stays
+  `unavailable_in_quant_api_process` until that registry read succeeds.
+- Outbox message status, when a database file already exists, reports `pending`,
+  `rejected` and `delivered` counts. `delivered` means local node handoff, not a
+  remote receipt. Rejection reasons that are not short codes are returned as
+  `unclassified` so raw text cannot leak. A missing outbox stays `configured: false`
+  and does not invent zeros.
+- Paper status adds `recent_fills` (symbol, side, quantity, price, fee, P&L,
+  time; idempotency keys omitted), `cost_basis_gross` from ledger positions, and
+  `market_value` only when every position has a mark. `open_orders` is `null`
+  with reason `not_stored`.
+- Alert list adds `durable: false` and `storage: process_memory_not_durable`.
+  Counts match the arrays returned. The dashboard prints that limitation only
+  for this known storage value and does not render arbitrary storage text.
+- The React dashboard is read-only: it does not call kill-switch, feed revoke,
+  or alert ack. Those POST routes remain server-side and RBAC-gated.
 - Unrealized P&L is `null` without external marks (`marks_available: false`).
 - Paper data comes from the durable SQLite ledger (`synthetic-paper-only`).
 - Audit and alerts are bounded in-memory evidence, not a compliance store.

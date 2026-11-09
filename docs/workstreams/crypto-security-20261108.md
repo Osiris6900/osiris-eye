@@ -12,6 +12,14 @@ cargo test --manifest-path services/p2p-node/Cargo.toml --all-targets
 
 Reject wrong recipient, altered ciphertext, replay, stale/revoked keys and forged receipt; independently review crypto lifecycle and dependency advisories.
 
+## Evidence boundary
+
+Unit and process tests prove fail-closed handling of the cases they execute.
+They do not prove a separate-host run and they are not an independent
+cryptographic audit. Multi-host recipient evidence for current `main` is
+tracked in [P2P_SECURITY_MODEL.md](../P2P_SECURITY_MODEL.md) and
+[ISSUE-177.md](ISSUE-177.md).
+
 ## Evidence contract
 
 - Record exact commit SHA, runner/host identity, UTC timestamp, test command, exit status and sanitized logs.

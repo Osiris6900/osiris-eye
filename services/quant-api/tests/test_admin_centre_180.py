@@ -198,6 +198,77 @@ def test_suspend_unknown_adapter_fails_closed():
         authorized_feeds.suspend_adapter("unknown-adapter")
 
 
+def test_missing_identity_registry_is_not_created(tmp_path):
+    path = tmp_path / "missing" / "nodes.sqlite3"
+    health = admin_centre.read_enrolled_identity_registry(str(path))
+    assert health["status"] == "unavailable"
+    assert health["reason"] == "registry_file_absent"
+    assert health["peer_count"] is None
+    assert health["nodes"] is None
+    assert not path.exists()
+    assert not path.parent.exists()
+
+
+def test_empty_identity_registry_is_not_a_live_peer_table(tmp_path):
+    from osiris_api.p2p_identity import P2PIdentityRegistry
+
+    path = tmp_path / "nodes.sqlite3"
+    P2PIdentityRegistry(str(path))
+    health = admin_centre.read_enrolled_identity_registry(str(path))
+    assert health["status"] == "enrolled_registry"
+    assert health["peer_count"] == 0
+    assert health["nodes"] == []
+    assert health["liveness"] == "not_observed"
+    assert health["nodes_truncated"] is False
+
+
+def test_identity_registry_rejects_unreadable_and_blank_paths(tmp_path):
+    blank = admin_centre.read_enrolled_identity_registry("  ")
+    memory = admin_centre.read_enrolled_identity_registry(":memory:")
+    assert blank["reason"] == "not_configured"
+    assert memory["reason"] == "not_configured"
+    corrupt = tmp_path / "corrupt.sqlite3"
+    corrupt.write_bytes(b"not a database")
+    before = corrupt.read_bytes()
+    health = admin_centre.read_enrolled_identity_registry(str(corrupt))
+    assert health["status"] == "unavailable"
+    assert health["reason"] == "registry_unreadable"
+    assert corrupt.read_bytes() == before
+    assert admin_centre.resolve_identity_db_path({}) == admin_centre.DEFAULT_IDENTITY_DB_PATH
+    assert admin_centre.resolve_identity_db_path(
+        {admin_centre.IDENTITY_DB_ENV: ""}
+    ) == ""
+
+
+def test_identity_registry_truncates_the_node_list(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "nodes.sqlite3"
+    database = sqlite3.connect(path)
+    database.execute(
+        "CREATE TABLE p2p_nodes (node_id TEXT PRIMARY KEY, public_key TEXT NOT NULL, "
+        "trust_level TEXT NOT NULL, enrolled_at REAL NOT NULL, last_seen_at REAL NOT NULL)"
+    )
+    database.executemany(
+        "INSERT INTO p2p_nodes VALUES (?, ?, ?, ?, ?)",
+        [
+            (f"{index:064x}", f"key-{index}", "trusted", 1_700_000_000 + index, 1_700_000_100)
+            for index in range(admin_centre.PEER_NODE_LIST_LIMIT + 1)
+        ],
+    )
+    database.commit()
+    database.close()
+    health = admin_centre.read_enrolled_identity_registry(str(path))
+    assert health["peer_count"] == admin_centre.PEER_NODE_LIST_LIMIT + 1
+    assert health["trusted_count"] == health["peer_count"]
+    assert len(health["nodes"]) == admin_centre.PEER_NODE_LIST_LIMIT
+    assert health["nodes_truncated"] is True
+    assert "key-0" not in str(health)
+    network = admin_centre.network_status(identity_registry=health, now=NOW)
+    assert network["live_trading_authorized"] is False
+    assert network["peer_telemetry"] == "identity_enrollment_not_live_sessions"
+
+
 def test_network_and_risk_status_flag_disabled_ingestion(monkeypatch):
     monkeypatch.setenv(admin_centre.ENABLE_ENV, "0")  # see test_admin_api_180 fixture note
     network = admin_centre.network_status(now=NOW)
@@ -260,6 +331,12 @@ def test_paper_status_reports_real_ledger_state(monkeypatch, tmp_path):
     assert status["positions"][0]["symbol"] == "SYNTH-PERP"
     assert status["pnl"]["realized"] == "0"
     assert status["pnl"]["unrealized"] is None  # no marks supplied: honest null
+    assert status["cost_basis_gross"] == "200"
+    assert status["market_value"] is None
+    assert status["open_orders"] is None
+    assert status["recent_fills"][0]["symbol"] == "SYNTH-PERP"
+    assert status["recent_fills"][0]["side"] == "BUY"
+    assert "k1" not in str(status)
 
 
 def test_synthetic_adapter_smoke_still_admitted_when_not_suspended():
@@ -270,3 +347,28 @@ def test_synthetic_adapter_smoke_still_admitted_when_not_suspended():
         adapter, instruments=["SYNTH-PERP"], now=NOW
     )
     assert result["counts"]["admitted"] > 0
+
+
+def test_alert_store_missing_file_is_empty_and_not_created(tmp_path):
+    from osiris_api.admin_alert_store import record_raised_alerts
+    path = tmp_path / "missing" / "alerts.sqlite3"
+    result = record_raised_alerts(str(path), [], now=NOW)
+    assert result["initialized"] is False
+    assert result["active"] == [] and result["acknowledged"] == []
+    assert not path.exists() and not path.parent.exists()
+
+
+def test_alert_store_rejects_foreign_sqlite_without_modifying(tmp_path):
+    import sqlite3
+    from osiris_api.admin_alert_store import AlertStoreError, record_raised_alerts
+    path = tmp_path / "foreign.sqlite3"
+    db = sqlite3.connect(path)
+    db.execute("CREATE TABLE foreign_data (value TEXT)")
+    db.execute("INSERT INTO foreign_data VALUES ('keep')")
+    db.commit()
+    db.close()
+    with pytest.raises(AlertStoreError, match="alert_store_unavailable"):
+        record_raised_alerts(str(path), [{"kind": "ingestion_disabled", "key": "global", "severity": "warning", "message": "disabled"}], now=NOW)
+    db = sqlite3.connect(path)
+    assert db.execute("SELECT value FROM foreign_data").fetchone()[0] == "keep"
+    db.close()
