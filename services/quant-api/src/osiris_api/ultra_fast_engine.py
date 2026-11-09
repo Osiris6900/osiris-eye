@@ -88,6 +88,8 @@ class UltraFastEngine:
     """Single-event-loop reference engine; callers serialize producer access."""
 
     def __init__(self, capacity: int = 2_097_152, max_stale_ms: int = 100):
+        if isinstance(max_stale_ms, bool) or not isinstance(max_stale_ms, int):
+            raise ValueError("max_stale_ms must be an integer")
         if max_stale_ms < 0:
             raise ValueError("max_stale_ms must be nonnegative")
         self.buffer = LockFreeRingBuffer(capacity)
@@ -115,6 +117,7 @@ class UltraFastEngine:
             if not symbol or not symbol.strip():
                 raise ValueError("symbol required")
             tick = ZeroCopyDeserializer.from_binary(raw_bytes)
+            symbol = symbol.strip()
             tick.symbol = symbol
             now_ns = time.time_ns()
             if tick.timestamp_ns > now_ns or now_ns - tick.timestamp_ns > self.max_stale_ns:
