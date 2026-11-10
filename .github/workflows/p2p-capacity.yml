@@ -28,6 +28,8 @@ jobs:
         with:
           authkey: ${{ secrets.TS_AUTHKEY }}
           tags: tag:ci-p2p
+      - name: Run soak measurement regression tests
+        run: python3 -m unittest discover -s scripts -p 'test_run_p2p_soak.py' -v
       - name: Build P2P binary
         run: cargo build --release --manifest-path services/p2p-node/Cargo.toml
       - name: Create ephemeral SSH key and Host A endpoint
