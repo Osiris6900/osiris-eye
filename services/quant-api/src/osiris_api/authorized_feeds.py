@@ -127,6 +127,7 @@ def validate_feed_tick(
     *,
     now: datetime,
     max_delay_seconds: float = DEFAULT_MAX_DELAY_SECONDS,
+    max_age_seconds_at_decision: float | None = None,
 ) -> dict[str, Any]:
     """Validate one point-in-time feed tick; return the normalized tick.
 
@@ -156,6 +157,20 @@ def validate_feed_tick(
         raise FeedAdapterRejection("tick_available_in_future")
     if (received_time - available_time).total_seconds() > max_delay_seconds:
         raise FeedAdapterRejection("tick_stale_beyond_delay")
+    if (received_time - current).total_seconds() > MAX_FUTURE_SKEW_SECONDS:
+        raise FeedAdapterRejection("tick_received_in_future")
+    # Historical point-in-time research can intentionally admit old ticks.
+    # A live streaming consumer MUST opt into decision-time freshness instead
+    # of confusing event->receive delay with age at the current decision.
+    if max_age_seconds_at_decision is not None:
+        if (
+            isinstance(max_age_seconds_at_decision, bool)
+            or not isinstance(max_age_seconds_at_decision, (int, float))
+            or not 0 < max_age_seconds_at_decision <= 86_400
+        ):
+            raise FeedAdapterRejection("tick_decision_age_bound_invalid")
+        if (current - available_time).total_seconds() > max_age_seconds_at_decision:
+            raise FeedAdapterRejection("tick_stale_at_decision")
     try:
         price = Decimal(str(tick.get("price")))
     except (InvalidOperation, TypeError) as exc:
@@ -187,6 +202,7 @@ def ingest_adapter_ticks(
     policy: Mapping[str, Any] | None = None,
     now: datetime | None = None,
     max_delay_seconds: float = DEFAULT_MAX_DELAY_SECONDS,
+    realtime_max_age_seconds: float | None = None,
 ) -> dict[str, Any]:
     """Fetch and gate adapter ticks. Unregistered adapters are refused BEFORE
     fetch() is called; individual bad ticks are rejected with reasons while
@@ -255,6 +271,7 @@ def ingest_adapter_ticks(
         try:
             normalized = validate_feed_tick(
                 tick, now=current, max_delay_seconds=max_delay_seconds,
+                max_age_seconds_at_decision=realtime_max_age_seconds,
             )
         except FeedAdapterRejection as exc:
             rejected.append({"index": index, "reason": str(exc)})
@@ -283,6 +300,7 @@ def ingest_adapter_ticks(
         "rejected": rejected,
         "counts": {"fetched": len(raw), "admitted": len(admitted), "rejected": len(rejected)},
         "verification_boundary": "operator_attestation_and_synthetic_fixtures_not_vendor_verification",
+        "decision_time_freshness_enforced": realtime_max_age_seconds is not None,
     }
 
 

@@ -221,3 +221,53 @@ def test_untrusted_entitlement_policy_rejected_before_fetch():
     with pytest.raises(FeedAdapterRejection, match="adapter_policy_invalid"):
         ingest_adapter_ticks(spy, instruments=["BTC-USD"], now=NOW, policy="unsafe")
     assert spy.called is False
+
+
+
+def test_realtime_feed_rejects_expired_at_decision_but_preserves_history_mode():
+    recent = SyntheticAuthorizedAdapter(
+        seed="point-in-time-freshness", symbols=["BTC-USD"],
+        start=NOW - timedelta(seconds=180), step_seconds=60, count=4,
+    )
+    historical = ingest_adapter_ticks(
+        recent, instruments=["BTC-USD"], now=NOW,
+    )
+    assert historical["counts"] == {"fetched": 4, "admitted": 4, "rejected": 0}
+    assert historical["decision_time_freshness_enforced"] is False
+
+    current = ingest_adapter_ticks(
+        recent, instruments=["BTC-USD"], now=NOW,
+        realtime_max_age_seconds=120,
+    )
+    assert current["counts"] == {"fetched": 4, "admitted": 3, "rejected": 1}
+    assert current["rejected"] == [{"index": 0, "reason": "tick_stale_at_decision"}]
+    assert current["decision_time_freshness_enforced"] is True
+
+
+@pytest.mark.parametrize("invalid", [0, -1, True, "300", float("nan"), float("inf")])
+def test_invalid_realtime_age_is_rejected_not_silently_accepted(invalid):
+    tick = _adapter(count=1).fetch(now=NOW)[0]
+    with pytest.raises(FeedAdapterRejection, match="tick_decision_age_bound_invalid"):
+        validate_feed_tick(tick, now=NOW, max_age_seconds_at_decision=invalid)
+
+
+def test_future_received_timestamp_is_rejected_even_if_available_time_allowed():
+    tick = _adapter(count=1).fetch(now=NOW)[0]
+    tick["event_time"] = (NOW + timedelta(seconds=10)).isoformat()
+    tick["available_time"] = (NOW + timedelta(seconds=30)).isoformat()
+    tick["received_time"] = (NOW + timedelta(seconds=90)).isoformat()
+    with pytest.raises(FeedAdapterRejection, match="tick_received_in_future"):
+        validate_feed_tick(tick, now=NOW)
+
+
+def test_realtime_expired_report_never_claims_license_attestation():
+    batch = _adapter(count=1)
+    report = ingest_adapter_ticks(
+        batch, instruments=["BTC-USD"], now=NOW,
+        realtime_max_age_seconds=300,
+    )
+    assert report["status"] == "no_ticks_admitted"
+    assert report["rejected"] == [{"index": 0, "reason": "tick_stale_at_decision"}]
+    assert report["verification_boundary"] == (
+        "operator_attestation_and_synthetic_fixtures_not_vendor_verification"
+    )
