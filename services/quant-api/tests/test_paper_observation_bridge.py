@@ -65,13 +65,16 @@ def _evaluate(store, record, **overrides):
     return evaluate_stored_observation(store, **arguments)
 
 
-def test_stored_observation_drives_backtest_risk_and_durable_paper_intent(store, enabled):
+def test_stored_observation_creates_blocked_durable_intent_without_execution_controls(store, enabled):
     record = _ingest(store)
     result = _evaluate(store, record)
     assert result["symbol"] == "BTC-USD"
     assert result["paper_order_intent"]["reference_price"] == 101.25
     assert result["paper_order_intent"]["side"] == "BUY"
-    assert result["paper_order_intent"]["status"] == "PAPER_INTENT_APPROVED"
+    assert result["paper_order_intent"]["status"] == "BLOCKED_BY_RISK"
+    assert result["risk"]["approved_for_paper"] is False
+    assert result["risk"]["reason"] == "risk_service_unavailable"
+    assert result["risk"]["limits_evaluated"] is False
     assert result["backtest"]["periods"] == 2
     assert result["persistence"]["status"] == "stored"
     assert result["observation_provenance"]["provider"] == "binance-public"
@@ -133,7 +136,10 @@ def test_risk_rejection_is_durable_but_never_live(store, enabled):
         limits=RiskLimits(max_order_notional=1000.0),
     )
     assert result["paper_order_intent"]["status"] == "BLOCKED_BY_RISK"
-    assert result["risk"]["reason"] == "max_order_notional_exceeded"
+    # Without a trusted, available risk control plane, pretrade must block
+    # before sizing limits are evaluated, even for an oversized order.
+    assert result["risk"]["reason"] == "risk_service_unavailable"
+    assert result["risk"]["limits_evaluated"] is False
     assert result["persistence"]["status"] == "stored"
     assert result["execution"]["live_execution"] is False
 
