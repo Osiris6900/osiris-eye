@@ -560,8 +560,17 @@ def measure(args):
         host_records = []
         for host, metadata in c.metadata.items():
             metrics = c.metrics[host]
-            host_records.append({'host_id': host, 'binary_sha256': metadata['binary_sha256'],
-                                 **{k: metrics[k] for k in ('rss_peak_bytes', 'cpu_percent', 'disk_growth_bytes')}})
+            # Run-scoped commitment avoids exposing the raw host boot ID
+            # and prevents linking machine identity across workflow runs.
+            fingerprint_commitment = hashlib.sha256(
+                f"{args.workflow_url}|{args.attempt}|{metadata['host_fingerprint']}".encode()
+            ).hexdigest()
+            host_records.append({
+                'host_id': host,
+                'binary_sha256': metadata['binary_sha256'],
+                'host_fingerprint_commitment': fingerprint_commitment,
+                **{k: metrics[k] for k in ('rss_peak_bytes', 'cpu_percent', 'disk_growth_bytes')},
+            })
         independent = len({m['host_fingerprint'] for m in c.metadata.values()}) == host_count
         evidence = {
             'schema': 'osiris.p2p_load_acceptance.v1',
