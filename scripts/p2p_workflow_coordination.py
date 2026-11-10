@@ -15,6 +15,7 @@ from pathlib import Path
 import re
 import subprocess
 import time
+import tempfile
 
 
 def artifact_exists(repository: str, run_id: str, name: str, *, timeout: float = 30) -> bool:
@@ -59,6 +60,112 @@ def wait_for_artifact(repository: str, run_id: str, name: str, timeout: float) -
         time.sleep(min(3, remaining))
 
 
+
+def _valid_coordinated_json(filename: str, path: Path) -> bool:
+    """Check the actual downloaded bytes before releasing the next host."""
+    if not path.is_file() or path.is_symlink() or not 0 < path.stat().st_size <= 8192:
+        return False
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    if filename == "p2p-endpoint.json":
+        try:
+            address = ipaddress.ip_address(payload["tailscale_ip"])
+        except (KeyError, ValueError, TypeError):
+            return False
+        peer = payload.get("peer_id")
+        return (
+            address.version == 4
+            and address in ipaddress.ip_network("100.64.0.0/10")
+            and type(payload.get("port")) is int
+            and payload["port"] == 4001
+            and isinstance(peer, str)
+            and re.fullmatch(r"[A-Za-z0-9]{10,128}", peer) is not None
+        )
+    if filename == "p2p-host-a-result.json":
+        return payload.get("status") in ("success", "failure", "cancelled", "skipped")
+    return False
+
+
+def download_same_run_artifact(
+    repository: str, run_id: str, run_attempt: str, name: str,
+    destination: Path, *, timeout: float = 600,
+) -> None:
+    """Retry until artifact ZIP bytes are downloadable and JSON is valid.
+
+    The GitHub artifacts listing may expose a name while its backing blob
+    still returns 404/BlobNotFound. A listing is not a download guarantee.
+    Do not print the command stderr (which can contain provider details).
+    """
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
+        raise ValueError("invalid repository")
+    if not run_id.isdecimal() or not run_attempt.isdecimal():
+        raise ValueError("invalid run identity")
+    if (
+        not re.fullmatch(r"[A-Za-z0-9_.-]{1,200}", name)
+        or not name.endswith(f"-{run_id}-{run_attempt}")
+    ):
+        raise ValueError("artifact does not belong to requested run attempt")
+    destination = Path(destination)
+    if destination.name not in ("p2p-endpoint.json", "p2p-host-a-result.json"):
+        raise ValueError("unexpected artifact destination")
+    if not 0 < timeout <= 2700:
+        raise ValueError("artifact download timeout must be between 0 and 2700 seconds")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + timeout
+    attempts = 0
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError(
+                f"Same-run artifact not downloadable/valid after {attempts} attempts: {name}"
+            )
+        attempts += 1
+        with tempfile.TemporaryDirectory(prefix="osiris-artifact-", dir=destination.parent) as temp:
+            staged = Path(temp) / destination.name
+            try:
+                result = subprocess.run(
+                    [
+                        "gh", "run", "download", run_id,
+                        "--repo", repository,
+                        "--name", name,
+                        "--dir", temp,
+                    ],
+                    check=False, capture_output=True, text=True,
+                    timeout=min(30, remaining),
+                )
+                valid = (
+                    result.returncode == 0
+                    and time.monotonic() < deadline
+                    and _valid_coordinated_json(destination.name, staged)
+                )
+                if valid:
+                    # Only commit an actual validated file; never release a
+                    # peer on an artifact-listing lookup or partial download.
+                    os.replace(staged, destination)
+                    print(
+                        f"Same-run artifact bytes downloaded and verified: {name} "
+                        f"(attempts={attempts})",
+                        flush=True,
+                    )
+                    return
+            except (subprocess.SubprocessError, OSError):
+                # Retries include 404/BlobNotFound and intermittent GitHub API
+                # or storage errors, but never turn a failure into success.
+                pass
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError(
+                f"Same-run artifact not downloadable/valid after {attempts} attempts: {name}"
+            )
+        if attempts == 1 or attempts % 10 == 0:
+            print(f"Artifact ZIP not yet downloadable; retrying ({attempts}): {name}", flush=True)
+        time.sleep(min(3, remaining))
+
+
 def public_host_key(value: str) -> str:
     fields = value.strip().split()
     if len(fields) not in (2, 3) or fields[0] != "ssh-ed25519":
@@ -95,6 +202,10 @@ def main() -> None:
     wait = subparsers.add_parser("wait-artifact")
     wait.add_argument("--name", required=True)
     wait.add_argument("--timeout", type=float, default=600)
+    download = subparsers.add_parser("download-artifact")
+    download.add_argument("--name", required=True)
+    download.add_argument("--destination", type=Path, required=True)
+    download.add_argument("--timeout", type=float, default=600)
     endpoint = subparsers.add_parser("write-endpoint")
     endpoint.add_argument("--path", type=Path, required=True)
     endpoint.add_argument("--ip", required=True)
@@ -109,6 +220,13 @@ def main() -> None:
     if args.command == "wait-artifact":
         wait_for_artifact(os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_RUN_ID"],
                           args.name, args.timeout)
+    elif args.command == "download-artifact":
+        download_same_run_artifact(
+            os.environ["GITHUB_REPOSITORY"],
+            os.environ["GITHUB_RUN_ID"],
+            os.environ["GITHUB_RUN_ATTEMPT"],
+            args.name, args.destination, timeout=args.timeout,
+        )
     elif args.command == "write-endpoint":
         write_endpoint(args.path, args.ip, args.host_key)
     elif args.command == "known-hosts":
