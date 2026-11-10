@@ -1,6 +1,18 @@
 name: Deployment recovery dry run
 
 on:
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: 'Dry-run evidence scenario (no recovery operation executed)'
+        required: false
+        type: choice
+        default: full
+        options:
+          - full
+          - backup-only
+          - restore-only
+          - dr-failover
   pull_request:
     paths:
       - "scripts/check_deploy_recovery.py"
