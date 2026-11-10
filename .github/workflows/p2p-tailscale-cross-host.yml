@@ -179,13 +179,13 @@ jobs:
           set -euo pipefail
           python3 scripts/p2p_workflow_coordination.py wait-artifact \
             --name "p2p-endpoint-${{ github.run_id }}-${{ github.run_attempt }}" --timeout 600
-      - name: Download Host A endpoint
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: p2p-endpoint-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}
-          github-token: ${{ github.token }}
-          run-id: ${{ github.run_id }}
+      - name: Download Host A endpoint (retry until blob is readable)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/p2p_workflow_coordination.py download-artifact \
+            --name "p2p-endpoint-${{ github.run_id }}-${{ github.run_attempt }}" \
+            --destination "$RUNNER_TEMP/p2p-endpoint.json" --timeout 600
       - name: Diagnose Tailscale path and TCP listener
         env:
           RUNNER_TEMP: ${{ runner.temp }}
@@ -281,10 +281,13 @@ jobs:
         run: |
           python3 scripts/p2p_workflow_coordination.py wait-artifact \
             --name "p2p-host-a-finished-${{ github.run_id }}-${{ github.run_attempt }}" --timeout 600
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: p2p-host-a-finished-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}
+      - name: Download Host A completion (retry until blob is readable)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/p2p_workflow_coordination.py download-artifact \
+            --name "p2p-host-a-finished-${{ github.run_id }}-${{ github.run_attempt }}" \
+            --destination "$RUNNER_TEMP/p2p-host-a-result.json" --timeout 600
       - name: Require successful receiver acceptance
         run: |
           python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1]))["status"] == "success" else 1)' "$RUNNER_TEMP/p2p-host-a-result.json"
