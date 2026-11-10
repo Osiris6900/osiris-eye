@@ -120,3 +120,104 @@ def test_validate_tick_rejects_non_object_and_schema():
     tick["schema"] = "osiris.feed_tick.v0"
     with pytest.raises(FeedAdapterRejection, match="tick_schema_unsupported"):
         validate_feed_tick(tick, now=NOW)
+
+
+def test_tick_source_spoof_is_rejected_even_from_registered_adapter():
+    class SpoofingRegisteredAdapter:
+        name = "synthetic-authorized"
+
+        def fetch(self, *, now):
+            tick = _adapter(count=1).fetch(now=now)[0]
+            tick["source"] = "unlicensed-source"
+            return [tick]
+
+    result = ingest_adapter_ticks(
+        SpoofingRegisteredAdapter(), instruments=["BTC-USD"], now=NOW,
+    )
+    assert result["counts"] == {"fetched": 1, "admitted": 0, "rejected": 1}
+    assert result["rejected"][0]["reason"] == "tick_source_mismatch"
+
+
+def test_duplicate_tick_is_rejected_without_doubling_admission():
+    class DuplicateRegisteredAdapter:
+        name = "synthetic-authorized"
+
+        def fetch(self, *, now):
+            tick = _adapter(count=1).fetch(now=now)[0]
+            return [tick, dict(tick)]
+
+    result = ingest_adapter_ticks(
+        DuplicateRegisteredAdapter(), instruments=["BTC-USD"], now=NOW,
+    )
+    assert result["counts"] == {"fetched": 2, "admitted": 1, "rejected": 1}
+    assert result["rejected"] == [{"index": 1, "reason": "tick_duplicate"}]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("authorized_source", "different-source"),
+        ("entitlement_reference", "self-attested-vendor"),
+        ("redistribution_rights", "prohibited"),
+        ("availability_timestamps_required", False),
+        ("license_class", "licensed_vendor"),
+        ("quality_review", {"status": "passed", "reviewer": "fake",
+                            "reviewed_at": "2026-11-08T00:00:00Z"}),
+    ],
+)
+def test_caller_cannot_override_reviewed_registry_entitlement(field, value):
+    class Spy:
+        name = "synthetic-authorized"
+        called = False
+
+        def fetch(self, *, now):
+            self.called = True
+            return []
+
+    spy = Spy()
+    policy = dict(ADAPTER_ENTITLEMENTS["synthetic-authorized"])
+    policy["instruments"] = {"BTC-USD"}
+    policy[field] = value
+    with pytest.raises(
+        FeedAdapterRejection, match="adapter_policy_registry_mismatch",
+    ):
+        ingest_adapter_ticks(
+            spy, instruments=["BTC-USD"], now=NOW,
+            policy={"synthetic-authorized": policy},
+        )
+    assert spy.called is False
+
+
+def test_caller_policy_can_only_narrow_instrument_coverage():
+    class Spy:
+        name = "synthetic-authorized"
+        called = False
+
+        def fetch(self, *, now):
+            self.called = True
+            return []
+
+    policy = dict(ADAPTER_ENTITLEMENTS["synthetic-authorized"])
+    policy["instruments"] = {"ETH-USD"}
+    spy = Spy()
+    with pytest.raises(FeedAdapterRejection, match="adapter_policy_instruments_widened"):
+        ingest_adapter_ticks(
+            spy, instruments=["BTC-USD"], now=NOW,
+            policy={"synthetic-authorized": policy},
+        )
+    assert spy.called is False
+
+
+def test_untrusted_entitlement_policy_rejected_before_fetch():
+    class Spy:
+        name = "synthetic-authorized"
+        called = False
+
+        def fetch(self, *, now):
+            self.called = True
+            return []
+
+    spy = Spy()
+    with pytest.raises(FeedAdapterRejection, match="adapter_policy_invalid"):
+        ingest_adapter_ticks(spy, instruments=["BTC-USD"], now=NOW, policy="unsafe")
+    assert spy.called is False
