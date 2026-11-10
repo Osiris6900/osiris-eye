@@ -27,7 +27,7 @@ class ReleaseGateInventoryTests(unittest.TestCase):
 
     def test_only_evidenced_rows_are_implemented(self):
         implemented = [item["id"] for item in self.manifest["items"] if item["status"] == "Implemented with evidence"]
-        self.assertEqual(implemented, ["T02"])
+        self.assertEqual(implemented, ["T02", "T03", "T05"])
         self.assertFalse(self.manifest["live_trading_authorized"])
 
     def test_implemented_without_ci_run_is_rejected(self):
