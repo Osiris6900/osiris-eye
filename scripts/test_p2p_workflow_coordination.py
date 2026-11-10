@@ -93,6 +93,116 @@ class CoordinationTests(unittest.TestCase):
                                 "github.event.workflow_run.head_repository.full_name == github.repository"):
                 self.assertIn(restriction, gate)
 
+    def test_download_retries_blob_404_until_endpoint_bytes_exist(self):
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "p2p-endpoint.json"
+            calls = []
+
+            def simulated_download(command, **kwargs):
+                calls.append(command)
+                self.assertIn("--name", command)
+                self.assertEqual(
+                    command[command.index("--name") + 1],
+                    "p2p-endpoint-42756305177-1",
+                )
+                self.assertEqual(command[command.index("--repo") + 1], "owner/repo")
+                self.assertEqual(command[command.index("download") + 1], "42756305177")
+                if len(calls) == 1:
+                    return subprocess.CompletedProcess(command, 1, "", "BlobNotFound")
+                staged = Path(command[command.index("--dir") + 1])
+                (staged / "p2p-endpoint.json").write_text(json.dumps({
+                    "tailscale_ip": "100.64.1.9", "port": 4001,
+                    "peer_id": "12D3KooWValidP2PIdentity1",
+                }))
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            with patch.object(coordination.subprocess, "run", side_effect=simulated_download), \\
+                 patch.object(coordination.time, "sleep") as sleep:
+                coordination.download_same_run_artifact(
+                    "owner/repo", "42756305177", "1",
+                    "p2p-endpoint-42756305177-1", destination,
+                )
+            self.assertEqual(len(calls), 2)
+            sleep.assert_called_once()
+            self.assertEqual(json.loads(destination.read_text())["port"], 4001)
+
+    def test_download_retries_success_without_valid_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "p2p-host-a-result.json"
+            count = 0
+
+            def simulated_download(command, **kwargs):
+                nonlocal count
+                count += 1
+                staged = Path(command[command.index("--dir") + 1])
+                (staged / destination.name).write_text(
+                    '{"status":"not_a_valid_acceptance"}' if count == 1
+                    else '{"status":"failure"}'
+                )
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            with patch.object(coordination.subprocess, "run", side_effect=simulated_download), \\
+                 patch.object(coordination.time, "sleep"):
+                coordination.download_same_run_artifact(
+                    "owner/repo", "42756305177", "2",
+                    "p2p-host-a-finished-42756305177-2", destination,
+                )
+            self.assertEqual(count, 2)
+            self.assertEqual(json.loads(destination.read_text())["status"], "failure")
+
+    def test_download_never_accepts_other_attempt_or_noncoordination_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "p2p-endpoint.json"
+            for name, attempt, expected in (
+                ("p2p-endpoint-42756305177-1", "2", "attempt"),
+                ("other-endpoint", "1", "attempt"),
+                ("p2p-endpoint-42756305177-1", "nan", "identity"),
+            ):
+                with self.assertRaisesRegex(ValueError, expected):
+                    coordination.download_same_run_artifact(
+                        "owner/repo", "42756305177", attempt, name, path,
+                    )
+            with self.assertRaisesRegex(ValueError, "destination"):
+                coordination.download_same_run_artifact(
+                    "owner/repo", "42756305177", "1",
+                    "p2p-endpoint-42756305177-1", Path(directory) / "secret.key",
+                )
+            self.assertFalse(path.exists())
+
+    def test_download_refuses_invalid_or_non_tailnet_endpoint_payload(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "p2p-endpoint.json"
+            base = {"tailscale_ip": "100.64.1.9", "port": 4001,
+                    "peer_id": "12D3KooWValidP2PIdentity1"}
+            for bad in (
+                dict(base, tailscale_ip="127.0.0.1"),
+                dict(base, tailscale_ip="100.64.1.9\\nwrong"),
+                dict(base, port=True),
+                dict(base, peer_id="not a valid peer id"),
+                dict(base, peer_id=""),
+            ):
+                path.write_text(json.dumps(bad))
+                self.assertFalse(
+                    coordination._valid_coordinated_json("p2p-endpoint.json", path)
+                )
+            path.write_text(json.dumps(base))
+            self.assertTrue(
+                coordination._valid_coordinated_json("p2p-endpoint.json", path)
+            )
+
+    def test_download_timeout_does_not_release_host_on_404(self):
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "p2p-endpoint.json"
+            result = subprocess.CompletedProcess([], 1, "", "BlobNotFound")
+            with patch.object(coordination.subprocess, "run", return_value=result), \\
+                 patch.object(coordination.time, "monotonic", side_effect=[0, .2, 1.1]):
+                with self.assertRaises(TimeoutError):
+                    coordination.download_same_run_artifact(
+                        "owner/repo", "42756305177", "1",
+                        "p2p-endpoint-42756305177-1", destination, timeout=1,
+                    )
+            self.assertFalse(destination.exists())
+
     def test_pin_public_host_key_from_endpoint(self):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
