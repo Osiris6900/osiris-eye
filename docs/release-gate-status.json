@@ -4,8 +4,8 @@
   "live_trading_authorized": false,
   "facts": {
     "mutable_action_uses": 0,
-    "pinned_action_uses": 87,
-    "workflow_files": 16,
+    "pinned_action_uses": 112,
+    "workflow_files": 18,
     "advisory_inputs_match_worktree": true,
     "advisory_source_commit": "2501a07441c7a3e124a7494f2384903c85f5b6ca",
     "sbom_marks_python_unresolved": false,
@@ -97,25 +97,23 @@
         176,
         255
       ],
-      "status": "Remaining",
+      "status": "Partial",
       "acceptance_satisfied": false,
       "evidence": [
         "docs/P2P_SCALE_REGRESSION_2026_11_08.json",
         "docs/P2P_ADMISSION_LOCAL_100_REGRESSION.json",
         "https://github.com/Osiris6900/osiris-eye/pull/256",
         "https://github.com/Osiris6900/osiris-eye/pull/259",
-        "https://github.com/Osiris6900/osiris-eye/actions/runs/42724240212"
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42724240212",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42740964830",
+        "capacity-report-42740964830-1 (downloaded ZIP SHA-256: 229553051305aabbc28c44af50bb58c4f6dfe9ec746ff3f2f85178333661d239)"
       ],
       "evidence_commits": [
-        "5176eae8843a1e5144ac903f37843fe9bb46cdd9"
+        "5176eae8843a1e5144ac903f37843fe9bb46cdd9",
+        "d9bb0a959faf5d9c7c97bd6502a143f9df9123d0"
       ],
-      "open_prs": [
-        269,
-        279,
-        280,
-        283
-      ],
-      "blocker": "100-peer independent-host soak with distinct host fingerprints, binary hashes, latency, and loss is not retained. Checked-in soak summaries set independent_hosts_verified to false. Owner reports 100-peer soak run #50 and Tailscale run #198; exact run URLs, independent-host fingerprints, latency/loss evidence not yet verified. Do not mark acceptance complete."
+      "open_prs": [],
+      "blocker": "Operator-dispatched GitHub Actions run 42740964830 (main d9bb0a959faf5d9c7c97bd6502a143f9df9123d0) succeeded on three runner jobs. Retained artifact capacity-report-42740964830-1 (ZIP SHA-256 229553051305aabbc28c44af50bb58c4f6dfe9ec746ff3f2f85178333661d239) contains 10/50/100 peer sweeps: 200/200 delivered, zero lost in each, binary SHA-256 and self-reported distinct boot fingerprints. Scope is one private tailnet, recipient-bootstrap star, 35-49 seconds per sweep; workload paused during bootstrap outage. Raw host fingerprint independence is not independently attested, and sustained multi-host NAT, relay, open-mesh and production outage recovery are unproven. Partial evidence only; acceptance remains false."
     },
     {
       "id": "T05",
@@ -429,17 +427,16 @@
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42494850551",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42494850772",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42495167275",
-        "https://github.com/Osiris6900/osiris-eye/actions/runs/42495167271"
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42495167271",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42740964830",
+        "capacity-report-42740964830-1 (downloaded ZIP SHA-256: 229553051305aabbc28c44af50bb58c4f6dfe9ec746ff3f2f85178333661d239)"
       ],
       "evidence_commits": [
-        "5176eae8843a1e5144ac903f37843fe9bb46cdd9"
+        "5176eae8843a1e5144ac903f37843fe9bb46cdd9",
+        "d9bb0a959faf5d9c7c97bd6502a143f9df9123d0"
       ],
-      "open_prs": [
-        269,
-        272,
-        274
-      ],
-      "blocker": "CI, dependency audit, Tailscale observation stress, and the three-peer mesh are green at 5176eae. Independent-host capacity and failover artifacts are not. Dispatch plan ready; evidence run pending."
+      "open_prs": [],
+      "blocker": "Successful operator capacity run 42740964830 with 10/50/100-peer 200/200 deliveries, three green host jobs, artifact capacity-report-42740964830-1 and independently recomputed ZIP SHA-256 229553051305aabbc28c44af50bb58c4f6dfe9ec746ff3f2f85178333661d239. The run is a short one-tailnet recipient-bootstrap star measurement, not full independent production failover; Rust receipt -> Python ledger -> paper execution cross-module acceptance and broader DR remain unverified. T19 stays Partial pending complete operational evidence and release decision."
     },
     {
       "id": "T20",
