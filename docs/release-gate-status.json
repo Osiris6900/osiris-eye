@@ -4,7 +4,7 @@
   "live_trading_authorized": false,
   "facts": {
     "mutable_action_uses": 0,
-    "pinned_action_uses": 112,
+    "pinned_action_uses": 113,
     "workflow_files": 18,
     "advisory_inputs_match_worktree": true,
     "advisory_source_commit": "2501a07441c7a3e124a7494f2384903c85f5b6ca",
@@ -360,12 +360,8 @@
       "evidence_commits": [
         "0a610db74cac5381ebbb4abe358286a80a6e6298"
       ],
-      "open_prs": [
-        265,
-        268,
-        277
-      ],
-      "blocker": "Admin and ingestion kill-switch tests run in pytest. evaluate_paper_workflow does not consult a kill switch or feed freshness. The paper-journal stale-feed test is not a CI step."
+      "open_prs": [],
+      "blocker": "Paper workflow defaults and intent binding are hardened by merged #326/#329; durable paper ledger tests cover fail-closed kill-switch/stale data and recovery. New T16 CI fixture exercises real temporary SQLite paper-ledger fault windows and retains a hashed synthetic report after CI; at this PR's authoring no run-specific receipt has yet been accepted. This does not prove all paper execution paths, independent service outage, real market data, production operation, or external review. T16 remains Partial pending actual artifact verification and end-to-end release decision."
     },
     {
       "id": "T17",
