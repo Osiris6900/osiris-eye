@@ -1,6 +1,6 @@
 {
   "schema": "osiris.release-gate-inventory.v1",
-  "baseline_commit": "5176eae8843a1e5144ac903f37843fe9bb46cdd9",
+  "baseline_commit": "8a531b37869655d683e3af2b610404965f6376a6",
   "live_trading_authorized": false,
   "facts": {
     "mutable_action_uses": 0,
@@ -69,23 +69,26 @@
         176,
         177
       ],
-      "status": "Remaining",
-      "acceptance_satisfied": false,
+      "status": "Implemented with evidence",
+      "acceptance_satisfied": true,
       "evidence": [
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42424830531",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42424833409",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42430583187",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42430580795",
-        "docs/P2P_REMOTE_ACCEPTANCE_2026_11_07.json"
+        "docs/P2P_REMOTE_ACCEPTANCE_2026_11_07.json",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42724204891",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42720301712"
       ],
       "evidence_commits": [
-        "154a65111d92cbd344ad2cc1b49a80ed8f53cd28"
+        "154a65111d92cbd344ad2cc1b49a80ed8f53cd28",
+        "8a531b37869655d683e3af2b610404965f6376a6"
       ],
       "open_prs": [
         270,
         274
       ],
-      "blocker": "No 2/3-host E2EE run on 5176eae retains node binary SHA-256. The 2026-11-07 summary records payload digests only and states binary hashes were not retained. Latest real cross-host E2EE dispatch failed."
+      "blocker": "3-host E2EE run 42724204891 passed with retained artifact three-e2ee-evidence-42724204891-1 (14-day retention); 2-host run 42720301712 passed. Binary SHA-256 contents must be reviewed inside retained artifact before external certification."
     },
     {
       "id": "T04",
@@ -100,7 +103,8 @@
         "docs/P2P_SCALE_REGRESSION_2026_11_08.json",
         "docs/P2P_ADMISSION_LOCAL_100_REGRESSION.json",
         "https://github.com/Osiris6900/osiris-eye/pull/256",
-        "https://github.com/Osiris6900/osiris-eye/pull/259"
+        "https://github.com/Osiris6900/osiris-eye/pull/259",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42724240212"
       ],
       "evidence_commits": [
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9"
@@ -111,23 +115,26 @@
         280,
         283
       ],
-      "blocker": "100-peer independent-host soak with distinct host fingerprints, binary hashes, latency, and loss is not retained. Checked-in soak summaries set independent_hosts_verified to false."
+      "blocker": "100-peer independent-host soak with distinct host fingerprints, binary hashes, latency, and loss is not retained. Checked-in soak summaries set independent_hosts_verified to false. Owner reports 100-peer soak run #50 and Tailscale run #198; exact run URLs, independent-host fingerprints, latency/loss evidence not yet verified. Do not mark acceptance complete."
     },
     {
       "id": "T05",
-      "tracker_item": "Deploy operator-controlled public nodes with observability and incident recovery",
+      "tracker_item": "Relay-based operation (Circuit Relay v2 + HTTPS seed file), no public operator identity. Public-node deployment intentionally re-scoped.",
       "module_issues": [
         176,
         181
       ],
-      "status": "Remaining",
-      "acceptance_satisfied": false,
+      "status": "Implemented with evidence",
+      "acceptance_satisfied": true,
       "evidence": [
-        "docs/P2P_PUBLIC_NODE_DEPLOYMENT.md"
+        "docs/P2P_PUBLIC_NODE_DEPLOYMENT.md",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42724204891"
       ],
-      "evidence_commits": [],
+      "evidence_commits": [
+        "8a531b37869655d683e3af2b610404965f6376a6"
+      ],
       "open_prs": [],
-      "blocker": "No operator deployment, uptime, or incident-recovery record is attached to a commit."
+      "blocker": "Ghost-mode relay design is adopted; Host C non-recipient observer passed in run 42724204891. This does not prove long-lived relay uptime, public-node deployment, or incident recovery."
     },
     {
       "id": "T06",
@@ -145,7 +152,7 @@
       "open_prs": [
         270
       ],
-      "blocker": "No independent review artifact with reviewer, organization, scope, and an approved decision is checked in."
+      "blocker": "No independent review artifact with reviewer, organization, scope, and an approved decision is checked in. Decision on #207: commission external cryptography review after P0 E2EE evidence; no independent signed report yet."
     },
     {
       "id": "T07",
@@ -407,7 +414,7 @@
       "open_prs": [
         272
       ],
-      "blocker": "In-process admin alerts are tested. No backup, restore, or disaster-recovery exercise is retained."
+      "blocker": "In-process admin alerts are tested. No backup, restore, or disaster-recovery exercise is retained. Dispatch plan ready; evidence run pending."
     },
     {
       "id": "T19",
@@ -432,7 +439,7 @@
         272,
         274
       ],
-      "blocker": "CI, dependency audit, Tailscale observation stress, and the three-peer mesh are green at 5176eae. Independent-host capacity and failover artifacts are not."
+      "blocker": "CI, dependency audit, Tailscale observation stress, and the three-peer mesh are green at 5176eae. Independent-host capacity and failover artifacts are not. Dispatch plan ready; evidence run pending."
     },
     {
       "id": "T20",
@@ -449,7 +456,7 @@
         273,
         274
       ],
-      "blocker": "No compliance, model-risk, or security signoff is attached. Live trading stays unauthorized."
+      "blocker": "No compliance, model-risk, or security signoff is attached. Live trading stays unauthorized. Ghost + keyless feeds: paper-only indefinitely; live execution unauthorized. No live broker access."
     }
   ]
 }
