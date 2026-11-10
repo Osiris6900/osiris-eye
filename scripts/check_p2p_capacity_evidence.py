@@ -105,7 +105,7 @@ def validate_reports(
                 name = host.get("host_id")
                 binary = host.get("binary_sha256")
                 commitment = host.get("host_fingerprint_commitment")
-                if name not in HOSTS or name in host_commitments:
+                if not isinstance(name, str) or name not in HOSTS or name in host_commitments:
                     errors.append(label + "host_id_invalid_or_duplicate")
                     continue
                 if not isinstance(binary, str) or not _SHA256.fullmatch(binary):
