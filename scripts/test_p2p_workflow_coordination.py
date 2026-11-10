@@ -116,7 +116,7 @@ class CoordinationTests(unittest.TestCase):
                 }))
                 return subprocess.CompletedProcess(command, 0, "", "")
 
-            with patch.object(coordination.subprocess, "run", side_effect=simulated_download), \\
+            with patch.object(coordination.subprocess, "run", side_effect=simulated_download), \
                  patch.object(coordination.time, "sleep") as sleep:
                 coordination.download_same_run_artifact(
                     "owner/repo", "42756305177", "1",
@@ -141,7 +141,7 @@ class CoordinationTests(unittest.TestCase):
                 )
                 return subprocess.CompletedProcess(command, 0, "", "")
 
-            with patch.object(coordination.subprocess, "run", side_effect=simulated_download), \\
+            with patch.object(coordination.subprocess, "run", side_effect=simulated_download), \
                  patch.object(coordination.time, "sleep"):
                 coordination.download_same_run_artifact(
                     "owner/repo", "42756305177", "2",
@@ -194,7 +194,7 @@ class CoordinationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             destination = Path(directory) / "p2p-endpoint.json"
             result = subprocess.CompletedProcess([], 1, "", "BlobNotFound")
-            with patch.object(coordination.subprocess, "run", return_value=result), \\
+            with patch.object(coordination.subprocess, "run", return_value=result), \
                  patch.object(coordination.time, "monotonic", side_effect=[0, .2, 1.1]):
                 with self.assertRaises(TimeoutError):
                     coordination.download_same_run_artifact(
