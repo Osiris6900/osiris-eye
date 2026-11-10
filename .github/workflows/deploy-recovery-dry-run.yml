@@ -18,6 +18,8 @@ on:
       - "scripts/check_deploy_recovery.py"
       - "scripts/test_check_deploy_recovery.py"
       - "scripts/run_paper_dr_exercise.py"
+      - "scripts/verify_paper_dr_artifacts.py"
+      - "scripts/test_verify_paper_dr_artifacts.py"
       - ".github/workflows/deploy-recovery-dry-run.yml"
       - "docs/evidence/deploy-recovery.schema.json"
   push:
@@ -65,6 +67,10 @@ jobs:
       - name: Exercise isolated SQLite backup, restore and same-runner standby
         run: |
           python scripts/run_paper_dr_exercise.py --output-dir "$RUNNER_TEMP/osiris-paper-dr"
+      - name: Verify retained local artifact integrity and test tamper rejection
+        run: |
+          python -m unittest discover -s scripts -p 'test_verify_paper_dr_artifacts.py' -v
+          python scripts/verify_paper_dr_artifacts.py "$RUNNER_TEMP/osiris-paper-dr"
       - name: Retain sanitized synthetic drill proof
         if: success()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
