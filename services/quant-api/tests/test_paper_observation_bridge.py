@@ -99,6 +99,45 @@ def test_identical_evaluation_is_idempotent_replay(store, enabled):
     assert len(store.list(PAPER_DATASET)) == 1
 
 
+def test_legacy_approved_intent_never_reapproves_on_idempotent_replay(
+    store, enabled, monkeypatch,
+):
+    """Previously stored approvals must not bypass current pretrade gates."""
+    import osiris_api.paper_observation_bridge as bridge
+
+    original = bridge.evaluate_paper_workflow
+
+    def simulate_legacy_approval(**kwargs):
+        # This explicit test-only override simulates a historical durable
+        # approval from before T16; it is not a runtime control override.
+        return original(
+            **kwargs,
+            enforce_execution_controls=True,
+            kill_switch_active=False,
+            market_data_fresh=True,
+            risk_service_available=True,
+            current_gross_exposure=0.0,
+        )
+
+    record = _ingest(store)
+    monkeypatch.setattr(bridge, "evaluate_paper_workflow", simulate_legacy_approval)
+    legacy = _evaluate(store, record)
+    assert legacy["risk"]["approved_for_paper"] is True
+    assert legacy["paper_order_intent"]["status"] == "PAPER_INTENT_APPROVED"
+
+    monkeypatch.setattr(bridge, "evaluate_paper_workflow", original)
+    replay = _evaluate(store, record)
+    assert replay["persistence"]["status"] == "idempotent_replay"
+    assert replay["paper_intent_id"] == legacy["paper_intent_id"]
+    assert replay["risk"]["approved_for_paper"] is False
+    assert replay["risk"]["reason"] == "risk_service_unavailable"
+    assert replay["paper_order_intent"]["status"] == "BLOCKED_BY_RISK"
+    assert replay["execution"]["broker_order_submitted"] is False
+    assert replay["execution"]["live_execution"] is False
+    # Original historical record is preserved as evidence, not rewritten.
+    assert len(store.list(PAPER_DATASET)) == 1
+
+
 def test_changed_signal_creates_distinct_durable_intent(store, enabled):
     record = _ingest(store)
     _evaluate(store, record)
