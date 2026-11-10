@@ -16,6 +16,7 @@ import json
 from typing import Any, Iterable, Mapping, Protocol
 
 from .feed_admission import FeedAdmissionRejection, admit_feed
+from . import feed_revocation_store
 
 FEED_TICK_SCHEMA = "osiris.feed_tick.v1"
 DEFAULT_MAX_DELAY_SECONDS = 300.0
@@ -57,29 +58,50 @@ ADAPTER_ENTITLEMENTS: dict[str, dict[str, Any]] = {
 }
 
 
-# Runtime revocation set (issue #180). security_admin can suspend a registered
-# adapter from the admin control centre; ingestion refuses suspended adapters
-# BEFORE fetch. The set is process-local and resets on restart.
+# In-process fallback exists only for developer/synthetic compatibility.
+# Configure OSIRIS_FEED_REVOCATIONS_DB as an absolute file path for durable
+# operator suspensions; if that configured store fails, admission fails closed.
 _SUSPENDED_ADAPTERS: set[str] = set()
 
 
+def _durable_revocations() -> frozenset[str]:
+    try:
+        return feed_revocation_store.suspended()
+    except feed_revocation_store.RevocationStoreError as exc:
+        raise FeedAdapterRejection("adapter_revocation_store_unavailable") from exc
+
+
 def suspend_adapter(name: str) -> None:
-    """Suspend a registered adapter; unknown names fail closed."""
+    """Suspend a registered adapter; durable store is authoritative if set."""
     if name not in ADAPTER_ENTITLEMENTS:
         raise FeedAdapterRejection("adapter_not_registered")
-    _SUSPENDED_ADAPTERS.add(name)
+    if feed_revocation_store.enabled():
+        try:
+            feed_revocation_store.set_suspended(name, True)
+        except feed_revocation_store.RevocationStoreError as exc:
+            raise FeedAdapterRejection("adapter_revocation_store_unavailable") from exc
+    else:
+        _SUSPENDED_ADAPTERS.add(name)
 
 
 def restore_adapter(name: str) -> None:
-    _SUSPENDED_ADAPTERS.discard(name)
+    if feed_revocation_store.enabled():
+        try:
+            feed_revocation_store.set_suspended(name, False)
+        except feed_revocation_store.RevocationStoreError as exc:
+            raise FeedAdapterRejection("adapter_revocation_store_unavailable") from exc
+    else:
+        _SUSPENDED_ADAPTERS.discard(name)
 
 
 def suspended_adapters() -> frozenset[str]:
+    if feed_revocation_store.enabled():
+        return _durable_revocations()
     return frozenset(_SUSPENDED_ADAPTERS)
 
 
 def is_adapter_suspended(name: str) -> bool:
-    return name in _SUSPENDED_ADAPTERS
+    return name in suspended_adapters()
 
 
 def _utc(value: Any, field: str) -> datetime:
@@ -173,7 +195,7 @@ def ingest_adapter_ticks(
     registry = ADAPTER_ENTITLEMENTS.get(name)
     if registry is None:
         raise FeedAdapterRejection("adapter_not_registered")
-    if name in _SUSPENDED_ADAPTERS:
+    if is_adapter_suspended(name):
         raise FeedAdapterRejection("adapter_suspended")
     instrument_list = [str(i).strip() for i in instruments if str(i).strip()]
     if not instrument_list or len(instrument_list) > 1_000:
