@@ -1449,9 +1449,11 @@ def recover() -> dict[str, Any]:
 
 
 def submit_approved_workflow(result: dict[str, Any], **order: Any) -> dict[str, Any]:
-    """Submit only a workflow result that this process already approved.
+    """Forward only a current, controlled paper-intent proposal to the ledger.
 
-    A blocked intent never opens the ledger. Live flags are refused.
+    This is a *defense-in-depth* contract check, not authentication of an
+    arbitrary dictionary. The durable paper ledger independently rechecks
+    risk, freshness and its persisted kill-switch. No live order is routed.
     """
     execution = result.get("execution") if isinstance(result, dict) else None
     risk = result.get("risk") if isinstance(result, dict) else None
@@ -1460,26 +1462,70 @@ def submit_approved_workflow(result: dict[str, Any], **order: Any) -> dict[str, 
         raise ValueError("live_execution_disabled")
     if execution.get("broker_order_submitted") is not False:
         raise ValueError("live_execution_disabled")
+
+    def refused(reason: str) -> dict[str, Any]:
+        return {
+            "status": "not_submitted", "reason": reason, "fill": None,
+            "live_execution": False, "broker_order_submitted": False,
+            "mode": "paper_only",
+        }
+
     if (
         not isinstance(risk, dict)
         or risk.get("approved_for_paper") is not True
-        or risk.get("live_execution") not in (False, None)
         or not isinstance(intent, dict)
         or intent.get("status") != "PAPER_INTENT_APPROVED"
     ):
-        return {
-            "status": "not_submitted",
-            "reason": risk.get("reason") if isinstance(risk, dict) else "risk_not_approved",
-            "fill": None,
-            "live_execution": False,
-            "broker_order_submitted": False,
-            "mode": "paper_only",
-        }
+        return refused(
+            risk.get("reason", "risk_not_approved")
+            if isinstance(risk, dict) else "risk_not_approved"
+        )
+
+    # Prior helper versions could approve without kill-switch/freshness
+    # evidence. Never forward those legacy or uncontrolled approvals.
+    if (
+        result.get("workflow") != "research_to_paper_risk_gate"
+        or execution.get("mode") != "paper_only"
+        or risk.get("limits_evaluated") is not True
+        or risk.get("live_execution") is not False
+        or risk.get("reason") != "approved_for_simulation_only"
+    ):
+        return refused("approval_evidence_missing")
+
+    def valid_quantity_or_price(actual: Any, expected: Any) -> bool:
+        if isinstance(actual, bool) or isinstance(expected, bool):
+            return False
+        try:
+            a, b = Decimal(str(actual)), Decimal(str(expected))
+        except (TypeError, ValueError, InvalidOperation):
+            return False
+        return a.is_finite() and b.is_finite() and a > 0 and b > 0 and a == b
+
+    expected_symbol = intent.get("symbol")
+    expected_side = intent.get("side")
+    selected_symbol = order.get("symbol", expected_symbol)
+    selected_side = order.get("side", expected_side)
+    selected_quantity = order.get("quantity", intent.get("quantity"))
+    selected_price = order.get("price", intent.get("reference_price"))
+    if (
+        not isinstance(expected_symbol, str)
+        or not isinstance(expected_side, str)
+        or expected_side not in ("BUY", "SELL")
+        or not isinstance(selected_symbol, str)
+        or not isinstance(selected_side, str)
+        or selected_symbol.strip().upper() != expected_symbol
+        or selected_side.strip().upper() != expected_side
+        or expected_symbol != result.get("symbol")
+        or not valid_quantity_or_price(selected_quantity, intent.get("quantity"))
+        or not valid_quantity_or_price(selected_price, intent.get("reference_price"))
+    ):
+        return refused("paper_intent_mismatch")
+
     raw = {
-        "symbol": order.get("symbol", intent.get("symbol")),
-        "side": order.get("side", intent.get("side")),
-        "quantity": order.get("quantity", intent.get("quantity")),
-        "price": order.get("price", intent.get("reference_price")),
+        "symbol": expected_symbol,
+        "side": expected_side,
+        "quantity": selected_quantity,
+        "price": selected_price,
     }
     raw.update({
         key: value for key, value in order.items()
@@ -1491,7 +1537,6 @@ def submit_approved_workflow(result: dict[str, Any], **order: Any) -> dict[str, 
                 raise ValueError("invalid_number")
             raw[field] = str(raw[field])
     return submit_paper_order(**raw)
-
 
 def _guard(fn, *args, **kwargs):
     try:
