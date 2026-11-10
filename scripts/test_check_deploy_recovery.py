@@ -27,6 +27,23 @@ class DeployRecoveryTests(unittest.TestCase):
         plan["environments"]["staging"]["drill_status"] = "passed"
         self.assertTrue(any("evidence_url" in error for error in validate(plan)))
 
+    def test_passed_drill_rejects_invalid_evidence_urls(self):
+        invalid = ("", " ", "http://example.org/run", "file:///tmp/report",
+                   "https://", "https://example.org/with space",
+                   "https://user:pass@example.org/report", "https://example.org:443/run",
+                   "https://example.org/line\nfeed", 123, None)
+        for url in invalid:
+            with self.subTest(url=url):
+                plan = self.plan()
+                plan["environments"]["staging"].update(drill_status="passed", evidence_url=url)
+                self.assertTrue(any("evidence_url" in e for e in validate(plan)))
+
+    def test_passed_drill_accepts_syntactically_valid_https_reference_only(self):
+        plan = self.plan()
+        plan["environments"]["staging"].update(
+            drill_status="passed", evidence_url="https://github.com/example/repo/actions/runs/123")
+        self.assertEqual(validate(plan), [])
+
 
 if __name__ == "__main__":
     unittest.main()
