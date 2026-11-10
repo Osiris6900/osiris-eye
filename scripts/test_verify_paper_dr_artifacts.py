@@ -28,6 +28,8 @@ class VerifyPaperDrArtifactsTests(unittest.TestCase):
             "broker_order_submitted": False,
             "t18_release_gate_accepted": False,
             "commit_sha": "a" * 40,
+            "backup_file": "local-paper-backup.sqlite3",
+            "restored_file": "local-paper-restored.sqlite3",
             "backup_sha256": digest,
             "restored_sha256": digest,
         }
@@ -57,6 +59,22 @@ class VerifyPaperDrArtifactsTests(unittest.TestCase):
     def test_forged_gate_acceptance_rejected(self):
         self.report["t18_release_gate_accepted"] = True
         self.write_artifacts()
+        self.assertTrue(verify(self.root))
+
+    def test_unexpected_artifact_rejected(self):
+        (self.root / "extra.txt").write_text("unexpected")
+        self.write_artifacts()
+        self.assertTrue(verify(self.root))
+
+    def test_forged_filename_rejected(self):
+        self.report["backup_file"] = "../other.sqlite3"
+        self.write_artifacts()
+        self.assertTrue(verify(self.root))
+
+    def test_symlink_artifact_rejected(self):
+        target = self.root / "outside.txt"
+        target.write_text("test")
+        (self.root / "linked.txt").symlink_to(target)
         self.assertTrue(verify(self.root))
 
     def test_missing_manifest_rejected(self):
