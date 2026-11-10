@@ -208,7 +208,10 @@ def evaluate_stored_observation(
     record_key_out = "intent:" + intent_id
     existing = store.get(PAPER_DATASET, PAPER_SOURCE, record_key_out)
     if existing is not None:
-        return {**existing["payload"]["result"], "persistence": {
+        # Never re-authorize a historical approved intent on idempotent replay:
+        # current freshness, provider and pretrade gates may now be closed.
+        # The original durable record stays immutable as historical evidence.
+        return {**result, "persistence": {
             "status": "idempotent_replay", "dataset": PAPER_DATASET,
             "record_key": record_key_out, "duplicate_created": False,
         }}
@@ -226,7 +229,9 @@ def evaluate_stored_observation(
         existing = store.get(PAPER_DATASET, PAPER_SOURCE, record_key_out)
         if existing is None:
             raise PaperBridgeRefused("paper_intent_persistence_failed") from exc
-        return {**existing["payload"]["result"], "persistence": {
+        # Lost the insert race: re-evaluate the current risk result rather than
+        # trusting a previously persisted approval from another request.
+        return {**result, "persistence": {
             "status": "idempotent_replay", "dataset": PAPER_DATASET,
             "record_key": record_key_out, "duplicate_created": False,
         }}

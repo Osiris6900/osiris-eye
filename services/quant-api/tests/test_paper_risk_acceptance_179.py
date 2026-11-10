@@ -20,6 +20,9 @@ def test_rejected_proposal_never_approves_paper_intent(overrides, expected_reaso
     inputs = dict(
         symbol="BTC-USD", signals=[0.0, 1.0],
         asset_returns=[0.0, 0.01], quantity=1, price=100,
+        enforce_execution_controls=True,
+        kill_switch_active=False, market_data_fresh=True,
+        risk_service_available=True, current_gross_exposure=0.0,
     )
     inputs.update(overrides)
     result = evaluate_paper_workflow(**inputs)
@@ -110,3 +113,50 @@ def test_healthy_controls_approve_paper_intent_without_live_execution():
     assert result["paper_order_intent"]["status"] == "PAPER_INTENT_APPROVED"
     assert result["execution"]["broker_order_submitted"] is False
     assert result["execution"]["live_execution"] is False
+
+@pytest.mark.parametrize(
+    "controls",
+    [
+        {},
+        {"enforce_execution_controls": False},
+        {"enforce_execution_controls": 0},
+        {"enforce_execution_controls": "true"},
+        {
+            "enforce_execution_controls": False,
+            "kill_switch_active": False,
+            "market_data_fresh": True,
+            "risk_service_available": True,
+            "current_gross_exposure": 0.0,
+        },
+    ],
+)
+def test_paper_workflow_cannot_approve_without_enforced_controls(controls):
+    result = evaluate_paper_workflow(
+        symbol="BTC-USD", signals=[0.0, 1.0],
+        asset_returns=[0.0, 0.01], quantity=1, price=100,
+        **controls,
+    )
+    assert result["risk"]["approved_for_paper"] is False
+    expected = "risk_service_unavailable" if controls.get(
+        "enforce_execution_controls", True
+    ) is True else "execution_controls_required"
+    assert result["risk"]["reason"] == expected
+    assert result["risk"]["limits_evaluated"] is False
+    assert result["paper_order_intent"]["status"] == "BLOCKED_BY_RISK"
+    assert result["execution"] == {
+        "mode": "paper_only", "broker_order_submitted": False,
+        "live_execution": False,
+    }
+
+
+def test_paper_workflow_hold_signal_never_approves_intent():
+    result = evaluate_paper_workflow(
+        symbol="BTC-USD", signals=[0.0, 0.0],
+        asset_returns=[0.0, 0.01], quantity=1, price=100,
+        enforce_execution_controls=True, kill_switch_active=False,
+        market_data_fresh=True, risk_service_available=True,
+        current_gross_exposure=0.0,
+    )
+    assert result["risk"]["approved_for_paper"] is False
+    assert result["risk"]["reason"] == "hold_signal_no_order"
+    assert result["paper_order_intent"]["status"] == "BLOCKED_BY_RISK"

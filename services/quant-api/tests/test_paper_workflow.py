@@ -8,6 +8,10 @@ def test_paper_workflow_backtests_and_risk_approves_without_execution():
         asset_returns=[0.0, 0.01, -0.02],
         quantity=1,
         price=100,
+        kill_switch_active=False,
+        market_data_fresh=True,
+        risk_service_available=True,
+        current_gross_exposure=0.0,
     )
     assert result["symbol"] == "BTC-USD"
     assert result["backtest"]["periods"] == 2
@@ -24,6 +28,10 @@ def test_paper_workflow_blocks_order_over_risk_limit():
         asset_returns=[0.0, 0.01],
         quantity=200,
         price=100,
+        kill_switch_active=False,
+        market_data_fresh=True,
+        risk_service_available=True,
+        current_gross_exposure=0.0,
     )
     assert result["risk"]["approved_for_paper"] is False
     assert result["risk"]["reason"] == "max_order_notional_exceeded"
