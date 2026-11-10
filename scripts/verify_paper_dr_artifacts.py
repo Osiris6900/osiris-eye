@@ -20,6 +20,11 @@ def verify(directory: Path) -> list[str]:
         return ["invalid_report"]
     if not isinstance(report, dict):
         return ["invalid_report"]
+    allowed_names = {"local-paper-recovery-report.json", "sha256-manifest.txt",
+                     "local-paper-backup.sqlite3", "local-paper-restored.sqlite3"}
+    if any(p.is_symlink() or not p.is_file() or p.name not in allowed_names
+           for p in directory.iterdir()):
+        errors.append("unexpected_or_unsafe_artifact")
     expected = {
         "schema": "osiris.local-paper-ledger-dr.v1",
         "status": "passed",
@@ -39,6 +44,9 @@ def verify(directory: Path) -> list[str]:
     if not isinstance(commit, str) or len(commit) != 40 or any(c not in "0123456789abcdef" for c in commit):
         errors.append("invalid_commit_sha")
     files = ("local-paper-backup.sqlite3", "local-paper-restored.sqlite3")
+    for field, name in (("backup_file", files[0]), ("restored_file", files[1])):
+        if report.get(field) != name:
+            errors.append("invalid_report_" + field)
     for name, field in zip(files, ("backup_sha256", "restored_sha256")):
         path = directory / name
         if not path.is_file():
