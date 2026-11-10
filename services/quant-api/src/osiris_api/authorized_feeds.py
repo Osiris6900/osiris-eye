@@ -183,10 +183,36 @@ def ingest_adapter_ticks(
         raise FeedAdapterRejection("ingest_time_missing_timezone")
     current = current.astimezone(timezone.utc)
 
-    merged_policy: dict[str, Any] = {name: {**registry, "instruments": set(instrument_list)}}
-    if policy:
-        for key, record in policy.items():
-            merged_policy[str(key)] = record
+    # The adapter registry is the upper bound on entitlements. A caller's
+    # policy may narrow instrument coverage, but cannot replace the reviewed
+    # adapter identity, provenance, redistribution rights or quality review.
+    reviewed_record: dict[str, Any] = {**registry, "instruments": set(instrument_list)}
+    if policy is not None:
+        if not isinstance(policy, Mapping):
+            raise FeedAdapterRejection("adapter_policy_invalid")
+        override = policy.get(name)
+        if override is not None:
+            if not isinstance(override, Mapping):
+                raise FeedAdapterRejection("adapter_policy_invalid")
+            immutable = (
+                "authorized_source", "entitlement_reference",
+                "redistribution_rights", "availability_timestamps_required",
+                "quality_review", "license_class",
+            )
+            if any(override.get(field) != registry.get(field) for field in immutable):
+                raise FeedAdapterRejection("adapter_policy_registry_mismatch")
+            allowed = override.get("instruments")
+            if (
+                not isinstance(allowed, (list, tuple, set, frozenset))
+                or not allowed
+                or any(not isinstance(i, str) or not i.strip() for i in allowed)
+            ):
+                raise FeedAdapterRejection("adapter_policy_instruments_invalid")
+            narrowed = set(allowed)
+            if not narrowed <= set(instrument_list):
+                raise FeedAdapterRejection("adapter_policy_instruments_widened")
+            reviewed_record["instruments"] = narrowed
+    merged_policy: dict[str, Any] = {name: reviewed_record}
     admissions: dict[str, Any] = {}
     for instrument in instrument_list:
         try:
@@ -202,6 +228,7 @@ def ingest_adapter_ticks(
 
     admitted: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
+    seen_tick_keys: set[tuple[str, str, str, str]] = set()
     for index, tick in enumerate(raw):
         try:
             normalized = validate_feed_tick(
@@ -213,6 +240,17 @@ def ingest_adapter_ticks(
         if normalized["symbol"] not in instrument_list:
             rejected.append({"index": index, "reason": "tick_instrument_not_authorized"})
             continue
+        if normalized["source"] != name:
+            rejected.append({"index": index, "reason": "tick_source_mismatch"})
+            continue
+        tick_key = (
+            normalized["symbol"], normalized["source"],
+            normalized["event_time"], normalized["available_time"],
+        )
+        if tick_key in seen_tick_keys:
+            rejected.append({"index": index, "reason": "tick_duplicate"})
+            continue
+        seen_tick_keys.add(tick_key)
         admitted.append(normalized)
     return {
         "status": "admitted" if admitted else "no_ticks_admitted",
