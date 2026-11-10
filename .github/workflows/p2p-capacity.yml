@@ -82,12 +82,23 @@ jobs:
               --ssh-option=-o --ssh-option="UserKnownHostsFile=$dir/known_hosts" \
               --ssh-option=-o --ssh-option=ConnectTimeout=15
           done
+      - name: Verify capacity report consistency (not release acceptance)
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/osiris-capacity"
+          python3 scripts/check_p2p_capacity_evidence.py \
+            --directory "$dir" --commit "$GITHUB_SHA" \
+            --run-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --attempt "${{ github.run_attempt }}" \
+            --write-manifest "$dir/capacity-sha256.txt"
       - name: Upload retained capacity measurements
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: capacity-report-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/osiris-capacity/capacity-*.json
+          path: |
+            ${{ runner.temp }}/osiris-capacity/capacity-*.json
+            ${{ runner.temp }}/osiris-capacity/capacity-sha256.txt
           if-no-files-found: warn
           retention-days: 14
       - name: Record controller completion
