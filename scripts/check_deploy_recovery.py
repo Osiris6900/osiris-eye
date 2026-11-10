@@ -1,23 +1,38 @@
 #!/usr/bin/env python3
-"""Dry-run check for staging and production recovery plans.
-
-This script does not deploy, roll back, or contact a host. A passing
-check is not evidence that a recovery drill ran.
-"""
+"""Validate recovery plans without executing commands or asserting drill completion."""
 from __future__ import annotations
 
 import argparse
 import json
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 REQUIRED = ("staging", "production")
 
 
+def _valid_evidence_url(value: object) -> bool:
+    if not isinstance(value, str) or not value or value != value.strip():
+        return False
+    if any(ord(char) < 33 or ord(char) == 127 for char in value):
+        return False
+    try:
+        parsed = urlsplit(value)
+        return (
+            parsed.scheme == "https"
+            and bool(parsed.hostname)
+            and parsed.username is None
+            and parsed.password is None
+            and parsed.port is None
+        )
+    except ValueError:
+        return False
+
+
 def validate(plan: dict) -> list[str]:
-    errors = []
     if not isinstance(plan, dict) or plan.get("schema") != "osiris.deploy-recovery-plan.v1":
         return ["schema must be osiris.deploy-recovery-plan.v1"]
+    errors = []
     if plan.get("live_trading_authorized") is not False:
         errors.append("live_trading_authorized must be false")
     envs = plan.get("environments")
@@ -34,8 +49,8 @@ def validate(plan: dict) -> list[str]:
                 errors.append(f"{name} rollback_command required")
             if env.get("drill_status") not in ("not_run", "passed", "failed"):
                 errors.append(f"{name} drill_status must be not_run, passed, or failed")
-            if env.get("drill_status") == "passed" and not isinstance(env.get("evidence_url"), str):
-                errors.append(f"{name} passed drill requires evidence_url")
+            if env.get("drill_status") == "passed" and not _valid_evidence_url(env.get("evidence_url")):
+                errors.append(f"{name} passed drill requires a valid HTTPS evidence_url")
     if plan.get("executes_commands") is not False:
         errors.append("executes_commands must be false")
     return errors
