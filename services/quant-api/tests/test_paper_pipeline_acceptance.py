@@ -271,3 +271,42 @@ def test_concurrent_control_change_does_not_hide_a_fill_behind_a_blocked_receipt
     assert replay["replayed"] is True
     assert replay["order"]["state"] == "filled"
     assert replay["account"]["fill_count"] == 1
+
+def test_fixed_bps_slippage_is_adverse_and_marked_to_market_at_close(account):
+    buy = run(slippage_bps="100")
+    assert buy["market"]["price"] == "110.0"
+    assert Decimal(buy["market"]["execution_price"]) == Decimal("111.1")
+    assert buy["market"]["fill_assumption"] == "adverse_fixed_bps_from_closed_candle"
+    assert buy["order"]["status"] == "filled"
+    assert Decimal(buy["order"]["price"]) == Decimal("111.1")
+    assert Decimal(buy["account"]["cash"]) == Decimal("776.8")
+    assert Decimal(buy["account"]["unrealized_pnl"]) == Decimal("-3.2")
+    assert buy["reconciliation"]["passed"] is True
+
+    sale_time = NOW + timedelta(minutes=1)
+    with patch.object(
+        CoinbasePublicMarketDataAdapter, "fetch_bars",
+        return_value=bars((140, 135, 130, 120), sale_time),
+    ):
+        sell = run_paper_pipeline(quantity="1", fee="1", slippage_bps="100", now=sale_time)
+    assert Decimal(sell["market"]["execution_price"]) == Decimal("118.8")
+    assert Decimal(sell["order"]["price"]) == Decimal("118.8")
+    assert Decimal(sell["account"]["realized_pnl"]) == Decimal("6.2")
+    assert sell["reconciliation"]["passed"] is True
+
+
+@pytest.mark.parametrize("slippage", ["-1", "1000.00001", "nan", "Infinity"])
+def test_slippage_rejects_invalid_cost_assumptions(account, slippage):
+    with pytest.raises(ValueError):
+        run(slippage_bps=slippage)
+    assert ledger.snapshot()["fill_count"] == 0
+
+
+def test_replaying_with_a_different_slippage_fails_closed(account):
+    original = run(slippage_bps="25")
+    replay = run(slippage_bps="25")
+    assert replay["replayed"] is True
+    assert replay["pipeline_run_id"] == original["pipeline_run_id"]
+    with pytest.raises(ValueError, match="pipeline_decision_conflict"):
+        run(slippage_bps="0")
+    assert ledger.snapshot()["fill_count"] == 1

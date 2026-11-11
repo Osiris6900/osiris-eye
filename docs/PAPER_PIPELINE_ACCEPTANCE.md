@@ -4,8 +4,14 @@ The connected path is Coinbase public one-minute candles → deterministic momen
 proposal → independent pretrade risk → durable paper order/fill → cash, positions,
 fee-inclusive realized/unrealized P&L → reconciliation. No broker credentials or
 exchange order endpoints are used. The pipeline supports USD-quoted Coinbase
-symbols, long-only fully funded positions, and simulated fills at the latest
-closed candle's close. It does not simulate slippage, venue matching or liquidity.
+symbols, long-only fully funded positions, and deterministic simulated fills at the latest closed candle's close by
+default. The optional `slippage_bps` request field (decimal string, 0–1000;
+default 0) applies fixed adverse cost to each paper fill: BUY pays above the
+close, SELL receives below the close; account marks use the unadjusted close.
+Independent risk checks and the durable ledger use the adjusted price. A replay
+of the same candle with different slippage parameters fails closed. This is a
+stress/sensitivity assumption, not calibrated venue execution, depth-of-book
+liquidity, a real market-impact model, or margin trading.
 
 Run the executable acceptance harness from the repository root after installing
 `services/quant-api[dev]`:
