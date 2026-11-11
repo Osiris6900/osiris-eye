@@ -12,6 +12,30 @@ def canonical(value: object) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
 
 
+def valid_parameters(parameters: dict) -> bool:
+    """Require bounded JSON values without coercing non-string object keys."""
+    pending = [(parameters, 0)]
+    visited = 0
+    while pending:
+        value, depth = pending.pop()
+        visited += 1
+        if depth > 20 or visited > 10000:
+            return False
+        if isinstance(value, dict):
+            if len(value) + visited + len(pending) > 10000:
+                return False
+            if any(not isinstance(key, str) for key in value):
+                return False
+            pending.extend((item, depth + 1) for item in value.values())
+        elif isinstance(value, list):
+            if len(value) + visited + len(pending) > 10000:
+                return False
+            pending.extend((item, depth + 1) for item in value)
+        elif type(value) not in (str, int, float, bool, type(None)):
+            return False
+    return True
+
+
 def register_experiments(experiments: object) -> dict:
     if not isinstance(experiments, list) or not 1 <= len(experiments) <= 500:
         return {"status": "rejected", "reason": "invalid_experiment_count"}
@@ -33,7 +57,8 @@ def register_experiments(experiments: object) -> dict:
         if type(start) is not int or type(end) is not int or start < 0 or end <= start:
             return {"status": "rejected", "reason": "invalid_experiment_window"}
         parameters = experiment["parameters"]
-        if not isinstance(parameters, dict) or len(parameters) > 100:
+        if (not isinstance(parameters, dict) or len(parameters) > 100
+                or not valid_parameters(parameters)):
             return {"status": "rejected", "reason": "invalid_parameters"}
         try:
             encoded = canonical(parameters)

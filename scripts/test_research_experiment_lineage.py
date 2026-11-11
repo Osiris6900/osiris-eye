@@ -9,6 +9,23 @@ def experiment(eid="a", start=0, end=100):
 
 
 class RegistryTests(unittest.TestCase):
+    def test_non_string_parameter_keys_rejected(self):
+        for parameters in ({1: "value"}, {"nested": {1: "value"}}):
+            e = experiment()
+            e["parameters"] = parameters
+            self.assertEqual(register_experiments([e])["reason"], "invalid_parameters")
+
+    def test_deep_or_recursive_parameters_rejected(self):
+        deep = {}
+        for _ in range(40):
+            deep = {"nested": deep}
+        recursive = {}
+        recursive["loop"] = recursive
+        for parameters in (deep, recursive):
+            e = experiment()
+            e["parameters"] = parameters
+            self.assertEqual(register_experiments([e])["reason"], "invalid_parameters")
+
     def test_fingerprint_deterministic(self):
         a = register_experiments([experiment()])
         b = register_experiments([experiment()])
