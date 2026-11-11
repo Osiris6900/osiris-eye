@@ -59,4 +59,6 @@ jobs:
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
       - name: Audit Rust lockfile
-        run: cargo audit --file services/p2p-node/Cargo.lock
+        run: |
+          cargo audit --file services/p2p-node/Cargo.lock
+          cargo audit --file crates/native-feed/Cargo.lock

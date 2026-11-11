@@ -1,0 +1,9 @@
+[package]
+name = "osiris-native-feed"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+
+[dependencies]
+memmap2 = "0.9"
+serde_json = "1"

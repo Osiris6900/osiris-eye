@@ -16,12 +16,19 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.request import build_opener, ProxyHandler
 
 ROOT = Path(__file__).resolve().parents[1]
 RECEIPT_TOPIC = "osiris/e2ee/receipts/1"
 
 
 def find_binary():
+    configured = os.getenv("OSIRIS_P2P_TEST_BINARY")
+    if configured:
+        path = Path(configured).resolve(strict=True)
+        if not path.is_file():
+            raise ValueError("test binary must be a regular file")
+        return path
     for path in (
         ROOT / "services" / "p2p-node" / "target" / "release" / "osiris-p2p-node",
         ROOT / "target" / "release" / "osiris-p2p-node",
@@ -45,6 +52,7 @@ def node_environment(directory, name, *, receipts="1", e2ee="1"):
         "OSIRIS_PEER_CACHE": str(directory / f"{name}.peer-cache.sqlite3"),
         "OSIRIS_PEER_CACHE_DIAL_ON_START": "0",
         "OSIRIS_HEALTH_HTTP_ADDR": "127.0.0.1:0",
+        "OSIRIS_HEALTH_INTERVAL_SECS": "1",
         "OSIRIS_LISTEN_ADDR": "/ip4/127.0.0.1/tcp/0",
         "OSIRIS_BOOTSTRAP_SEED_URL": "off",
         "OSIRIS_MDNS_ENABLED": "0",
@@ -269,6 +277,23 @@ def main():
             assert acknowledged["recipient"] == peers["node-b"], acknowledged
             assert acknowledged["envelope_sha256"] == digest, acknowledged
             assert acknowledged["admission"] == "validated_decrypted_replay_recorded", acknowledged
+            address_line = nodes.wait_for(lambda name, line: name == "node-a" and line.startswith("health_http_listening="), "sender health listener")
+            metrics_url = "http://" + address_line.split("=", 1)[1] + "/peer-metrics"
+            opener = build_opener(ProxyHandler({}))
+            deadline = time.monotonic() + 10
+            measured = None
+            while time.monotonic() < deadline:
+                with opener.open(metrics_url, timeout=2) as response:
+                    metrics = json.loads(response.read(262144))
+                measured = next((peer for peer in metrics["peers"] if peer["peer_id"] == peers["node-b"]), None)
+                if measured and measured["cryptographically_verified_receipts"] >= 1:
+                    break
+                time.sleep(.1)
+            assert measured and measured["cryptographically_verified_receipts"] >= 1, measured
+            assert measured["published_messages"] >= 1, measured
+            assert measured["latency_history"][-1]["receipt_latency_ms"] >= 0, measured
+            assert metrics["independent_hosts_verified"] is False, metrics
+            print("P2P_VERIFIED_RECEIPT_PEER_METRICS=PASS", flush=True)
             nodes.wait_for(
                 lambda name, line: name == "node-c" and line.startswith(
                     "encrypted_message_discarded reason=not_for_this_recipient_or_sender_mismatch"

@@ -4,9 +4,9 @@
   "live_trading_authorized": false,
   "facts": {
     "mutable_action_uses": 0,
-    "pinned_action_uses": 118,
+    "pinned_action_uses": 120,
     "workflow_files": 19,
-    "advisory_inputs_match_worktree": true,
+    "advisory_inputs_match_worktree": false,
     "advisory_source_commit": "2501a07441c7a3e124a7494f2384903c85f5b6ca",
     "sbom_marks_python_unresolved": false,
     "python_lock_schema": "osiris.python-deployment-lock.v1",

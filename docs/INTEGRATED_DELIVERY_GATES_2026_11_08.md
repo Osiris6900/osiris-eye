@@ -1,5 +1,9 @@
 # Integrated Delivery Gates — verified inventory 2026-11-08
 
+## 2026-11-11 integrated research/operations candidate
+
+The twenty implementation areas are mapped in [PLATFORM20_IMPLEMENTATION.md](PLATFORM20_IMPLEMENTATION.md). They are locally tested MVP services, not twenty accepted release gates. Existing gate statuses remain 3 evidenced, 14 partial and 3 remaining. The candidate adds native-feed and browser integration checks; immutable action counts are recorded by `docs/release-gate-status.json`, rather than inferred from historical snapshots below. The optional infrastructure SDK and external cloud/vendor configurations still require their own deployment, provenance and acceptance review.
+
 ## 2026-11-11 CI coverage update
 
 The platform-module workflow covers the six existing P2P/evidence modules and, once present, the eight new data, risk, model, history and review-intake modules. A module without its test file or with zero discovered tests fails the job. Only modules whose implementation and tests are both absent may be skipped as not yet merged. Adding this workflow changes the inventory to 19 workflow files and 113 pinned action uses, with zero mutable action uses. Acceptance statuses remain 3 implemented with evidence, 14 partial and 3 remaining; unit-test coverage is not independent release acceptance.

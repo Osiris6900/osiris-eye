@@ -1,0 +1,11 @@
+.research-workspace { margin: 20px 0; padding: 24px; max-width: 960px; }
+.research-workspace label { display: flex; flex-direction: column; gap: 8px; margin: 16px 0; color: #c5d4e7; }
+.research-workspace input, .research-workspace textarea { border: 1px solid #2c405b; border-radius: 6px; background: #0d1829; padding: 12px; color: #e8f1fc; font: inherit; }
+.research-workspace textarea { min-height: 72px; resize: vertical; font-family: monospace; }
+.research-workspace p { line-height: 1.7; color: #9bb0cc; }
+.research-workspace button { padding: 10px 14px; margin: 4px 8px 4px 0; border: 1px solid #345274; border-radius: 6px; background: #173452; color: #e8f1fc; cursor: pointer; }
+.research-workspace button:disabled { opacity: .5; cursor: wait; }
+.research-workspace :is(input,textarea,button):focus-visible { outline: 2px solid #35d6ec; outline-offset: 3px; }
+.research-workspace pre { overflow: auto; max-height: 420px; background: #08111f; padding: 16px; border-radius: 6px; }
+.research-workspace table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+.research-workspace th, .research-workspace td { text-align: left; padding: 10px; border-bottom: 1px solid #263950; }

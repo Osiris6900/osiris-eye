@@ -6,6 +6,8 @@ import LiveCryptoTape from './LiveCryptoTape';
 import { PaperPipelinePanel } from './PaperPipelinePanel';
 import { IntelligencePanel } from './IntelligencePanel';
 import { LiveTradingSetup } from './LiveTradingSetup';
+import { ResearchWorkspace } from './ResearchWorkspace';
+import { SecuritySetup } from './SecuritySetup';
 
 const tickers = [
   ['NIFTY 50','24,198.60','+112.35','+0.47%','up'],['BANKNIFTY','51,342.20','+296.75','+0.56%','up'],
@@ -25,6 +27,7 @@ function Chart() {
 function VolSurface(){return <div className="vol-wrap"><div className="vol-grid">{Array.from({length:49},(_,i)=><i key={i} style={{'--v':Math.max(8,70-Math.abs(i%7-3)*15-Math.abs(Math.floor(i/7)-3)*13)} as React.CSSProperties}/>)}</div><div className="vol-label">IV SURFACE · DEMO</div><b>18.4%</b></div>}
 
 export function App(){
+ const [authorization,setAuthorization]=useState('');
  const [active,setActive]=useState('Dashboard');const [time,setTime]=useState('5m');const [symbol,setSymbol]=useState('NIFTY 50');const [query,setQuery]=useState('');const [period,setPeriod]=useState('05 Dec');
  const filtered=useMemo(()=>tickers.filter(t=>t[0].toLowerCase().includes(query.toLowerCase())),[query]);
  return <div className="app-shell">
@@ -37,7 +40,8 @@ export function App(){
    <div className="demo-banner"><span>● SIMULATION ENVIRONMENT</span><span>Illustrative market values · Not live prices · No orders can be placed</span></div>
    <section className="ticker-strip">{tickers.map(t=><button className="ticker" key={t[0]} onClick={()=>setSymbol(t[0])}><b>{t[0]}</b><strong>{t[1]}</strong><small className={t[4]}>{t[2]} ({t[3]})</small><Spark down={t[4]==='down'}/></button>)}</section>
    <div className="section-heading"><div><small>MARKET OVERVIEW / INDIA + GLOBAL</small><h1>{active==='Dashboard'?'Trading Intelligence Dashboard':active}</h1></div><span className="market-open">● RESEARCH MODE</span></div>
-   {active === 'Live Trading' || active === 'Settings' ? <LiveTradingSetup/> : <>
+   {active === 'Live Trading' || active === 'Settings' ? <><LiveTradingSetup/>{active === 'Settings' && <SecuritySetup authorization={authorization} onAuthorization={setAuthorization}/>}</>
+   : active === 'Strategy Lab' || active === 'Backtesting' || active === 'Reports' ? <ResearchWorkspace page={active} authorization={authorization} onAuthorization={setAuthorization}/> : <>
    <LiveCryptoTape/>
    <MarketMechanics/>
    <PaperPipelinePanel/>

@@ -1,0 +1,193 @@
+"""Explicitly configured Alpaca PAPER transport and FIX 4.4 wire integrity.
+
+No live hostname, automatic order activation or general-purpose broker proxy.
+"""
+
+from __future__ import annotations
+
+import json
+from decimal import Decimal, InvalidOperation
+from urllib.parse import quote, urlencode
+
+from ..risk import RiskLimits, check_execution
+from .database import Database, digest, identifier
+from .vendors import HttpJson
+
+
+def money(value: object, *, positive: bool = True) -> Decimal:
+    if not isinstance(value, (str, int)) or isinstance(value, bool) or len(str(value)) > 64:
+        raise ValueError("decimal_string_required")
+    try:
+        amount = Decimal(value)
+    except InvalidOperation:
+        raise ValueError("invalid_decimal") from None
+    if not amount.is_finite() or abs(amount) > Decimal("1e15") or (positive and amount <= 0):
+        raise ValueError("decimal_out_of_range")
+    return amount
+
+
+class AlpacaPaperBroker:
+    ORIGIN = "https://paper-api.alpaca.markets"
+
+    def __init__(self, db: Database, credentials: dict, *, enabled: bool = False, transport=None):
+        self.db, self.enabled, self.transport = db, enabled is True, transport or HttpJson()
+        if not credentials.get("key") or not credentials.get("secret"):
+            raise ValueError("paper_credentials_required")
+        self.headers = {
+            "APCA-API-KEY-ID": credentials["key"],
+            "APCA-API-SECRET-KEY": credentials["secret"],
+        }
+
+    def _request(self, method: str, path: str, body=None):
+        if not self.enabled:
+            raise ValueError("paper_broker_not_enabled")
+        return self.transport.request(method, self.ORIGIN + path, headers=self.headers, body=body)
+
+    def submit(
+        self,
+        order: dict,
+        *,
+        limits: RiskLimits,
+        position: float,
+        gross: float,
+        daily_pnl: float,
+        kill_switch: bool = True,
+        fresh: bool = False,
+    ):
+        if set(order) != {"client_order_id", "symbol", "side", "quantity", "limit_price"}:
+            raise ValueError("invalid_order_shape")
+        client_id, symbol = identifier(order["client_order_id"]), identifier(order["symbol"])
+        quantity, price = money(order["quantity"]), money(order["limit_price"])
+        allowed, reason, _ = check_execution(
+            side=order["side"],
+            quantity=float(quantity),
+            price=float(price),
+            current_position_notional=position,
+            current_gross_exposure=gross,
+            daily_pnl=daily_pnl,
+            limits=limits,
+            kill_switch_active=kill_switch,
+            market_data_fresh=fresh,
+            risk_service_available=True,
+        )
+        if not allowed:
+            raise ValueError(reason)
+        if not self.enabled:
+            raise ValueError("paper_broker_not_enabled")
+        fingerprint = digest(order)
+        with self.db.transaction() as conn:
+            row = conn.execute(
+                "SELECT body FROM cp_documents WHERE collection='broker-orders' AND id=?",
+                (client_id,),
+            ).fetchone()
+            if row:
+                state = json.loads(row[0])
+                if state["fingerprint"] != fingerprint:
+                    raise ValueError("order_id_conflict")
+                if state["status"] != "acknowledged":
+                    raise ValueError("order_outcome_unknown_reconcile_first")
+                return state["response"]
+            conn.execute(
+                "INSERT INTO cp_documents VALUES ('broker-orders',?,1,?)",
+                (client_id, json.dumps({"fingerprint": fingerprint, "status": "submitting"})),
+            )
+        body = {
+            "client_order_id": client_id,
+            "symbol": symbol,
+            "side": order["side"].lower(),
+            "qty": str(quantity),
+            "limit_price": str(price),
+            "type": "limit",
+            "time_in_force": "day",
+        }
+        try:
+            response = self._request("POST", "/v2/orders", body)
+            if (
+                not isinstance(response, dict)
+                or response.get("client_order_id") != client_id
+                or not response.get("id")
+            ):
+                raise ValueError("invalid_broker_acknowledgement")
+        except Exception:
+            raise ValueError("order_outcome_unknown_reconcile_first") from None
+        self.db.put(
+            "broker-orders",
+            client_id,
+            {"fingerprint": fingerprint, "status": "acknowledged", "response": response},
+            expected_version=1,
+        )
+        return response
+
+    def reconcile(self, client_id: str):
+        client_id = identifier(client_id)
+        prior = self.db.get("broker-orders", client_id)
+        if not prior:
+            raise ValueError("unknown_client_order")
+        response = self._request(
+            "GET", "/v2/orders:by_client_order_id?" + urlencode({"client_order_id": client_id})
+        )
+        if (
+            not isinstance(response, dict)
+            or response.get("client_order_id") != client_id
+            or not response.get("id")
+        ):
+            raise ValueError("broker_reconciliation_failed")
+        self.db.put(
+            "broker-orders",
+            client_id,
+            {**prior["value"], "status": "acknowledged", "response": response},
+            expected_version=prior["version"],
+        )
+        return response
+
+    def cancel(self, broker_order_id: str):
+        return self._request("DELETE", "/v2/orders/" + quote(identifier(broker_order_id), safe=""))
+
+
+def encode_fix(fields: list[tuple[int, str]]) -> bytes:
+    if not fields or fields[0][0] != 35:
+        raise ValueError("fix_message_type_first")
+    body = bytearray()
+    seen = set()
+    for tag, value in fields:
+        if (
+            type(tag) is not int
+            or tag <= 0
+            or tag in {8, 9, 10}
+            or tag in seen
+            or not isinstance(value, str)
+            or "\x01" in value
+            or "=" in value
+        ):
+            raise ValueError("invalid_fix_field")
+        seen.add(tag)
+        body.extend(f"{tag}={value}\x01".encode("ascii"))
+    if len(body) > 65536:
+        raise ValueError("fix_message_too_large")
+    prefix = f"8=FIX.4.4\x019={len(body)}\x01".encode() + body
+    return prefix + f"10={sum(prefix) % 256:03d}\x01".encode()
+
+
+def decode_fix(raw: bytes) -> dict[int, str]:
+    if not isinstance(raw, bytes) or len(raw) > 65580:
+        raise ValueError("invalid_fix_message")
+    try:
+        pieces = raw.decode("ascii").split("\x01")
+        pairs = [part.split("=", 1) for part in pieces[:-1]]
+        fields = [(int(tag), value) for tag, value in pairs]
+        body_start = raw.index(b"\x01", raw.index(b"\x01") + 1) + 1
+        checksum_start = raw.rfind(b"10=")
+        if (
+            pieces[-1] != ""
+            or fields[0] != (8, "FIX.4.4")
+            or fields[1][0] != 9
+            or fields[-1][0] != 10
+            or fields[2][0] != 35
+            or len(set(tag for tag, _ in fields)) != len(fields)
+            or int(fields[1][1]) != checksum_start - body_start
+            or fields[-1][1] != f"{sum(raw[:checksum_start]) % 256:03d}"
+        ):
+            raise ValueError()
+        return dict(fields)
+    except (ValueError, IndexError, UnicodeError):
+        raise ValueError("invalid_fix_integrity") from None
