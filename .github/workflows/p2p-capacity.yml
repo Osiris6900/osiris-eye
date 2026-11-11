@@ -2,6 +2,12 @@ name: P2P three-host capacity evidence (10/50/100 peers)
 
 on:
   workflow_dispatch:
+    inputs:
+      sustained_100:
+        description: "Also run a 900-second, 10,000-message 100-peer star soak (not release acceptance)"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -91,6 +97,38 @@ jobs:
             --run-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
             --attempt "${{ github.run_attempt }}" \
             --write-manifest "$dir/capacity-sha256.txt"
+      - name: Run opt-in sustained 100-peer star soak (900s)
+        if: ${{ inputs.sustained_100 }}
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/osiris-capacity"
+          b="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["ip"])' "$dir/host-b.json")"
+          c="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["ip"])' "$dir/host-c.json")"
+          python3 scripts/run_p2p_soak.py \
+            --binary "$GITHUB_WORKSPACE/target/release/osiris-p2p-node" \
+            --remote-binary "$GITHUB_WORKSPACE/target/release/osiris-p2p-node" \
+            --ssh-target "runner@$b" --extra-host "host-c=runner@$c" \
+            --host-b-ip "$b" --port 4001 --peers 100 \
+            --messages 10000 --duration 900 \
+            --workflow-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --attempt "${{ github.run_attempt }}" --evidence "$dir/sustained-100.json" \
+            --ssh-option=-i --ssh-option="$dir/host-a" \
+            --ssh-option=-o --ssh-option=BatchMode=yes \
+            --ssh-option=-o --ssh-option=StrictHostKeyChecking=yes \
+            --ssh-option=-o --ssh-option="UserKnownHostsFile=$dir/known_hosts" \
+            --ssh-option=-o --ssh-option=ConnectTimeout=15
+      - name: Offline check sustained evidence and write hashes (no T04 signoff)
+        if: ${{ inputs.sustained_100 }}
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/osiris-capacity"
+          python3 scripts/check_p2p_sustained_evidence.py \
+            --report "$dir/sustained-100.json" \
+            --commit "$GITHUB_SHA" \
+            --run-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --attempt "${{ github.run_attempt }}" \
+            --output "$dir/sustained-review.json"
+          (cd "$dir" && sha256sum sustained-100.json sustained-review.json > sustained-sha256.txt)
       - name: Upload retained capacity measurements
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -99,6 +137,9 @@ jobs:
           path: |
             ${{ runner.temp }}/osiris-capacity/capacity-*.json
             ${{ runner.temp }}/osiris-capacity/capacity-sha256.txt
+            ${{ runner.temp }}/osiris-capacity/sustained-100.json
+            ${{ runner.temp }}/osiris-capacity/sustained-review.json
+            ${{ runner.temp }}/osiris-capacity/sustained-sha256.txt
           if-no-files-found: warn
           retention-days: 14
       - name: Record controller completion
