@@ -22,11 +22,15 @@ trap cleanup EXIT
 setsid "$test_python" scripts/browser_platform20_fixture.py > "$fixture_dir/api.log" 2>&1 &
 runtime_pids+=("$!")
 ready=false
-for attempt in {1..100}; do
+for attempt in {1..300}; do
   if [ -f "$fixture_dir/ca.pem" ] && curl --noproxy 127.0.0.1 --cacert "$fixture_dir/ca.pem" -fsS "https://127.0.0.1:$OSIRIS_BROWSER_API_PORT/health" > /dev/null 2>&1; then ready=true; break; fi
   sleep .1
 done
-if [ "$ready" != true ]; then echo 'Disposable TLS API did not start'; exit 1; fi
+if [ "$ready" != true ]; then
+  echo 'Disposable TLS API did not start'
+  tail -n 60 "$fixture_dir/api.log" || true
+  exit 1
+fi
 setsid env NODE_EXTRA_CA_CERTS="$fixture_dir/ca.pem" OSIRIS_API_TARGET="https://127.0.0.1:$OSIRIS_BROWSER_API_PORT" \
   npm --prefix apps/web run dev -- --host 127.0.0.1 --port "$OSIRIS_BROWSER_WEB_PORT" > "$fixture_dir/vite.log" 2>&1 &
 runtime_pids+=("$!")
@@ -41,5 +45,16 @@ for attempt in {1..100}; do
      curl --noproxy 127.0.0.1 -fsS "http://127.0.0.1:$OSIRIS_BROWSER_WEB_PORT" > /dev/null 2>&1; then ready=true; break; fi
   sleep .1
 done
-if [ "$ready" != true ]; then echo 'Disposable browser or web preview did not start'; exit 1; fi
+if [ "$ready" != true ]; then
+  echo 'Disposable browser or web preview did not start'
+  echo 'Browser process diagnostics:'
+  ps -p "${runtime_pids[2]}" -o pid=,stat=,args= || true
+  echo 'Web process diagnostics:'
+  ps -p "${runtime_pids[1]}" -o pid=,stat=,args= || true
+  echo 'Browser log (last 60 lines):'
+  tail -n 60 "$fixture_dir/chrome.log" || true
+  echo 'Web log (last 60 lines):'
+  tail -n 60 "$fixture_dir/vite.log" || true
+  exit 1
+fi
 node scripts/test_platform20_browser.mjs
