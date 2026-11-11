@@ -217,6 +217,7 @@ export function AdminCentre({ apiBase = '/api' }: { apiBase?: string }) {
   const positions = Array.isArray(paper?.positions) ? paper.positions as JsonObject[] : null;
   const outbox = (network?.outbox as JsonObject | undefined);
   const peerHealth = network?.peer_health as JsonObject | undefined;
+  const localLiveNode = network?.local_live_node as JsonObject | undefined;
   const enrolledNodes = peerNodes(peerHealth);
   const role = typeof overview?.role === 'string' ? overview.role : null;
 
@@ -307,13 +308,24 @@ export function AdminCentre({ apiBase = '/api' }: { apiBase?: string }) {
             {Array.isArray(peerHealth.nodes) && enrolledNodes.length === 0 && <p className="muted">No enrolled nodes.</p>}
             {!Array.isArray(peerHealth.nodes) && <p className="muted">Node list unavailable.</p>}
           </> : <p className="muted">{peerUnavailableCopy(peerHealth)}</p>}
+          <h3>Live local P2P node</h3>
+          {localLiveNode?.status === 'observed' ? <>
+            <p className="muted">Fresh loopback /health response from one configured node. Not a network-wide peer count or an authenticated health attestation.</p>
+            <div className="settings">
+              <div className="setting"><span>Ready</span><span>{String(localLiveNode.ready)}</span></div>
+              <div className="setting"><span>Connected peers (local node)</span><span>{countText(localLiveNode.connected_peers)}</span></div>
+              <div className="setting"><span>Bootstrap peers connected</span><span>{countText(localLiveNode.bootstrap_peers_connected)}</span></div>
+              <div className="setting"><span>Relay reservations</span><span>{countText(localLiveNode.relay_reservations)}</span></div>
+              <div className="setting"><span>Uptime seconds</span><span>{countText(localLiveNode.uptime_seconds)}</span></div>
+            </div>
+          </> : <p className="muted">Local node health unavailable. Configure a loopback port to enable; no live peer count is assumed.</p>}
           <div className="settings">
             <div className="setting"><span>Ingestion enabled</span><span>{String(network?.ingestion_enabled)}</span></div>
             <div className="setting"><span>Outbox configured</span><span>{String(outbox?.configured ?? false)}</span></div>
             <div className="setting"><span>Outbox pending</span><span>{countOrUnavailable(outbox, 'pending')}</span></div>
             <div className="setting"><span>Outbox rejected</span><span>{countOrUnavailable(outbox, 'rejected')}</span></div>
             <div className="setting"><span>Outbox delivered</span><span>{countOrUnavailable(outbox, 'delivered')}</span></div>
-            <div className="setting"><span>Peer telemetry</span><span>{network?.peer_telemetry === 'identity_enrollment_not_live_sessions' ? 'Enrollment registry only' : 'Unavailable'}</span></div>
+            <div className="setting"><span>Peer telemetry</span><span>{network?.peer_telemetry === 'local_node_loopback_health' ? 'Local node observed' : network?.peer_telemetry === 'identity_enrollment_not_live_sessions' ? 'Enrollment registry only' : 'Unavailable'}</span></div>
           </div>
           {outbox?.delivered_meaning === 'local_node_process_not_remote_receipt' && <p className="muted">Delivered counts are local node handoff, not remote peer receipts.</p>}
           <h3>Rejection reasons</h3>

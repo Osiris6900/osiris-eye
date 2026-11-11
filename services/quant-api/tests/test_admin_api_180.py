@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -33,6 +34,7 @@ def client(monkeypatch, tmp_path):
     monkeypatch.setenv("OSIRIS_PAPER_LEDGER_DB", str(tmp_path / "paper.sqlite3"))
     monkeypatch.delenv(admin_centre.OUTBOX_PATH_ENV, raising=False)
     monkeypatch.setenv(admin_centre.IDENTITY_DB_ENV, str(tmp_path / "p2p.sqlite3"))
+    monkeypatch.delenv("OSIRIS_P2P_LOCAL_HEALTH_PORT", raising=False)
     monkeypatch.setenv(admin_centre.ALERT_DB_ENV, str(tmp_path / "alerts.sqlite3"))
     admin_centre.reset_admin_state()
     yield TestClient(app)
@@ -251,7 +253,7 @@ def test_contract_schemas_and_keys(client, tmp_path):
     assert network["schema"] == "osiris.admin_network_status.v1"
     assert set(network) == {
         "schema", "generated_at", "ingestion_enabled", "kill_switch_env", "outbox",
-        "peer_telemetry", "peer_health", "live_trading_authorized",
+        "peer_telemetry", "peer_health", "local_live_node", "live_trading_authorized",
     }
     assert network["peer_health"]["peer_count"] is None
     assert network["peer_health"]["status"] == "unavailable"
@@ -489,3 +491,61 @@ def test_blank_alert_store_path_is_not_configured(client, monkeypatch):
     response = client.get("/admin/alerts", headers=_headers("viewer"))
     assert response.json()["reason"] == "not_configured"
     assert response.json()["active"] is None
+
+
+def test_local_node_health_is_a_real_bounded_loopback_probe_and_strips_identity(client, monkeypatch):
+    monkeypatch.setenv("OSIRIS_P2P_LOCAL_HEALTH_PORT", "9090")
+    from osiris_api import p2p_local_health
+    sample = {
+        "status": "alive", "peer_id": "sensitive-node-identity", "ready": True,
+        "uptime_seconds": 123, "connected_peers": 5,
+        "bootstrap_peers_connected": 2, "bootstrap_peers_total": 3,
+        "relay_configured": True, "relay_reservation_active": True,
+        "relays_total": 1, "relay_reservations": 1,
+        "private_key": "never-appear",
+    }
+    with patch.object(p2p_local_health, "HTTPConnection") as client_conn:
+        http = client_conn.return_value
+        http.getresponse.return_value.status = 200
+        http.getresponse.return_value.read.return_value = json.dumps(sample).encode()
+        response = client.get("/admin/network/status", headers=_headers("viewer"))
+        assert response.status_code == 200
+        client_conn.assert_called_once_with("127.0.0.1", 9090, timeout=0.3)
+        http.request.assert_called_once_with("GET", "/health")
+        http.getresponse.return_value.read.assert_called_once_with(4097)
+        http.close.assert_called_once()
+    node = response.json()["local_live_node"]
+    assert node["status"] == "observed"
+    assert node["connected_peers"] == 5
+    assert node["scope"] == "one_local_node_not_network_total"
+    assert node["authenticated_or_attested"] is False
+    assert response.json()["peer_telemetry"] == "local_node_loopback_health"
+    assert "sensitive-node-identity" not in response.text
+    assert "never-appear" not in response.text
+
+
+@pytest.mark.parametrize("bad_port", ["", "-1", "0", "65536", "localhost:9090", "99999", " 9090", "09090"])
+def test_local_node_probe_rejects_unsafe_port_configuration(client, monkeypatch, bad_port):
+    monkeypatch.setenv("OSIRIS_P2P_LOCAL_HEALTH_PORT", bad_port)
+    from osiris_api import p2p_local_health
+    with patch.object(p2p_local_health, "HTTPConnection") as connection:
+        response = client.get("/admin/network/status", headers=_headers("viewer"))
+        connection.assert_not_called()
+    assert response.json()["local_live_node"]["status"] == "unavailable"
+    assert response.json()["local_live_node"]["reason"] == "invalid_port"
+
+
+def test_local_node_probe_unavailable_fails_closed_without_fabricating_peers(client, monkeypatch):
+    monkeypatch.setenv("OSIRIS_P2P_LOCAL_HEALTH_PORT", "9090")
+    from osiris_api import p2p_local_health
+    with patch.object(p2p_local_health, "HTTPConnection") as connection:
+        connection.return_value.request.side_effect = OSError("private-host-detail")
+        response = client.get("/admin/network/status", headers=_headers("viewer"))
+    assert response.status_code == 200
+    body = response.json()
+    assert body["local_live_node"] == {
+        "status": "unavailable", "reason": "health_unreachable_or_invalid",
+        "source": "loopback_local_node",
+    }
+    assert body["peer_health"]["peer_count"] is None
+    assert "private-host-detail" not in response.text
