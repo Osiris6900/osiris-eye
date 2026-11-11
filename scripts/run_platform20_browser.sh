@@ -57,4 +57,10 @@ if [ "$ready" != true ]; then
   tail -n 60 "$fixture_dir/vite.log" || true
   exit 1
 fi
+# Fail early with actionable diagnostics if Chromium's debugging endpoint disappears.
+if ! curl --noproxy 127.0.0.1 -fsS "http://127.0.0.1:$OSIRIS_BROWSER_DEBUG_PORT/json/version" > /dev/null; then
+  echo 'Chromium debugging endpoint unavailable before E2E test'
+  tail -n 60 "$fixture_dir/chrome.log" || true
+  exit 1
+fi
 node scripts/test_platform20_browser.mjs
