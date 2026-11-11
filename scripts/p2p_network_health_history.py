@@ -33,11 +33,14 @@ def evaluate_health_history(samples: object) -> dict:
             peer = node["peer_id"]
             brain = node.get("network_brain")
             flags = node.get("anomaly_detection")
-            if (not peer or peer in peers or not isinstance(brain, dict)
+            if (not peer.strip() or peer in peers or not isinstance(brain, dict)
                     or type(brain.get("connected_peers")) is not int
                     or brain["connected_peers"] < 0 or not isinstance(flags, list)
+                    or len(flags) > 3
                     or any(flag not in ("isolated_node", "all_bootstraps_disconnected",
                                         "partial_bootstrap_disconnect") for flag in flags)):
+                return reject("invalid_node_metrics")
+            if len(set(flags)) != len(flags):
                 return reject("invalid_node_metrics")
             peers[peer] = brain["connected_peers"]
             for flag in flags:

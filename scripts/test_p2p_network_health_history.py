@@ -11,6 +11,22 @@ def health(peer, connected):
 
 
 class NetworkHistoryTests(unittest.TestCase):
+    def test_duplicate_or_unbounded_alerts_are_rejected(self):
+        for flags in (["isolated_node", "isolated_node"], ["isolated_node"] * 100):
+            data = health("a", 1)
+            data["nodes"][0]["anomaly_detection"] = flags
+            result = evaluate_health_history([
+                {"observed_at_ms": 1, "health": health("a", 1)},
+                {"observed_at_ms": 2, "health": data}])
+            self.assertEqual(result["status"], "rejected")
+
+    def test_blank_peer_identity_is_rejected(self):
+        data = health("a", 1)
+        data["nodes"][0]["peer_id"] = " "
+        self.assertEqual(evaluate_health_history([
+            {"observed_at_ms": 1, "health": health("a", 1)},
+            {"observed_at_ms": 2, "health": data}])["status"], "rejected")
+
     def test_connectivity_loss(self):
         result = evaluate_health_history([
             {"observed_at_ms": 1, "health": health("peer-a", 2)},
