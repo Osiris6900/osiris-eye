@@ -8,7 +8,13 @@ Status: **PLANNED / EVIDENCE NOT YET ACCEPTED**. This runbook does not dispatch 
 - Check workflow definitions and acceptance scripts against current main; never reuse stale artifacts from another SHA.
 
 ## T18 — disaster recovery
-- The current local paper-ledger CI backup/restore is a single-runner synthetic exercise only. Preserve its proof and SHA-256 manifest as local evidence, not independent-host DR.
+- The local paper-ledger CI backup/restore exercises a single-runner synthetic fixture.
+  A follow-on job now downloads the hashed synthetic backup artifact into a
+  separate GitHub-hosted runner job, verifies source files and digests, restores
+  through the real paper execution module, reconciles and continues one paper
+  order. Preserve both job artifacts and hashes. **Do not infer physically distinct
+  hosts, a running service failover, operator data, RTO/RPO, or production DR**.
+  T18 stays Partial.
 - Design an authorized independent-host backup transfer and restore drill with failure injection, health checks, state reconciliation and isolation from real operator data.
 - Measure RTO from service failure to recovered healthy response; measure RPO from last durable event to recovered durable state. Capture clock basis, units, sample size, limits and negative outcomes.
 - Retain sanitized source/restore digests, exact commit, workflow run and attempt, host class, UTC timestamps, logs and artifact expiry.
