@@ -34,6 +34,20 @@ def sample():
 
 
 class AuditIntakeTests(unittest.TestCase):
+    def test_unhashable_decision_is_rejected(self):
+        for decision in ([], {}):
+            data = sample()
+            data["decision"] = decision
+            self.assertIn("invalid_decision", check(data)["failures"])
+
+    def test_malformed_https_urls_are_rejected(self):
+        for url in ("https://[broken", "https://example.invalid:wrong/report",
+                    "https://example.invalid:99999/report"):
+            with self.subTest(url=url):
+                data = sample()
+                data["artifacts"][0]["url"] = url
+                self.assertIn("invalid_artifact_url", check(data)["failures"])
+
     def test_valid_shape_never_grants_signoff(self):
         result = check(sample())
         self.assertTrue(result["intake_valid"])

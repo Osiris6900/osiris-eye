@@ -57,9 +57,14 @@ def check(data: object) -> dict:
                 failures.append("invalid_artifact_shape")
                 continue
             url = item["url"]
-            parsed = urlparse(url) if isinstance(url, str) else None
-            if (not parsed or parsed.scheme != "https" or not parsed.hostname
-                or parsed.username or parsed.password or len(url) > 2048):
+            try:
+                parsed = urlparse(url) if isinstance(url, str) else None
+                valid_url = (parsed and parsed.scheme == "https" and parsed.hostname
+                             and not parsed.username and not parsed.password
+                             and len(url) <= 2048 and (parsed.port is None or parsed.port > 0))
+            except ValueError:
+                valid_url = False
+            if not valid_url:
                 failures.append("invalid_artifact_url")
             if not isinstance(item["sha256"], str) or not DIGEST.fullmatch(item["sha256"]):
                 failures.append("invalid_artifact_digest")
@@ -74,7 +79,7 @@ def check(data: object) -> dict:
         for f in findings
     ):
         failures.append("invalid_findings")
-    if data["decision"] not in DECISIONS:
+    if not isinstance(data["decision"], str) or data["decision"] not in DECISIONS:
         failures.append("invalid_decision")
     if data["paper_only"] is not True:
         failures.append("paper_only_required")
