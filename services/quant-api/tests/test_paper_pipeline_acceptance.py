@@ -310,3 +310,49 @@ def test_replaying_with_a_different_slippage_fails_closed(account):
     with pytest.raises(ValueError, match="pipeline_decision_conflict"):
         run(slippage_bps="0")
     assert ledger.snapshot()["fill_count"] == 1
+
+
+def test_real_process_exit_after_paper_order_commit_recovers_without_duplicate(account):
+    """Child process exits without cleanup after SQLite order commit, before receipt."""
+    child = r"""
+import json
+import os
+import sys
+from datetime import datetime
+from unittest.mock import patch
+from osiris_api.paper_pipeline import run_paper_pipeline
+from osiris_api.public_market_data import CoinbasePublicMarketDataAdapter
+
+fixture = json.loads(sys.argv[1])
+clock = datetime.fromisoformat(sys.argv[2])
+with patch.object(CoinbasePublicMarketDataAdapter, "fetch_bars", return_value=fixture):
+    with patch("osiris_api.paper_pipeline._account_result", side_effect=lambda *args: os._exit(73)):
+        run_paper_pipeline(quantity="2", fee="1", now=clock)
+"""
+    child_run = subprocess.run(
+        [sys.executable, "-c", child, json.dumps(bars()), NOW.isoformat()],
+        env=os.environ.copy(), capture_output=True, text=True, timeout=20,
+        check=False,
+    )
+    assert child_run.returncode == 73, (child_run.stdout, child_run.stderr)
+    before = ledger.snapshot()
+    assert before["fill_count"] == 1
+    assert before["cash"] == "779"
+    assert ledger.reconcile()["passed"] is True
+
+    # The child never persisted the pipeline result. Recover the exact
+    # candle in this independent parent process, then replay once more.
+    recovered = run()
+    again = run()
+    assert recovered["replayed"] is True
+    assert again["replayed"] is True
+    assert recovered["pipeline_run_id"] == again["pipeline_run_id"]
+    assert recovered["order"]["status"] == "idempotent_replay"
+    assert ledger.snapshot()["fill_count"] == 1
+    assert ledger.snapshot()["cash"] == "779"
+    assert ledger.reconcile()["passed"] is True
+
+    # An altered proposal for the *same* candle still fails closed.
+    with pytest.raises(ValueError, match="pipeline_decision_conflict"):
+        run(quantity="3")
+    assert ledger.snapshot()["fill_count"] == 1
