@@ -5,8 +5,6 @@ This module never claims independent provider authentication, market truth or
 live order authorization. Timestamp comparisons use an injected trusted clock.
 """
 from __future__ import annotations
-import hashlib
-import json
 import math
 
 
@@ -35,9 +33,12 @@ def inspect_observations(observations: object, *, now_ms: int,
                     "index": index, "live_trading_authorized": False}
         timestamp = observation["observed_at_ms"]
         price = observation["price"]
+        try:
+            valid_price = type(price) in (int, float) and math.isfinite(price) and price > 0
+        except OverflowError:
+            valid_price = False
         if (type(timestamp) is not int or timestamp < 0 or
-                isinstance(price, bool) or type(price) not in (int, float) or
-                not math.isfinite(price) or price <= 0):
+                not valid_price):
             return {"status": "rejected", "reason": "invalid_time_or_price",
                     "index": index, "live_trading_authorized": False}
         flags = []

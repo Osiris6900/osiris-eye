@@ -8,6 +8,10 @@ def observation(oid="one", timestamp=1000, price=10.0):
 
 
 class DataClockTests(unittest.TestCase):
+    def test_oversized_integer_price_rejected(self):
+        self.assertEqual(inspect_observations([observation(price=10**400)],
+                                             now_ms=1000)["status"], "rejected")
+
     def test_good_research_observation(self):
         result = inspect_observations([observation()], now_ms=1000)
         self.assertTrue(result["all_accepted"])
