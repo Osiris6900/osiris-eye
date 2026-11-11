@@ -52,6 +52,13 @@ request cannot supply prices, signals, risk approval, limits or a clock.
 Retries use a stable strategy/symbol/closed-candle decision ID; changing the
 inputs for the same decision raises a conflict instead of creating another fill.
 
+The Python acceptance suite now also launches a **separate OS process**,
+commits a real SQLite paper fill, then hard-exits the child before saving its
+pipeline receipt. A new process re-runs the same candle and must recover the
+existing fill once, reconcile the ledger, and refuse a conflicting proposal.
+This proves one reproducible local crash window. It is not multi-service
+outage acceptance, exchange fill realism, or independent disaster recovery.
+
 These checks establish local paper pipeline behavior. They do not accept the
 separate Rust/P2P cross-host release gates, provide independent signoff, validate
 strategy profitability or authorize live execution.
