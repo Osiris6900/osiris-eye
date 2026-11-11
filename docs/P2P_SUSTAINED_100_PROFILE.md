@@ -1,0 +1,11 @@
+# T04/T19 — opt-in sustained 100-peer star capacity profile
+
+This candidate adds an optional *sustained_100* boolean input to [P2P three-host capacity evidence](../.github/workflows/p2p-capacity.yml). Normal dispatches retain the existing short 10/50/100-peer sweeps. An operator can choose **Run workflow → main → sustained_100** only **after the PR is merged** and the workflow is reviewed.
+
+When enabled, Host A also attempts a **900-second, 10,000-message, 100-peer** encrypted recipient/bootstrap star run. The harness has **three Tailscale-linked GitHub runner jobs in one private tailnet**; it deliberately drains message workload before a sink restart and pauses scheduled workload until decrypted recovery. The existing host B/C timeouts remain 65 minutes, and receiver coordination is capped at 2700 seconds. This is an optional workload and is not part of routine PR CI.
+
+The extra report is `sustained-100.json`. The offline checker `scripts/check_p2p_sustained_evidence.py` verifies the exact commit/run/attempt claim, declared 100-peer / 10,000-message / >=900-second workload, three distinct run-scoped host commitments, binary digests, declared topology limits, and the repository's already-published load policy `config/p2p_load_acceptance_policy.json`. Successful checks yield `sustained-review.json`; the workflow also records SHA-256 hashes of report and review in `sustained-sha256.txt`. The existing 10/50/100 short sweep reports remain separate.
+
+**No release gate is auto-accepted.** Operator/independent review must verify the final exact candidate SHA, GitHub job conclusions, *downloaded* artifact byte hashes, platform-host independence, failure logs, and reproducible traffic results. This profile cannot certify sustained open-mesh connections, NAT diversity, relay fallback, independent external hosts, production uptime, in-flight delivery during the sink outage, T04/T19 approval, or a live trading authorization. Keep T04 and T19 **Partial**, and preserve PAPER-ONLY behavior. If the optional workload fails, retain its failure artifact and do not mark it as a successful soak.
+
+Follow-up acceptance work requires controlled NAT and relay variants, longer independent-host runs and fully traceable Rust receipt → Python ledger → paper-order evidence.
