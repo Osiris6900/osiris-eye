@@ -4,7 +4,7 @@ No adapter in this module submits orders or requires broker credentials.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import csv
 import io
 import json
@@ -19,6 +19,8 @@ _ALLOWED_GRANULARITIES = frozenset({60, 300, 900, 3600, 21600, 86400})
 
 
 def _time_range(start: str, end: str) -> tuple[datetime, datetime]:
+    if not isinstance(start, str) or not isinstance(end, str):
+        raise ValueError("invalid_market_data_time_range")
     try:
         first = datetime.fromisoformat(start.replace("Z", "+00:00"))
         last = datetime.fromisoformat(end.replace("Z", "+00:00"))
@@ -45,6 +47,8 @@ def _bar(symbol: str, timestamp: datetime, available_at: str,
          open_price: Any, high: Any, low: Any, close: Any, volume: Any) -> dict[str, Any]:
     if not isinstance(timestamp, datetime) or timestamp.tzinfo is None:
         raise ValueError("invalid_market_data_timestamp")
+    if any(isinstance(value, bool) for value in (open_price, high, low, close, volume)):
+        raise ValueError("invalid_market_data_ohlcv")
     try:
         values = [float(value) for value in (open_price, high, low, close, volume)]
     except (TypeError, ValueError, OverflowError) as exc:
@@ -73,13 +77,16 @@ class CoinbasePublicMarketDataAdapter:
     mode = "public"
 
     def __init__(self, *, granularity: int = 60, timeout_seconds: float = 8.0) -> None:
-        if granularity not in _ALLOWED_GRANULARITIES:
+        if type(granularity) is not int or granularity not in _ALLOWED_GRANULARITIES:
             raise ValueError("unsupported_candle_granularity")
-        if not 1 <= timeout_seconds <= 30:
+        if (isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float))
+                or not 1 <= timeout_seconds <= 30):
             raise ValueError("invalid_http_timeout")
         self.granularity, self.timeout_seconds = granularity, timeout_seconds
 
     def fetch_bars(self, symbol: str, start: str, end: str) -> list[dict[str, Any]]:
+        if not isinstance(symbol, str):
+            raise ValueError("coinbase_symbol_must_be_BASE-QUOTE")
         product_id = symbol.strip().upper()
         if not re.fullmatch(r"[A-Z0-9]{2,15}-[A-Z0-9]{2,15}", product_id):
             raise ValueError("coinbase_symbol_must_be_BASE-QUOTE")
@@ -99,15 +106,35 @@ class CoinbasePublicMarketDataAdapter:
             raise ValueError("invalid_coinbase_candles_response") from exc
         if not isinstance(payload, list) or len(payload) > 300:
             raise ValueError("invalid_coinbase_candles_response")
-        available = datetime.now(timezone.utc).isoformat()
+        retrieved_at = datetime.now(timezone.utc)
+        available = retrieved_at.isoformat()
         bars = []
+        seen = set()
         for candle in payload:
             if not isinstance(candle, list) or len(candle) != 6:
                 raise ValueError("invalid_coinbase_candle")
             timestamp, low, high, open_price, close, volume = candle
-            bars.append(_bar(product_id, datetime.fromtimestamp(timestamp, timezone.utc),
-                             available, open_price, high, low, close, volume))
-        return bars
+            if isinstance(timestamp, bool) or not isinstance(timestamp, int):
+                raise ValueError("invalid_coinbase_candle_timestamp")
+            try:
+                opened_at = datetime.fromtimestamp(timestamp, timezone.utc)
+                closed_at = opened_at + timedelta(seconds=self.granularity)
+            except (OverflowError, OSError, ValueError) as exc:
+                raise ValueError("invalid_coinbase_candle_timestamp") from exc
+            if timestamp % self.granularity:
+                raise ValueError("invalid_coinbase_candle_timestamp")
+            bar = _bar(product_id, opened_at, available, open_price, high, low, close, volume)
+            # Coinbase documents that responses can contain candles preceding
+            # start. Never let those observations enter the requested history.
+            if opened_at < first or opened_at >= last:
+                continue
+            if timestamp in seen:
+                raise ValueError("duplicate_coinbase_candle")
+            seen.add(timestamp)
+            bar.update({"candle_end_time": closed_at.isoformat(),
+                        "is_closed": closed_at <= retrieved_at})
+            bars.append(bar)
+        return sorted(bars, key=lambda bar: bar["event_time"])
 
 
 class BinancePublicMarketDataAdapter:

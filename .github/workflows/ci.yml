@@ -37,6 +37,20 @@ jobs:
         run: python scripts/test_verify_all.py
       - name: Run Python tests
         run: pytest -q services/quant-api/tests tests/test_ultra_fast_feed.py
+      - name: Run connected market-to-paper acceptance with offline candles
+        run: |
+          python -m unittest discover -s scripts -p 'test_run_market_paper_acceptance.py' -v
+          python scripts/run_market_paper_acceptance.py --output "${{ runner.temp }}/market-paper-acceptance.json"
+      - name: Retain market-to-paper acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: market-paper-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/market-paper-acceptance.json
+            ${{ runner.temp }}/market-paper-acceptance.json.sha256
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Smoke-test bounded local tick benchmark
         run: |
           PYTHONPATH=services/quant-api/src python scripts/benchmark_ultra_fast_feed.py --count 1000

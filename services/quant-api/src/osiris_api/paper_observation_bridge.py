@@ -26,6 +26,7 @@ PAPER_SCHEMA = "osiris.paper_intent.v1"
 PAPER_SOURCE = "paper:observation-bridge"
 DEFAULT_MAX_AGE_SECONDS = 300.0
 DEFAULT_MAX_FUTURE_SKEW_SECONDS = 60.0
+_DATETIME_TYPE = datetime
 
 
 class PaperBridgeRefused(ValueError):
@@ -33,8 +34,9 @@ class PaperBridgeRefused(ValueError):
 
 
 def _utc_now(value: datetime | None) -> datetime:
-    current = value or datetime.now(timezone.utc)
-    if current.tzinfo is None or current.utcoffset() is None:
+    current = datetime.now(timezone.utc) if value is None else value
+    if (not isinstance(current, _DATETIME_TYPE)
+            or current.tzinfo is None or current.utcoffset() is None):
         raise PaperBridgeRefused("paper_evaluation_time_missing_timezone")
     return current.astimezone(timezone.utc)
 
@@ -141,7 +143,14 @@ def evaluate_stored_observation(
     """Evaluate one stored observation and durably record an idempotent paper intent."""
     if os.getenv(PAPER_INTENT_ENV) != "1":
         raise PaperBridgeRefused("paper_intent_disabled")
-    if max_age_seconds <= 0 or max_future_skew_seconds < 0:
+    try:
+        valid_bounds = all(
+            not isinstance(value, bool) and isinstance(value, (int, float))
+            and math.isfinite(value) for value in (max_age_seconds, max_future_skew_seconds)
+        )
+    except OverflowError:
+        valid_bounds = False
+    if not valid_bounds or max_age_seconds <= 0 or max_future_skew_seconds < 0:
         raise PaperBridgeRefused("invalid_freshness_bounds")
     providers = {str(item).strip() for item in allowed_providers if str(item).strip()}
     if not providers:
@@ -163,6 +172,11 @@ def evaluate_stored_observation(
 
     current = _utc_now(now)
     observed_at = _event_time(stored.get("event_time"))
+    available_at = _event_time(stored.get("available_at"))
+    # A clock-skew allowance at ingestion never makes future knowledge usable
+    # by a strategy before it actually becomes available.
+    if available_at > current:
+        raise PaperBridgeRefused("stored_observation_not_yet_available")
     age = (current - observed_at).total_seconds()
     if age > max_age_seconds:
         raise PaperBridgeRefused("observation_stale")

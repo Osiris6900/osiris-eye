@@ -65,3 +65,18 @@ def test_delegates_to_existing_risk_limits():
     assert authorize_paper_order(replace(BASE, quantity=1000)) == (
         False, "max_order_notional_exceeded"
     )
+
+
+def test_authority_flags_require_literal_booleans():
+    """JSON strings and numbers cannot supply authentication or disable a halt."""
+    for field, reason in (
+        ("model_approved", "model_not_approved"),
+        ("feed_authenticated", "feed_unauthenticated"),
+        ("feed_entitled", "feed_unentitled"),
+    ):
+        for value in (None, 1, "true", "false"):
+            assert authorize_paper_order(replace(BASE, **{field: value})) == (False, reason)
+    for value in (None, 0, "false", 1):
+        assert authorize_paper_order(replace(BASE, kill_switch_active=value)) == (
+            False, "kill_switch_active",
+        )

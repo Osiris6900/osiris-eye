@@ -2,7 +2,7 @@
 
 OSIRIS EYE is a research-first, multi-asset quantitative trading platform scaffold. The existing dashboard (`index.html`) is preserved. This repository adds a Python research/API layer, a Rust risk kernel, a TypeScript web app foundation, tests, and CI.
 
-> **Safety status:** research and paper-trading scaffold only. No live broker connection, exchange credentials, or order-routing is enabled. Market examples are synthetic. Do not use for live trading without independent validation, security review, broker/exchange integration, and applicable regulatory review.
+> **Safety status:** research and paper-trading scaffold only. No live broker connection, exchange credentials, or order-routing is enabled. Research examples are synthetic; the connected paper pipeline can fetch public Coinbase market data and simulate fills. Do not use for live trading without independent validation, security review, broker/exchange integration, and applicable regulatory review.
 
 ## Architecture
 
@@ -103,6 +103,27 @@ exchange WebSocket. It displays prices only after fresh valid ticks arrive;
 closed or silent connections retry with bounded backoff. Network availability
 and exchange access determine whether it can connect. Other dashboard snapshots
 remain explicitly simulated; the ticker does not feed research or order routing.
+
+## Connected market-to-paper pipeline
+
+`POST /paper/pipeline/run` connects public Coinbase USD candles to a deterministic
+momentum proposal, independent persisted risk checks, and durable paper fills.
+The same execution ledger supplies positions, cash, fees, realized/unrealized
+P&L, reconciliation and restart-safe dashboard status. The endpoint accepts
+strategy parameters, never caller-supplied prices, signals or risk approvals.
+
+Run the repeatable acceptance exercise (isolated temporary account):
+
+```bash
+python scripts/run_market_paper_acceptance.py --output /tmp/paper-offline.json
+python scripts/run_market_paper_acceptance.py --live-data --output /tmp/paper-public.json
+```
+
+The first command exercises real code with deterministic feed fixtures; the
+second fetches public data over HTTPS. Both retain actual outcomes and hashes.
+See [setup, API usage and acceptance scope](docs/PAPER_PIPELINE_ACCEPTANCE.md).
+Paper fills use closed-candle prices and explicit fees; this does not establish
+execution realism or strategy profitability. Live broker routing stays disabled.
 
 ## Shared data and API
 

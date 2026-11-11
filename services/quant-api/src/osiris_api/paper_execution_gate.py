@@ -3,7 +3,6 @@
 This module does not connect to brokers or place orders.
 """
 from dataclasses import dataclass
-import math
 
 from .risk import RiskLimits, check_order
 
@@ -27,13 +26,13 @@ def authorize_paper_order(
     context: PaperOrderContext, limits: RiskLimits = RiskLimits()
 ) -> tuple[bool, str]:
     """Authorize simulation only after all independent gates pass."""
-    if context.kill_switch_active:
+    if context.kill_switch_active is not False:
         return False, "kill_switch_active"
-    if not context.feed_authenticated:
+    if context.feed_authenticated is not True:
         return False, "feed_unauthenticated"
-    if not context.feed_entitled:
+    if context.feed_entitled is not True:
         return False, "feed_unentitled"
-    if not context.model_approved:
+    if context.model_approved is not True:
         return False, "model_not_approved"
     if (
         isinstance(context.observation_time_ms, bool)
