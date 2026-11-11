@@ -5,6 +5,7 @@ import './style.css';
 import LiveCryptoTape from './LiveCryptoTape';
 import { PaperPipelinePanel } from './PaperPipelinePanel';
 import { IntelligencePanel } from './IntelligencePanel';
+import { LiveTradingSetup } from './LiveTradingSetup';
 
 const tickers = [
   ['NIFTY 50','24,198.60','+112.35','+0.47%','up'],['BANKNIFTY','51,342.20','+296.75','+0.56%','up'],
@@ -36,6 +37,7 @@ export function App(){
    <div className="demo-banner"><span>● SIMULATION ENVIRONMENT</span><span>Illustrative market values · Not live prices · No orders can be placed</span></div>
    <section className="ticker-strip">{tickers.map(t=><button className="ticker" key={t[0]} onClick={()=>setSymbol(t[0])}><b>{t[0]}</b><strong>{t[1]}</strong><small className={t[4]}>{t[2]} ({t[3]})</small><Spark down={t[4]==='down'}/></button>)}</section>
    <div className="section-heading"><div><small>MARKET OVERVIEW / INDIA + GLOBAL</small><h1>{active==='Dashboard'?'Trading Intelligence Dashboard':active}</h1></div><span className="market-open">● RESEARCH MODE</span></div>
+   {active === 'Live Trading' || active === 'Settings' ? <LiveTradingSetup/> : <>
    <LiveCryptoTape/>
    <MarketMechanics/>
    <PaperPipelinePanel/>
@@ -56,6 +58,7 @@ export function App(){
     <article className="panel portfolio"><div className="panel-head"><h2>Portfolio & Risk</h2><span className="mini-tag">PAPER ONLY</span></div><div className="pnl"><div><small>TOTAL P&L</small><b className="up">+₹7,42,360</b></div><div><small>DAY P&L</small><b className="up">+₹21,650</b></div></div><div className="risk-grid"><div><small>NET EXPOSURE</small><b>24%</b></div><div><small>MAX DRAWDOWN</small><b className="down">-8.6%</b></div><div><small>MARGIN USED</small><b>32%</b></div><div><small>RISK SCORE</small><b>42 / 100</b></div></div><div className="risk-meter"><i/></div><small className="muted">Illustrative values only — no account connected</small></article>
    </section>
    <section className="bottom-grid"><article className="panel"><div className="panel-head"><h2>Global Markets</h2><small>REFERENCE SNAPSHOT · DEMO</small></div><div className="global-list">{[['AMERICAS','S&P 500','6,047.21','+0.32%'],['AMERICAS','NASDAQ','19,482.30','+0.41%'],['EUROPE','DAX','19,246.60','+0.28%'],['EUROPE','FTSE','8,312.40','+0.18%'],['ASIA','NIKKEI','39,410.20','-0.10%'],['ASIA','HANG SENG','19,840.30','-0.36%']].map(x=><div key={x[1]}><small>{x[0]}</small><b>{x[1]}</b><span>{x[2]}</span><em className={x[3][0]==='-'?'down':'up'}>{x[3]}</em></div>)}</div></article><article className="panel news"><div className="panel-head"><h2>News & Sentiment</h2><small>PLACEHOLDER · NOT CONNECTED</small></div>{[['10:22','RBI policy signals cautious stance','POSITIVE'],['09:48','Global markets digest US data','POSITIVE'],['09:15','Flows remain mixed in Indian equities','NEUTRAL'],['08:42','Crude oil volatility elevated','NEGATIVE'],['08:10','Technology stocks lead US markets','POSITIVE']].map(x=><div className="news-row" key={x[0]}><time>{x[0]}</time><span>{x[1]}</span><b className={x[2].toLowerCase()}>{x[2]}</b></div>)}</article></section>
+   </>}
    <footer>OSIRIS EYE · INSTITUTIONAL QUANT TERMINAL <span>DEMO BUILD · LIVE EXECUTION DISABLED · DATA SUBJECT TO VALIDATION</span></footer>
   </main>
  </div>
