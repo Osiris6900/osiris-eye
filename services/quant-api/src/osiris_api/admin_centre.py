@@ -31,6 +31,7 @@ from typing import Any, Iterable, Mapping
 from urllib.parse import quote
 
 from . import authorized_feeds
+from .p2p_local_health import read_local_node_health
 from .admin_alert_store import (
     ALERT_DB_ENV, AlertStoreError, acknowledge_stored_alert,
     record_raised_alerts, resolve_alert_db_path, unavailable_alert_history,
@@ -547,6 +548,7 @@ def network_status(
     current = _utcnow(now)
     counts = dict(outbox_counts) if outbox_counts else {"configured": False}
     peer_health = _peer_health_view(identity_registry)
+    local_live_node = read_local_node_health()
     return {
         "schema": NETWORK_SCHEMA,
         "generated_at": current.isoformat(),
@@ -554,10 +556,13 @@ def network_status(
         "kill_switch_env": ENABLE_ENV,
         "outbox": counts,
         "peer_telemetry": (
-            "identity_enrollment_not_live_sessions"
+            "local_node_loopback_health"
+            if local_live_node["status"] == "observed"
+            else "identity_enrollment_not_live_sessions"
             if peer_health["status"] == "enrolled_registry"
             else "unavailable_in_quant_api_process"
         ),
+        "local_live_node": local_live_node,
         "peer_health": peer_health,
         "live_trading_authorized": False,
     }
