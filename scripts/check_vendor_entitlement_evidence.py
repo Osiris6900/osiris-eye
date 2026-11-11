@@ -48,8 +48,14 @@ def validate(record: object, *, as_of: date) -> dict:
     ):
         problems.append("invalid_instruments")
     url = record["evidence_url"]
-    parsed = urlparse(url) if isinstance(url, str) else None
-    if not parsed or parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+    try:
+        parsed = urlparse(url) if isinstance(url, str) else None
+        valid_url = (parsed and parsed.scheme == "https" and parsed.hostname
+                     and not parsed.username and not parsed.password
+                     and len(url) <= 2048 and (parsed.port is None or parsed.port > 0))
+    except ValueError:
+        valid_url = False
+    if not valid_url:
         problems.append("invalid_evidence_url")
     digest = record["evidence_sha256"]
     if not isinstance(digest, str) or not SHA.fullmatch(digest):

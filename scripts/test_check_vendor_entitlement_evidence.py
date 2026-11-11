@@ -23,6 +23,15 @@ def example():
 
 
 class VendorEvidenceTests(unittest.TestCase):
+    def test_malformed_https_urls_are_rejected(self):
+        for url in ("https://[broken", "https://example.invalid:wrong/report",
+                    "https://example.invalid:99999/report"):
+            with self.subTest(url=url):
+                data = example()
+                data["evidence_url"] = url
+                self.assertIn("invalid_evidence_url",
+                              validate(data, as_of=date(2026, 11, 11))["errors"])
+
     def test_metadata_never_authorizes_live_feed(self):
         result = validate(example(), as_of=date(2026, 11, 11))
         self.assertTrue(result["metadata_valid"])
