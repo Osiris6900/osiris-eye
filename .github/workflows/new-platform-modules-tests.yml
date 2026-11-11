@@ -3,16 +3,7 @@ name: New platform modules unit tests
 on:
   pull_request:
     paths:
-      - "scripts/market_data_quality_clock_guard.py"
-      - "scripts/test_market_data_quality_clock_guard.py"
-      - "scripts/advanced_risk_signal_advisors.py"
-      - "scripts/test_advanced_risk_signal_advisors.py"
-      - "scripts/research_experiment_lineage.py"
-      - "scripts/test_research_experiment_lineage.py"
-      - "scripts/model_drift_shadow_guard.py"
-      - "scripts/test_model_drift_shadow_guard.py"
-      - "scripts/p2p_health_audit_pipeline.py"
-      - "scripts/test_p2p_health_audit_pipeline.py"
+      - "scripts/**"
       - ".github/workflows/new-platform-modules-tests.yml"
   push:
     branches: [main]
@@ -33,25 +24,36 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.11"
-      - name: Test P2P health audit integration
-        run: python -m unittest discover -s scripts -p 'test_p2p_health_audit_pipeline.py' -v
-      - name: Test market quality and clock guard when present
+      - name: Test platform modules and require their regression suites
         run: |
-          if [ -f scripts/test_market_data_quality_clock_guard.py ]; then
-            python -m unittest discover -s scripts -p 'test_market_data_quality_clock_guard.py' -v
-          fi
-      - name: Test stress and conflict advisors when present
-        run: |
-          if [ -f scripts/test_advanced_risk_signal_advisors.py ]; then
-            python -m unittest discover -s scripts -p 'test_advanced_risk_signal_advisors.py' -v
-          fi
-      - name: Test experiment lineage when present
-        run: |
-          if [ -f scripts/test_research_experiment_lineage.py ]; then
-            python -m unittest discover -s scripts -p 'test_research_experiment_lineage.py' -v
-          fi
-      - name: Test drift monitor when present
-        run: |
-          if [ -f scripts/test_model_drift_shadow_guard.py ]; then
-            python -m unittest discover -s scripts -p 'test_model_drift_shadow_guard.py' -v
-          fi
+          python - <<'PY'
+          from pathlib import Path
+          import unittest
+
+          required = (
+              "p2p_network_intelligence", "p2p_intelligence_five",
+              "p2p_health_intelligence_bridge", "p2p_decision_audit_chain",
+              "p2p_health_audit_pipeline", "check_nine_workstreams_evidence",
+          )
+          pending = (
+              "market_data_quality_clock_guard", "advanced_risk_signal_advisors",
+              "research_experiment_lineage", "model_drift_shadow_guard",
+              "p2p_network_health_history", "check_vendor_entitlement_evidence",
+              "check_external_crypto_review_intake", "verify_cross_runner_dr_artifacts",
+          )
+          suite = unittest.TestSuite()
+          for name in required + pending:
+              module = Path("scripts") / (name + ".py")
+              test = Path("scripts") / ("test_" + name + ".py")
+              if name in pending and not module.exists() and not test.exists():
+                  print(f"Not merged yet; skipped: {name}", flush=True)
+                  continue
+              if not module.is_file() or not test.is_file():
+                  raise SystemExit(f"Missing module or regression suite: {name}")
+              tests = unittest.TestLoader().discover("scripts", pattern=test.name)
+              if tests.countTestCases() == 0:
+                  raise SystemExit(f"No regression tests discovered: {name}")
+              suite.addTests(tests)
+          result = unittest.TextTestRunner(verbosity=2).run(suite)
+          raise SystemExit(0 if result.wasSuccessful() else 1)
+          PY
