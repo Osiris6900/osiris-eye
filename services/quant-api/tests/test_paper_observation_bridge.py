@@ -250,3 +250,22 @@ def test_exact_store_get_returns_none_for_unknown_record(store):
     assert store.get(OBSERVATION_DATASET, "p2p:none", "none") is None
     with pytest.raises(ValueError, match="non-empty strings"):
         store.get(OBSERVATION_DATASET, "p2p:none", 123)
+
+
+@pytest.mark.parametrize("field", ["max_age_seconds", "max_future_skew_seconds"])
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), True, "300"])
+def test_invalid_freshness_configuration_never_creates_an_intent(store, enabled, field, value):
+    record = _ingest(store)
+    with pytest.raises(PaperBridgeRefused, match="invalid_freshness_bounds"):
+        _evaluate(store, record, **{field: value})
+    assert store.list(PAPER_DATASET) == []
+
+
+def test_ingestion_clock_skew_allowance_does_not_authorize_future_knowledge(store, enabled):
+    """A tolerated clock skew cannot leak a future observation into a strategy."""
+    record = _ingest(store, _observation(observed_at=(NOW + timedelta(seconds=5)).isoformat()))
+    with pytest.raises(PaperBridgeRefused, match="stored_observation_not_yet_available"):
+        _evaluate(store, record)
+    assert store.list(PAPER_DATASET) == []
+    result = _evaluate(store, record, now=NOW + timedelta(seconds=5))
+    assert result["persistence"]["status"] == "stored"

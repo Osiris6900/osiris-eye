@@ -890,3 +890,6 @@ from .ultra_fast_routes import router as ultra_fast_market_router, initialize_ma
 
 initialize_market_feed(app)
 app.include_router(ultra_fast_market_router)
+
+from .paper_pipeline import router as paper_pipeline_router
+app.include_router(paper_pipeline_router)

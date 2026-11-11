@@ -19,3 +19,7 @@ data/
 *.transport
 *.replay
 *.backup-*
+
+# Local Python packaging and lint artifacts.
+*.egg-info/
+.ruff_cache/

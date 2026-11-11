@@ -167,3 +167,21 @@ def test_paper_intent_blocked_by_risk_gate(store, enabled, monkeypatch):
     assert intent["paper_order_intent"]["status"] == "BLOCKED_BY_RISK"
     assert intent["risk"]["reason"] == "max_order_notional_exceeded"
     assert intent["execution"]["live_execution"] is False
+
+
+@pytest.mark.parametrize("field", ["max_age_seconds", "max_future_skew_seconds"])
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), True, "300"])
+def test_invalid_freshness_configuration_never_stores(store, enabled, field, value):
+    with pytest.raises(IngestionRejection, match="invalid_freshness_bounds"):
+        ingest_p2p_observation(
+            store, _observation(), allowed_providers=PROVIDERS, now=NOW, **{field: value},
+        )
+    assert store.list(DATASET) == []
+
+
+def test_ingestion_requires_an_explicit_timezone_on_injected_clock(store, enabled):
+    with pytest.raises(IngestionRejection, match="ingestion_time_missing_timezone"):
+        ingest_p2p_observation(
+            store, _observation(), allowed_providers=PROVIDERS, now=NOW.replace(tzinfo=None),
+        )
+    assert store.list(DATASET) == []

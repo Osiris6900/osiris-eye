@@ -14,6 +14,7 @@ disabled; nothing in this module contacts a broker or exchange.
 from __future__ import annotations
 
 import hashlib
+import math
 import os
 import re
 from datetime import datetime, timezone
@@ -37,10 +38,33 @@ ENABLE_ENV = "OSIRIS_P2P_INGEST_ENABLED"
 PAPER_INTENT_ENV = "OSIRIS_PAPER_INTENT_ENABLED"
 
 _HEX_64 = re.compile(r"[0-9a-f]{64}")
+# Keep validation independent of an injected wall-clock implementation.
+_DATETIME_TYPE = datetime
 
 
 class IngestionRejection(ValueError):
     """Raised when an observation fails a fail-closed ingestion gate."""
+
+
+def _utc_now(now: datetime | None) -> datetime:
+    current = datetime.now(timezone.utc) if now is None else now
+    if (not isinstance(current, _DATETIME_TYPE)
+            or current.tzinfo is None or current.utcoffset() is None):
+        raise IngestionRejection("ingestion_time_missing_timezone")
+    return current.astimezone(timezone.utc)
+
+
+def _validate_freshness_bounds(max_age_seconds: float, max_future_skew_seconds: float) -> None:
+    for value in (max_age_seconds, max_future_skew_seconds):
+        try:
+            valid = (not isinstance(value, bool) and isinstance(value, (int, float))
+                     and math.isfinite(value))
+        except OverflowError:
+            valid = False
+        if not valid:
+            raise IngestionRejection("invalid_freshness_bounds")
+    if max_age_seconds <= 0 or max_future_skew_seconds < 0:
+        raise IngestionRejection("invalid_freshness_bounds")
 
 
 def _parse_timestamp(value: Any, field: str) -> datetime:
@@ -125,10 +149,9 @@ def validate_p2p_observation(
     providers = {str(item).strip() for item in allowed_providers if str(item).strip()}
     if not providers:
         raise IngestionRejection("no_authorized_providers")
-    if max_age_seconds <= 0 or max_future_skew_seconds < 0:
-        raise IngestionRejection("invalid_freshness_bounds")
+    _validate_freshness_bounds(max_age_seconds, max_future_skew_seconds)
 
-    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    current = _utc_now(now)
     normalized = validate_observation_contract(observation)
 
     if normalized["provider"] not in providers:
@@ -161,7 +184,7 @@ def ingest_p2p_observation(
     bound and contract validation must all pass before anything is stored.
     With an outbox, both rows commit together in the same file-backed database.
     """
-    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    current = _utc_now(now)
     normalized = validate_p2p_observation(
         observation, allowed_providers=allowed_providers,
         max_age_seconds=max_age_seconds,

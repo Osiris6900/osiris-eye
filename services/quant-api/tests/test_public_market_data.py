@@ -135,3 +135,57 @@ def test_public_bar_rejects_non_finite_ohlcv():
             BinancePublicMarketDataAdapter().fetch_bars(
                 "BTCUSDT", "2026-11-02T00:00:00Z", "2026-11-02T00:05:00Z"
             )
+
+
+def test_coinbase_orders_and_bounds_requested_history():
+    timestamp = int(datetime(2026, 11, 2, tzinfo=timezone.utc).timestamp())
+    payload = [[timestamp + offset, 99, 102, 100, 101, 12.5]
+               for offset in (300, 120, 0, -60, 60)]
+    with patch("osiris_api.public_market_data._get", return_value=json.dumps(payload).encode()):
+        bars = CoinbasePublicMarketDataAdapter().fetch_bars(
+            "BTC-USD", "2026-11-02T00:00:00Z", "2026-11-02T00:03:00Z",
+        )
+    assert [row["event_time"] for row in bars] == [
+        "2026-11-02T00:00:00+00:00", "2026-11-02T00:01:00+00:00", "2026-11-02T00:02:00+00:00",
+    ]
+    assert bars[-1]["candle_end_time"] == "2026-11-02T00:03:00+00:00"
+    assert all(row["is_closed"] for row in bars)
+
+
+@pytest.mark.parametrize("timestamp", [True, "1793577600", 1793577600.0, 1793577601, 10**100])
+def test_coinbase_rejects_invalid_candle_times(timestamp):
+    with patch("osiris_api.public_market_data._get", return_value=json.dumps([
+        [timestamp, 99, 102, 100, 101, 12.5],
+    ]).encode()):
+        with pytest.raises(ValueError, match="invalid_coinbase_candle_timestamp"):
+            CoinbasePublicMarketDataAdapter().fetch_bars(
+                "BTC-USD", "2026-11-02T00:00:00Z", "2026-11-02T00:03:00Z",
+            )
+
+
+def test_coinbase_rejects_repeated_candle_instead_of_double_counting():
+    timestamp = int(datetime(2026, 11, 2, tzinfo=timezone.utc).timestamp())
+    row = [timestamp, 99, 102, 100, 101, 12.5]
+    with patch("osiris_api.public_market_data._get", return_value=json.dumps([row, row]).encode()):
+        with pytest.raises(ValueError, match="duplicate_coinbase_candle"):
+            CoinbasePublicMarketDataAdapter().fetch_bars(
+                "BTC-USD", "2026-11-02T00:00:00Z", "2026-11-02T00:03:00Z",
+            )
+
+
+def test_coinbase_marks_incomplete_candle_at_retrieval():
+    class FrozenClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 11, 2, 0, 0, 30, tzinfo=timezone.utc)
+
+    timestamp = int(datetime(2026, 11, 2, tzinfo=timezone.utc).timestamp())
+    with patch("osiris_api.public_market_data.datetime", FrozenClock), patch(
+        "osiris_api.public_market_data._get", return_value=json.dumps([
+            [timestamp, 99, 102, 100, 101, 12.5],
+        ]).encode(),
+    ):
+        bars = CoinbasePublicMarketDataAdapter().fetch_bars(
+            "BTC-USD", "2026-11-02T00:00:00Z", "2026-11-02T00:01:00Z",
+        )
+    assert bars[0]["is_closed"] is False
