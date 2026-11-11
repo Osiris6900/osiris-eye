@@ -1,0 +1,59 @@
+name: New platform modules unit tests
+
+on:
+  pull_request:
+    paths:
+      - "scripts/**"
+      - ".github/workflows/new-platform-modules-tests.yml"
+  push:
+    branches: [main]
+    paths:
+      - "scripts/**"
+      - ".github/workflows/new-platform-modules-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-module-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+      - name: Test platform modules and require their regression suites
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import unittest
+
+          required = (
+              "p2p_network_intelligence", "p2p_intelligence_five",
+              "p2p_health_intelligence_bridge", "p2p_decision_audit_chain",
+              "p2p_health_audit_pipeline", "check_nine_workstreams_evidence",
+          )
+          pending = (
+              "market_data_quality_clock_guard", "advanced_risk_signal_advisors",
+              "research_experiment_lineage", "model_drift_shadow_guard",
+              "p2p_network_health_history", "check_vendor_entitlement_evidence",
+              "check_external_crypto_review_intake", "verify_cross_runner_dr_artifacts",
+          )
+          suite = unittest.TestSuite()
+          for name in required + pending:
+              module = Path("scripts") / (name + ".py")
+              test = Path("scripts") / ("test_" + name + ".py")
+              if name in pending and not module.exists() and not test.exists():
+                  print(f"Not merged yet; skipped: {name}", flush=True)
+                  continue
+              if not module.is_file() or not test.is_file():
+                  raise SystemExit(f"Missing module or regression suite: {name}")
+              tests = unittest.TestLoader().discover("scripts", pattern=test.name)
+              if tests.countTestCases() == 0:
+                  raise SystemExit(f"No regression tests discovered: {name}")
+              suite.addTests(tests)
+          result = unittest.TextTestRunner(verbosity=2).run(suite)
+          raise SystemExit(0 if result.wasSuccessful() else 1)
+          PY

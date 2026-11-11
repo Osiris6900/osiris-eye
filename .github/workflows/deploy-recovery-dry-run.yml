@@ -22,6 +22,8 @@ on:
       - "scripts/test_verify_paper_dr_artifacts.py"
       - "scripts/check_paper_cross_runner_restore.py"
       - "scripts/test_check_paper_cross_runner_restore.py"
+      - "scripts/verify_cross_runner_dr_artifacts.py"
+      - "scripts/test_verify_cross_runner_dr_artifacts.py"
       - ".github/workflows/deploy-recovery-dry-run.yml"
       - "docs/evidence/deploy-recovery.schema.json"
   push:
@@ -32,6 +34,8 @@ on:
       - "scripts/run_paper_dr_exercise.py"
       - "scripts/check_paper_cross_runner_restore.py"
       - "scripts/test_check_paper_cross_runner_restore.py"
+      - "scripts/verify_cross_runner_dr_artifacts.py"
+      - "scripts/test_verify_cross_runner_dr_artifacts.py"
       - ".github/workflows/deploy-recovery-dry-run.yml"
       - "docs/evidence/deploy-recovery.schema.json"
 
@@ -111,6 +115,16 @@ jobs:
           python -m scripts.check_paper_cross_runner_restore \
             --source-dir "$RUNNER_TEMP/osiris-paper-dr-transfer" \
             --output "$RUNNER_TEMP/paper-ci-cross-job-restore.json"
+      - name: Verify transferred report manifest and exact candidate binding
+        run: |
+          python -m unittest discover -s scripts -p 'test_verify_cross_runner_dr_artifacts.py' -v
+          mkdir -p "$RUNNER_TEMP/osiris-cross-job-review"
+          cp "$RUNNER_TEMP/paper-ci-cross-job-restore.json" "$RUNNER_TEMP/osiris-cross-job-review/"
+          cp "$RUNNER_TEMP/paper-ci-cross-job-restore.json.sha256" "$RUNNER_TEMP/osiris-cross-job-review/"
+          python scripts/verify_cross_runner_dr_artifacts.py \
+            "$RUNNER_TEMP/osiris-cross-job-review" \
+            --commit "$GITHUB_SHA" \
+            --run-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
       - name: Retain portable recovery evidence (no production or physical-host claim)
         if: success()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
