@@ -59,11 +59,12 @@ def verify(directory: Path, *, expected_commit: str, expected_run_url: str) -> l
             errors.append("invalid_" + key)
     if not isinstance(report.get("backup_sha256"), str) or not SHA256.fullmatch(report["backup_sha256"]):
         errors.append("invalid_backup_digest")
-    if type(report.get("restored_initial_fill_count")) is not int or report["restored_initial_fill_count"] < 1:
+    initial = report.get("restored_initial_fill_count")
+    continued = report.get("continued_fill_count")
+    valid_initial = type(initial) is int and initial >= 1
+    if not valid_initial:
         errors.append("invalid_initial_fill_count")
-    if type(report.get("continued_fill_count")) is not int or (
-        report["continued_fill_count"] != report.get("restored_initial_fill_count", -2) + 1
-    ):
+    if not valid_initial or type(continued) is not int or continued != initial + 1:
         errors.append("invalid_continuation_count")
     return errors
 

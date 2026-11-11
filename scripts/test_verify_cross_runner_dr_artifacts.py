@@ -45,6 +45,17 @@ def write(directory, data):
 
 
 class CrossRunnerDrVerifierTests(unittest.TestCase):
+    def test_malformed_fill_counts_return_errors_without_crashing(self):
+        for initial in ("1", None, True, [], {}):
+            with self.subTest(initial=initial), tempfile.TemporaryDirectory() as folder:
+                path = Path(folder)
+                data = fixture()
+                data["restored_initial_fill_count"] = initial
+                write(path, data)
+                errors = verify(path, expected_commit=COMMIT, expected_run_url=URL)
+                self.assertIn("invalid_initial_fill_count", errors)
+                self.assertIn("invalid_continuation_count", errors)
+
     def test_valid_synthetic_report_is_only_offline_verification(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder)
