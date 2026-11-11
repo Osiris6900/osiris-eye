@@ -1,7 +1,9 @@
 """Public Coinbase candles -> momentum research -> independent risk -> paper ledger.
 
-One fixed-size proposal per strategy/symbol/closed minute. Fills use the latest
-closed candle's close as an explicit simulation assumption; no broker is called.
+One fixed-size proposal per strategy/symbol/closed minute. Paper fills use an
+explicit closed-candle price, optionally adjusted by bounded adverse fixed-bps
+slippage. This is a deterministic stress assumption, not market microstructure
+or actual venue execution. No broker is called.
 The HTTP route never accepts prices, signals, risk approval, limits or a clock.
 """
 from __future__ import annotations
@@ -101,7 +103,7 @@ def _account_result(result: dict) -> dict:
 def run_paper_pipeline(
     *, symbol: str = "BTC-USD", quantity: Any = "0.001", fee: Any = "0",
     lookback: int = 3, threshold_bps: Any = "0", strategy_id: str = "momentum-v1",
-    now: datetime | None = None,
+    slippage_bps: Any = "0", now: datetime | None = None,
 ) -> dict[str, Any]:
     """Execute a bounded, public-data paper cycle against a configured account.
 
@@ -119,8 +121,11 @@ def run_paper_pipeline(
         raise ValueError("invalid_strategy_lookback")
     qty, cost = _decimal(quantity, positive=True), _decimal(fee, positive=False)
     threshold = _decimal(threshold_bps, positive=False)
+    slippage = _decimal(slippage_bps, positive=False)
     if threshold > 10000:
         raise ValueError("invalid_strategy_threshold")
+    if slippage > 1000:
+        raise ValueError("invalid_pipeline_slippage")
     requested = now or datetime.now(timezone.utc)
     if not isinstance(requested, DateTimeType) or requested.tzinfo is None or requested.utcoffset() is None:
         raise ValueError("pipeline_clock_requires_timezone")
@@ -158,7 +163,20 @@ def run_paper_pipeline(
     signal = 1.0 if momentum > threshold else -1.0 if momentum < -threshold else 0.0
     signals = [0.0] * lookback + [signal]
     side = "BUY" if signal > 0 else "SELL" if signal < 0 else "HOLD"
-    context = execution.execution_context(symbol=symbol, price=price, side=side if side != "HOLD" else "BUY")
+    # Fixed adverse cost assumption: BUY pays above the reference close;
+    # SELL receives below it. The account's mark remains the candle close.
+    # Do not let the HTTP caller supply an arbitrary execution price.
+    slip_multiplier = (
+        Decimal("1") + slippage / Decimal("10000") if side == "BUY"
+        else Decimal("1") - slippage / Decimal("10000") if side == "SELL"
+        else Decimal("1")
+    )
+    execution_price = (
+        format(Decimal(price) * slip_multiplier, "f") if slippage else price
+    )
+    context = execution.execution_context(
+        symbol=symbol, price=execution_price, side=side if side != "HOLD" else "BUY"
+    )
     age = (decision_time - observed).total_seconds()
     if not 0 <= age <= float(context["max_market_age_seconds"]):
         raise ValueError("stale_market_data")
@@ -171,7 +189,7 @@ def run_paper_pipeline(
     fingerprint = _digest({
         "bars_sha256": bars_hash, "lookback": lookback,
         "threshold_bps": str(threshold.normalize()), "quantity": str(qty.normalize()),
-        "fee": str(cost.normalize()),
+        "fee": str(cost.normalize()), "slippage_bps": str(slippage.normalize()),
     })
     prior = _decision(run_id, fingerprint)
     if prior is not None:
@@ -181,7 +199,7 @@ def run_paper_pipeline(
         return result
     workflow = evaluate_paper_workflow(
         symbol=symbol, signals=signals, asset_returns=returns,
-        quantity=float(qty), price=float(closes[-1]),
+        quantity=float(qty), price=float(Decimal(execution_price)),
         current_position_notional=float(context["current_position_notional"]),
         current_gross_exposure=float(context["current_gross_exposure"]),
         daily_pnl=float(context["daily_pnl"]), limits=RiskLimits(**context["limits"]),
@@ -191,7 +209,7 @@ def run_paper_pipeline(
     existing = execution.get_paper_order(run_id)
     if existing is not None:
         # An earlier process may have committed the order but not its pipeline receipt.
-        expected = {"symbol": symbol, "side": side, "quantity": qty, "price": Decimal(price), "fee": cost}
+        expected = {"symbol": symbol, "side": side, "quantity": qty, "price": Decimal(execution_price), "fee": cost}
         for field, value in expected.items():
             actual = existing[field]
             mismatch = Decimal(actual) != value if isinstance(value, Decimal) else actual != value
@@ -200,7 +218,7 @@ def run_paper_pipeline(
         order = {**existing, "original_status": existing["status"], "status": "idempotent_replay"}
     else:
         order = execution.submit_approved_workflow(
-            workflow, client_order_id=run_id, quantity=str(qty), price=price, fee=str(cost),
+            workflow, client_order_id=run_id, quantity=str(qty), price=execution_price, fee=str(cost),
             observed_at=observed.isoformat(), now=decision_time.isoformat(),
         )
     execution.mark_to_market(
@@ -213,7 +231,13 @@ def run_paper_pipeline(
             "event_time": bars[-1]["event_time"], "observed_at": observed.isoformat(),
             "price": price, "bars_sha256": bars_hash, "bars": candles,
             "max_age_seconds": context["max_market_age_seconds"],
-            "source_mode": "public", "fill_assumption": "closed_candle_close_no_slippage",
+            "source_mode": "public",
+            "execution_price": execution_price,
+            "slippage_bps": str(slippage.normalize()),
+            "fill_assumption": (
+                "adverse_fixed_bps_from_closed_candle"
+                if slippage else "closed_candle_close_no_slippage"
+            ),
         },
         "strategy": {"id": strategy_id, "type": "momentum", "lookback": lookback,
                      "threshold_bps": str(threshold), "momentum_bps": str(momentum), "side": side},
@@ -236,6 +260,7 @@ class PipelineRequest(BaseModel):
     strategy_id: str = "momentum-v1"
     lookback: int = Field(default=3, ge=1, le=60)
     threshold_bps: str = "0"
+    slippage_bps: str = "0"
 
 
 @router.post("/run")
