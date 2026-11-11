@@ -1,0 +1,57 @@
+name: New platform modules unit tests
+
+on:
+  pull_request:
+    paths:
+      - "scripts/market_data_quality_clock_guard.py"
+      - "scripts/test_market_data_quality_clock_guard.py"
+      - "scripts/advanced_risk_signal_advisors.py"
+      - "scripts/test_advanced_risk_signal_advisors.py"
+      - "scripts/research_experiment_lineage.py"
+      - "scripts/test_research_experiment_lineage.py"
+      - "scripts/model_drift_shadow_guard.py"
+      - "scripts/test_model_drift_shadow_guard.py"
+      - "scripts/p2p_health_audit_pipeline.py"
+      - "scripts/test_p2p_health_audit_pipeline.py"
+      - ".github/workflows/new-platform-modules-tests.yml"
+  push:
+    branches: [main]
+    paths:
+      - "scripts/**"
+      - ".github/workflows/new-platform-modules-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-module-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+      - name: Test P2P health audit integration
+        run: python -m unittest discover -s scripts -p 'test_p2p_health_audit_pipeline.py' -v
+      - name: Test market quality and clock guard when present
+        run: |
+          if [ -f scripts/test_market_data_quality_clock_guard.py ]; then
+            python -m unittest discover -s scripts -p 'test_market_data_quality_clock_guard.py' -v
+          fi
+      - name: Test stress and conflict advisors when present
+        run: |
+          if [ -f scripts/test_advanced_risk_signal_advisors.py ]; then
+            python -m unittest discover -s scripts -p 'test_advanced_risk_signal_advisors.py' -v
+          fi
+      - name: Test experiment lineage when present
+        run: |
+          if [ -f scripts/test_research_experiment_lineage.py ]; then
+            python -m unittest discover -s scripts -p 'test_research_experiment_lineage.py' -v
+          fi
+      - name: Test drift monitor when present
+        run: |
+          if [ -f scripts/test_model_drift_shadow_guard.py ]; then
+            python -m unittest discover -s scripts -p 'test_model_drift_shadow_guard.py' -v
+          fi
