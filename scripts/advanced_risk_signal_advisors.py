@@ -6,29 +6,45 @@ from __future__ import annotations
 import math
 
 
+def finite_number(value: object) -> bool:
+    if type(value) not in (int, float):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
+
+
 def stress_portfolio(positions: object, shocks_bps: object, max_loss: object) -> dict:
     if (not isinstance(positions, list) or not 1 <= len(positions) <= 100
             or not isinstance(shocks_bps, dict)
-            or type(max_loss) not in (int, float)
-            or not math.isfinite(max_loss) or max_loss <= 0):
+            or not finite_number(max_loss) or max_loss <= 0):
         return {"status": "rejected", "reason": "invalid_stress_inputs"}
     seen = set()
-    loss = 0.0
+    losses = []
     for p in positions:
         if not isinstance(p, dict) or set(p) != {"instrument", "signed_notional"}:
             return {"status": "rejected", "reason": "invalid_position"}
         symbol = p["instrument"]
         notional = p["signed_notional"]
         if (not isinstance(symbol, str) or not symbol or symbol in seen
-                or type(notional) not in (int, float) or not math.isfinite(notional)):
+                or not finite_number(notional)):
             return {"status": "rejected", "reason": "invalid_position_value"}
         seen.add(symbol)
         shock = shocks_bps.get(symbol)
-        if type(shock) not in (int, float) or not math.isfinite(shock) or abs(shock) > 10000:
+        if not finite_number(shock) or abs(shock) > 10000:
             return {"status": "rejected", "reason": "missing_or_invalid_shock"}
-        loss -= notional * shock / 10000
+        # Scale the bounded shock first: notional * shock can overflow even
+        # when the final P&L is representable.
+        losses.append(-notional * (shock / 10000))
     if set(shocks_bps) != seen:
         return {"status": "rejected", "reason": "shock_instrument_mismatch"}
+    try:
+        loss = math.fsum(losses)
+    except (OverflowError, ValueError):
+        return {"status": "rejected", "reason": "nonfinite_scenario_loss"}
+    if not math.isfinite(loss):
+        return {"status": "rejected", "reason": "nonfinite_scenario_loss"}
     return {"status": "stress_advisory", "scenario_loss": round(loss, 6),
             "risk_budget_breached": loss > max_loss,
             "model_validated": False, "paper_only": True,

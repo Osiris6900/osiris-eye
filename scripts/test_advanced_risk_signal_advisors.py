@@ -3,6 +3,29 @@ from advanced_risk_signal_advisors import stress_portfolio, resolve_signals
 
 
 class AdvancedAdvisoryTests(unittest.TestCase):
+    def test_large_offsetting_positions_do_not_hide_risk_in_nan(self):
+        result = stress_portfolio([
+            {"instrument": "A", "signed_notional": 1e308},
+            {"instrument": "B", "signed_notional": -1e308}],
+            {"A": -10000, "B": -10000}, 50)
+        self.assertEqual(result["scenario_loss"], 0)
+
+    def test_unrepresentable_loss_is_rejected(self):
+        result = stress_portfolio([
+            {"instrument": "A", "signed_notional": 1e308},
+            {"instrument": "B", "signed_notional": 1e308}],
+            {"A": -10000, "B": -10000}, 50)
+        self.assertEqual(result["status"], "rejected")
+
+    def test_oversized_integer_inputs_are_rejected(self):
+        for position, shock, budget in ((10**400, -1000, 50),
+                                         (1000, 10**400, 50),
+                                         (1000, -1000, 10**400)):
+            with self.subTest(position=position, shock=shock, budget=budget):
+                self.assertEqual(stress_portfolio(
+                    [{"instrument": "A", "signed_notional": position}],
+                    {"A": shock}, budget)["status"], "rejected")
+
     def test_long_crash_loss(self):
         result = stress_portfolio([{"instrument": "A", "signed_notional": 1000}],
                                   {"A": -1000}, 50)
