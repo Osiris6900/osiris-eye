@@ -6,7 +6,7 @@ The twenty implementation areas are mapped in [PLATFORM20_IMPLEMENTATION.md](PLA
 
 ## 2026-11-11 CI coverage update
 
-The platform-module workflow covers the six existing P2P/evidence modules and, once present, the eight new data, risk, model, history and review-intake modules. A module without its test file or with zero discovered tests fails the job. Only modules whose implementation and tests are both absent may be skipped as not yet merged. Adding this workflow changes the inventory to 19 workflow files and 113 pinned action uses, with zero mutable action uses. Acceptance statuses remain 3 implemented with evidence, 14 partial and 3 remaining; unit-test coverage is not independent release acceptance.
+The platform-module workflow covers the six existing P2P/evidence modules and, once present, the eight new data, risk, model, history and review-intake modules. A module without its test file or with zero discovered tests fails the job. Only modules whose implementation and tests are both absent may be skipped as not yet merged. The current integration has 19 workflow files and 120 pinned action uses, with zero mutable action uses. Acceptance statuses remain 3 implemented with evidence, 14 partial and 3 remaining; unit-test coverage is not independent release acceptance.
 
 Tracking issues: [#207](https://github.com/Osiris6900/osiris-eye/issues/207) and [#182](https://github.com/Osiris6900/osiris-eye/issues/182).
 

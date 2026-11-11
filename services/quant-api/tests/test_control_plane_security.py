@@ -1,5 +1,4 @@
 import base64
-import hashlib
 import json
 import time
 
@@ -175,3 +174,38 @@ def test_reviewed_job_flow_and_fenced_api_authorization(api):
     )
     assert api.post("/control-plane/auth/logout", headers=operator).status_code == 200
     assert api.get("/control-plane/jobs", headers=operator).status_code == 401
+
+
+def test_primary_token_rotation_preserves_mfa_identity_and_self_review_block(api, monkeypatch):
+    old = {"Authorization": "Bearer test-operator-token"}
+    seed = api.post("/control-plane/auth/enroll", headers=old).json()["secret"]
+    counter = int(time.time() // 30)
+    initial = api.post(
+        "/control-plane/auth/login", headers=old, json={"code": totp(seed, counter)}
+    ).json()["session_token"]
+    header = {"Authorization": "Session " + initial}
+    request = {
+        "id": "rotation-test",
+        "tool": "backtest",
+        "payload": {"signals": [0, 1], "asset_returns": [0, 0.1]},
+    }
+    assert (
+        api.post("/control-plane/agents/requests", headers=header, json=request).status_code == 200
+    )
+    import os
+
+    tokens = json.loads(os.environ["OSIRIS_ADMIN_TOKENS"])
+    tokens["operator"] = "rotated-operator-test-token"
+    monkeypatch.setenv("OSIRIS_ADMIN_TOKENS", json.dumps(tokens))
+    assert api.get("/control-plane/jobs", headers=header).status_code == 401
+    replacement = {"Authorization": "Bearer rotated-operator-test-token"}
+    assert api.post("/control-plane/auth/enroll", headers=replacement).status_code == 422
+    next_session = api.post(
+        "/control-plane/auth/login", headers=replacement, json={"code": totp(seed, counter + 1)}
+    ).json()["session_token"]
+    denied = api.post(
+        "/control-plane/agents/rotation-test/approve",
+        headers={"Authorization": "Session " + next_session},
+    )
+    assert denied.status_code == 422
+    assert "independent_approver_required" in denied.text

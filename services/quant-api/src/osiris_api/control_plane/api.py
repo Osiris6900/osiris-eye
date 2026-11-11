@@ -69,7 +69,7 @@ def principal(
             raise HTTPException(401, "authentication_required")
         actor = {
             "role": role,
-            "actor": hashlib.sha256(supplied.encode()).hexdigest(),
+            "actor": hashlib.sha256(("osiris-role:" + role).encode()).hexdigest(),
             "config_digest": config_digest,
         }
         if not bootstrap and scope not in {"read", "research-read"}:

@@ -41,7 +41,7 @@ The API does not initialize the control-plane database or start an external inte
 - `OSIRIS_NTP_HOST`: explicitly selected clock source. Clock measurement does not establish source authentication.
 - OTLP and alerts require `OSIRIS_OTLP_TRACES_URL` / `OSIRIS_ALERT_WEBHOOK_URL` and an explicit exporter invocation. No notification was sent during development.
 
-Sessions and authenticator seeds are never saved in browser storage. HTTP auth responses use `Cache-Control: no-store`. The encrypted secret-write API cannot overwrite protected TOTP enrollment keys. The role configuration digest invalidates existing sessions after role-token configuration changes.
+Sessions and authenticator seeds are never saved in browser storage. HTTP auth responses use `Cache-Control: no-store`. The encrypted secret-write API cannot overwrite protected TOTP enrollment keys. Logical role identities stay stable across primary-token rotation, preserving MFA enrollment and the self-review prohibition. The role configuration digest invalidates existing sessions after role-token configuration changes.
 
 ## Worker and operator commands
 
@@ -77,6 +77,6 @@ cd apps/web && npm test && npm run build
 
 For the real browser flow, install Chromium or Google Chrome and Node 24, then run `bash scripts/run_platform20_browser.sh` from the repository root. `OSIRIS_TEST_PYTHON` may select the project virtual-environment interpreter. The harness creates disposable identities and a private test CA, verifies TLS without disabling certificate checks, runs two role identities through MFA/review and a separate HTTPS worker, and cleans up its own processes and private fixture files. Only a sanitized screenshot and result JSON are retained. CI runs this harness and the native process tests.
 
-Verified locally during implementation: 1,465 Python tests passed, one existing test skipped; 50 frontend tests, TypeScript/build, Rust all-target tests, native FIFO/thread/view and process tests, real three-node receipt telemetry, and the browser MFA → research request → separate approver → HTTPS worker → completed report flow passed. Fixture tests of Vault/S3/Kubernetes do not claim that those external services were contacted.
+Verified locally during implementation: 1,466 Python tests passed, one existing test skipped; 50 frontend tests, TypeScript/build, Rust all-target tests, native FIFO/thread/view and process tests, real three-node receipt telemetry, and the browser MFA → research request → separate approver → HTTPS worker → completed report flow passed. Dependency matching found no vulnerability groups in the 607-package existing graph and no matches in the 13-package native-feed graph; the existing `paste` maintenance advisory remains. Fixture tests of Vault/S3/Kubernetes do not claim that those external services were contacted.
 
 Release acceptance remains **3 evidenced / 14 partial / 3 remaining**, with live execution unauthorized. Independent security/model-risk review, feed rights, multi-host acceptance and operational release decisions remain separate deliverables.

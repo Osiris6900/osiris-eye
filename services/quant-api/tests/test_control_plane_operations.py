@@ -1,7 +1,7 @@
-from datetime import datetime, timezone
 import socket
 import threading
 import time
+from datetime import datetime, timezone
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
