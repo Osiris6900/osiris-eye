@@ -96,7 +96,7 @@ that a fixture proves production acceptance.
 | W14 | Allowlisted bounded subprocess tools and distinct research approver | Full OS isolation and independent runtime review; autonomous LLM planning is broader work |
 | W15 | Durable job leases/retry/stale-claim rejection and separate verified-HTTPS worker | Independent-machine scheduler/failure acceptance |
 | W16 | Canonical fill attribution, journal projection and market-to-paper accounting | Independent broker reconciliation and multi-asset unrealized attribution |
-| W17 | L2 snapshot capture, sequence/replay/freshness and depth impact tests | Genuine licensed streaming/depth and multi-venue acceptance |
+| W17 | Atomic source-bound L2 capture/history, durable clock/replay fencing, exact limit-aware depth and spread-cost estimates ([contract](DEPTH_IMPACT_HARDENING.md)) | Genuine licensed streaming/depth, venue/queue calibration and multi-venue acceptance |
 | W18 | Rollout/rollback fixtures, real temporary SQLite backup/restore and continuation | Authorized real staging and independent-host service DR with measured RTO/RPO |
 | W19 | Ed25519 custody/Object Lock fixtures and external-review intake rejection tests | Actual independently signed findings, S3 retention/readback and key custody |
 | W20 | Real Rust FIFO/borrowed-view/thread/mmap tests and actual capture binary | Target-hardware benchmarks/parity and accepted live-feed integration |
