@@ -184,3 +184,14 @@ The existing `179-evidence-contract` workflow now runs `scripts/run_paper_failur
 - The Tailscale workflow now **retries reading actual same-run, same-attempt artifact bytes** using `gh run download` for both Host A endpoint and Host A completion status; each attempt is time-bounded, and the entire retry budget is bounded to 600 seconds. Downloaded JSON has a minimal shape/content validation before being atomically installed for the next step. If the blob remains missing, malformed or undownloadable, the step fails closed rather than treating a listed artifact as successful acceptance.
 - No new cryptographic peer authorization or network connection is implied by this CI transport fix. The existing run cannot be retroactively repaired; a fresh post-merge run must demonstrate Host B download, TCP diagnosis, handshake and the required 20-message integrity test.
 - Immutable GitHub Actions pin inventory: **18 workflows, 111 pinned action uses, 0 mutable** after replacing two direct `actions/download-artifact` invocations with verified Python/`gh` retries. Gate statuses remain unchanged; PAPER-ONLY indefinitely, ghost-mode.
+# 2026-11-12 inventory consistency correction
+
+PR #408 at `1a202929cde2db15a02615a9428b784019222ab5` failed the
+release inventory job because `facts.advisory_source_commit` still referenced
+`2501a07441c7a3e124a7494f2384903c85f5b6ca` after the dependency advisory was
+refreshed from `d479d2e5ac2215faf55c61332fa80a3c5ae39b2b`. The checked-in
+inventory now matches the advisory's actual provenance. Advisory input hashes,
+workflow/action counts, gate statuses and acceptance evidence are unchanged.
+The inventory checker and its eight regression tests pass locally. This fixes
+inventory consistency only; the release remains 3 evidenced, 14 partial and
+3 remaining, with `live_trading_authorized=false`.
