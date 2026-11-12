@@ -81,12 +81,18 @@ class Nodes:
         self.history = []
         self.pumps = []
 
-    def start(self, name, *, bootstrap=None, recipients_file=None, receipts="1"):
+    def start(self, name, *, bootstrap=None, recipients_file=None, receipts="1", receipt_bridge=None):
         environment = node_environment(self.directory, name, receipts=receipts)
         if bootstrap is not None:
             environment["OSIRIS_BOOTSTRAP_PEERS"] = bootstrap
         if recipients_file is not None:
             environment["OSIRIS_E2EE_RECIPIENTS_FILE"] = str(recipients_file)
+        if receipt_bridge is not None:
+            environment.update({
+                "OSIRIS_VERIFIED_RECEIPT_SOCKET": str(receipt_bridge["socket"]),
+                "OSIRIS_VERIFIED_RECEIPT_SPOOL": str(receipt_bridge["spool"]),
+                "OSIRIS_VERIFIED_RECEIPT_LISTENER_PID": str(receipt_bridge["listener_pid"]),
+            })
         process = subprocess.Popen(
             [str(self.binary)], cwd=ROOT, env=environment,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,

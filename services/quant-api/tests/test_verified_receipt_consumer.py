@@ -70,6 +70,32 @@ def test_commits_and_survives_restart(tmp_path):
             "SELECT acknowledged_at FROM recipient_receipts"
         ).fetchone()[0]
     assert acknowledged_at == 1000
+    proof = reopened.verified_event("message-1", "peer-2", "a" * 64)
+    assert proof["sender_peer_id"] == "peer-1"
+    assert proof["rust_pid"] == os.getpid()
+    assert proof["rust_uid"] == os.getuid()
+
+
+def test_another_sender_cannot_reuse_an_event_id_as_a_duplicate(tmp_path):
+    ledger, consumer = setup(tmp_path)
+    assert deliver(consumer, payload(), now=1000)[0] == "applied"
+    other = VerifiedReceiptConsumer(ledger, sender_peer_id="another-sender")
+    candidate = {**payload(), "sender_peer_id": "another-sender"}
+    with pytest.raises(ValueError, match="receipt_event_sender_conflict"):
+        deliver(other, candidate, now=1001)
+    assert other.verified_event("message-1", "peer-2", "a" * 64) is None
+    assert consumer.verified_event("message-1", "peer-2", "a" * 64)["sender_peer_id"] == "peer-1"
+
+
+def test_legacy_event_provenance_requires_authenticated_redelivery(tmp_path):
+    ledger, consumer = setup(tmp_path)
+    assert deliver(consumer, payload(), now=1000)[0] == "applied"
+    with ledger._connect() as db:
+        db.execute("DELETE FROM verified_receipt_origins")
+    reopened = VerifiedReceiptConsumer(ledger, sender_peer_id="peer-1")
+    assert reopened.verified_event("message-1", "peer-2", "a" * 64) is None
+    assert deliver(reopened, payload(), now=1001)[0] == "duplicate"
+    assert reopened.verified_event("message-1", "peer-2", "a" * 64)["rust_pid"] == os.getpid()
 
 
 @pytest.mark.parametrize("trusted", [False, None, 1, "yes", True])

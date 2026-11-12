@@ -95,6 +95,6 @@ export default function LiveCryptoTape() {
         <em className={fresh ? (q.change >= 0 ? 'up' : 'down') : ''}>{fresh ? `${q.change >= 0 ? '+' : ''}${q.change.toFixed(2)}%` : 'Waiting for fresh tick'}</em>
       </div>;
     })}</div>
-    <small className="feed-disclaimer">Live exchange feed when connected · Binance Spot only · Separate from simulated dashboard values · No orders submitted</small>
+    <small className="feed-disclaimer">Live exchange feed when connected · Binance Spot only · Separate source from backend price history · No orders submitted</small>
   </section>;
 }
