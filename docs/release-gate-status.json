@@ -4,7 +4,7 @@
   "live_trading_authorized": false,
   "facts": {
     "mutable_action_uses": 0,
-    "pinned_action_uses": 120,
+    "pinned_action_uses": 121,
     "workflow_files": 19,
     "advisory_inputs_match_worktree": true,
     "advisory_source_commit": "d479d2e5ac2215faf55c61332fa80a3c5ae39b2b",
@@ -31,7 +31,8 @@
         "https://github.com/Osiris6900/osiris-eye/pull/257",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42494850772",
         "docs/P2P_DEPENDENCY_ADVISORIES.json",
-        "services/quant-api/requirements-lock.txt"
+        "services/quant-api/requirements-lock.txt",
+        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md"
       ],
       "evidence_commits": [
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9"
@@ -41,7 +42,7 @@
         281,
         286
       ],
-      "blocker": "paste 1.0.15 (RUSTSEC-2024-0436) remains; CycloneDX SBOM still marks Python deployment resolution unresolved; license provenance checker is not a Dependency Security Audit step; #171 text is stale."
+      "blocker": "The hashed Python deployment lock, resolved Python SBOM components and license/provenance checker are implemented and exercised in dependency-security CI. The paste 1.0.15 maintenance advisory remains; accepted final-candidate audit/SBOM/provenance artifacts and a reviewed maintenance disposition are still required."
     },
     {
       "id": "T02",
@@ -144,13 +145,14 @@
       "status": "Remaining",
       "acceptance_satisfied": false,
       "evidence": [
-        "scripts/check_master_integration.py"
+        "scripts/check_master_integration.py",
+        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md"
       ],
       "evidence_commits": [],
       "open_prs": [
         270
       ],
-      "blocker": "No independent review artifact with reviewer, organization, scope, and an approved decision is checked in. Decision on #207: commission external cryptography review after P0 E2EE evidence; no independent signed report yet."
+      "blocker": "Independent crypto/operational-security intake and validation are implemented. No independently signed reviewer report, verified reviewer identity, remediation/retest and approval decision has been supplied; source tests cannot commission or approve that review."
     },
     {
       "id": "T07",
@@ -165,7 +167,8 @@
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42467036806",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42494850551",
         "services/quant-api/src/osiris_api/authorized_feeds.py",
-        "services/quant-api/src/osiris_api/instrument_master.py"
+        "services/quant-api/src/osiris_api/instrument_master.py",
+        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md"
       ],
       "evidence_commits": [
         "30f5f2a4dd0d302548594f38f7740655241b9316",
@@ -174,7 +177,7 @@
       "open_prs": [
         264
       ],
-      "blocker": "Authorized adapter on main is a synthetic fixture. The module states that no vendor licence is claimed. Instrument master is operator/fixture import."
+      "blocker": "The integration candidate implements Alpaca, OANDA, Polygon and Twelve Data bar adapters with bounded pagination, normalization and declared entitlement checks. Authorized vendor credentials, genuine captures, instrument/corporate-action coverage and independent source-owner acceptance remain pending."
     },
     {
       "id": "T08",
@@ -187,7 +190,8 @@
       "evidence": [
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42494850551",
         "services/quant-api/src/osiris_api/authorized_feeds.py",
-        "services/quant-api/src/osiris_api/feed_admission.py"
+        "services/quant-api/src/osiris_api/feed_admission.py",
+        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md"
       ],
       "evidence_commits": [
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9"
@@ -195,7 +199,7 @@
       "open_prs": [
         264
       ],
-      "blocker": "Freshness checks are unit-tested. No retained streaming capture or corporate-action vendor file is attached."
+      "blocker": "Feed quality, freshness, timestamp/availability checks, source-governed views and native offline capture paths are implemented and tested. Genuine sustained vendor streaming captures, corporate-action artifacts and independently verified time/source provenance remain pending."
     },
     {
       "id": "T09",
@@ -206,13 +210,14 @@
       "status": "Remaining",
       "acceptance_satisfied": false,
       "evidence": [
-        "services/quant-api/src/osiris_api/authorized_feeds.py"
+        "services/quant-api/src/osiris_api/authorized_feeds.py",
+        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md"
       ],
       "evidence_commits": [],
       "open_prs": [
         264
       ],
-      "blocker": "Feed licence signoff is absent. Fail-closed entitlement checks are not a rights verification."
+      "blocker": "Vendor entitlement intake, expiry/revocation checks and feed-policy enforcement are implemented. Original source-owner licences, permitted-use/redistribution terms and independent rights approval have not been supplied."
     },
     {
       "id": "T10",
@@ -224,13 +229,14 @@
       "acceptance_satisfied": false,
       "evidence": [
         "https://github.com/Osiris6900/osiris-eye/pull/261",
-        "https://github.com/Osiris6900/osiris-eye/actions/runs/42494850551"
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42494850551",
+        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md"
       ],
       "evidence_commits": [
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9"
       ],
       "open_prs": [],
-      "blocker": "Offline event validation is merged. No provenance attestation for a real macro or event feed is attached."
+      "blocker": "Source-governed news/event intake, point-in-time storage and deduplication are implemented. Genuine authorized macro/event source integration, retained captures and independent provenance acceptance remain pending."
     },
     {
       "id": "T11",
@@ -243,7 +249,8 @@
       "evidence": [
         "https://github.com/Osiris6900/osiris-eye/pull/243",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42467036806",
-        "services/quant-api/tests/test_walk_forward_178.py"
+        "services/quant-api/tests/test_walk_forward_178.py",
+        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md"
       ],
       "evidence_commits": [
         "30f5f2a4dd0d302548594f38f7740655241b9316"
@@ -251,7 +258,7 @@
       "open_prs": [
         273
       ],
-      "blocker": "Walk-forward unit tests pass in CI. No retained feature/model lifecycle archive for a candidate model is attached."
+      "blocker": "Point-in-time features, ridge fitting, immutable experiment reproduction and a retained synthetic walk-forward archive are implemented. A frozen genuine candidate dataset/model/feature archive and independent lifecycle acceptance remain pending."
     },
     {
       "id": "T12",
@@ -263,7 +270,8 @@
       "acceptance_satisfied": false,
       "evidence": [
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42494850551",
-        "services/quant-api/tests/test_walk_forward_178.py"
+        "services/quant-api/tests/test_walk_forward_178.py",
+        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md"
       ],
       "evidence_commits": [
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9"
@@ -271,7 +279,7 @@
       "open_prs": [
         273
       ],
-      "blocker": "Unit tests cover a cost adjustment. No out-of-sample strategy report with a leakage review is attached."
+      "blocker": "Chronological holdout, cost-adjusted walk-forward and reproducible experiment checks are implemented for research. A genuine blinded holdout, independent leakage review and calibrated cost/turnover/impact/borrow sensitivity report remain pending."
     },
     {
       "id": "T13",
@@ -285,7 +293,8 @@
         "https://github.com/Osiris6900/osiris-eye/pull/258",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42494850551",
         "services/quant-api/src/osiris_api/risk.py",
-        "services/quant-api/tests/test_paper_risk_acceptance_179.py"
+        "services/quant-api/tests/test_paper_risk_acceptance_179.py",
+        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md"
       ],
       "evidence_commits": [
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9"
@@ -294,7 +303,7 @@
         268,
         277
       ],
-      "blocker": "Simulation risk limits are tested in CI. No independent risk-budget governance signoff is attached."
+      "blocker": "Canonical pretrade limits, exact broker economics, stale-feed/kill-switch controls and receipt-bound risk decisions are implemented. Independent ownership/approval of budgets, limits, concentration, drawdown and exception governance remains pending."
     },
     {
       "id": "T14",
@@ -308,7 +317,8 @@
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42460392297",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42494850551",
         "services/quant-api/src/osiris_api/durable_paper_ledger.py",
-        "services/quant-api/tests/test_durable_paper_ledger.py"
+        "services/quant-api/tests/test_durable_paper_ledger.py",
+        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md"
       ],
       "evidence_commits": [
         "305ceb1d4d4c6f3d649cb58ee2c82eedb3818644",
@@ -318,7 +328,7 @@
         265,
         277
       ],
-      "blocker": "Broker OMS reconciliation is missing. The durable ledger is synthetic and idempotent; it does not reconcile broker state. The offline journal in scripts/paper_order_journal.py is not a CI step. PR #277 adds an internal paper reconcile and still sets broker_order_submitted false."
+      "blocker": "The integration candidate implements opt-in Alpaca paper transport, persisted intent/ack binding, monotonic fill reconciliation and canonical internal paper OMS. Authorized actual broker-paper captures, operational reconciliation and broader FIX-session acceptance remain pending; no live broker routing is enabled."
     },
     {
       "id": "T15",
@@ -330,7 +340,8 @@
       "acceptance_satisfied": false,
       "evidence": [
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42494850551",
-        "services/quant-api/tests/test_durable_paper_ledger.py"
+        "services/quant-api/tests/test_durable_paper_ledger.py",
+        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md"
       ],
       "evidence_commits": [
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9"
@@ -340,7 +351,7 @@
         277,
         278
       ],
-      "blocker": "CI covers synthetic cash, position, and realized P&L. Margin and realistic market fills are not evidenced."
+      "blocker": "Canonical cash/positions, partial fills/cancellation, fee-inclusive realized/unrealized P&L and bounded adverse slippage are implemented and tested. Venue-calibrated liquidity/queue/impact, margin/borrow models and independent multi-asset execution comparison remain incomplete."
     },
     {
       "id": "T16",
@@ -355,13 +366,14 @@
         "https://github.com/Osiris6900/osiris-eye/pull/245",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42471703916",
         "services/quant-api/tests/test_admin_api_180.py",
-        "scripts/test_paper_order_journal.py"
+        "scripts/test_paper_order_journal.py",
+        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md"
       ],
       "evidence_commits": [
         "0a610db74cac5381ebbb4abe358286a80a6e6298"
       ],
       "open_prs": [],
-      "blocker": "Paper workflow defaults and intent binding are hardened by merged #326/#329; durable paper ledger tests cover fail-closed kill-switch/stale data and recovery. New T16 CI fixture exercises real temporary SQLite paper-ledger fault windows and retains a hashed synthetic report after CI; at this PR's authoring no run-specific receipt has yet been accepted. This does not prove all paper execution paths, independent service outage, real market data, production operation, or external review. T16 remains Partial pending actual artifact verification and end-to-end release decision."
+      "blocker": "Current risk/kill-switch/stale-feed tests, temporary-ledger fault injection and actual receipt-to-paper child-process loss/recovery are implemented. Independent service-outage acceptance and final-candidate external operational/risk review remain pending; local/CI synthetic checks do not accept this gate."
     },
     {
       "id": "T17",
@@ -376,7 +388,8 @@
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42471703916",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42494850551",
         "apps/web/src/AdminCentre.tsx",
-        "services/quant-api/src/osiris_api/admin_centre.py"
+        "services/quant-api/src/osiris_api/admin_centre.py",
+        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md"
       ],
       "evidence_commits": [
         "0a610db74cac5381ebbb4abe358286a80a6e6298",
@@ -387,7 +400,7 @@
         278,
         284
       ],
-      "blocker": "RBAC dashboard tests passed in CI. Peer telemetry against a running p2p-node is not in those runs. #180 remains open."
+      "blocker": "Authenticated canonical account/risk/feed/network/source views, actual Rust receipt metrics, role/MFA boundaries and Chromium navigation are implemented. Genuine source connections, sustained authenticated-node monitoring/alerts and independent operational acceptance remain pending."
     },
     {
       "id": "T18",
@@ -400,7 +413,8 @@
       "acceptance_satisfied": false,
       "evidence": [
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42471703916",
-        "services/quant-api/src/osiris_api/admin_centre.py"
+        "services/quant-api/src/osiris_api/admin_centre.py",
+        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md"
       ],
       "evidence_commits": [
         "0a610db74cac5381ebbb4abe358286a80a6e6298"
@@ -408,7 +422,7 @@
       "open_prs": [
         272
       ],
-      "blocker": "In-process admin alerts are tested. No backup, restore, or disaster-recovery exercise is retained. Dispatch plan ready; evidence run pending."
+      "blocker": "Actual temporary SQLite backup/restore/continuation, cross-runner integrity intake, authority fencing and rollout/rollback checks are implemented. Approved independent-host service DR with measured RTO/RPO, accepted custody/storage and operator signoff remain pending."
     },
     {
       "id": "T19",
@@ -425,31 +439,34 @@
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42495167275",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42495167271",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42740964830",
-        "capacity-report-42740964830-1 (downloaded ZIP SHA-256: 229553051305aabbc28c44af50bb58c4f6dfe9ec746ff3f2f85178333661d239)"
+        "capacity-report-42740964830-1 (downloaded ZIP SHA-256: 229553051305aabbc28c44af50bb58c4f6dfe9ec746ff3f2f85178333661d239)",
+        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md"
       ],
       "evidence_commits": [
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9",
         "d9bb0a959faf5d9c7c97bd6502a143f9df9123d0"
       ],
       "open_prs": [],
-      "blocker": "Successful operator capacity run 42740964830 with 10/50/100-peer 200/200 deliveries, three green host jobs, artifact capacity-report-42740964830-1 and independently recomputed ZIP SHA-256 229553051305aabbc28c44af50bb58c4f6dfe9ec746ff3f2f85178333661d239. The run is a short one-tailnet recipient-bootstrap star measurement, not full independent production failover; Rust receipt -> Python ledger -> paper execution cross-module acceptance and broader DR remain unverified. T19 stays Partial pending complete operational evidence and release decision."
+      "blocker": "Short historical one-tailnet capacity evidence remains limited to the recorded topology. Source-bound local Rust E2EE receipt -> kernel-pinned Python durable ledger -> current risk -> canonical paper order/fill -> P&L -> forced process loss/new-process recovery is now implemented. Sustained independent-host capacity/failover, broader DR and final-candidate operational acceptance remain pending."
     },
     {
       "id": "T20",
-      "tracker_item": "Perform compliance, model-risk and security signoff before any limited live pilot",
+      "tracker_item": "Perform compliance, model-risk and security signoff for paper-only release",
       "module_issues": [
         182,
         207
       ],
       "status": "Remaining",
       "acceptance_satisfied": false,
-      "evidence": [],
+      "evidence": [
+        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md"
+      ],
       "evidence_commits": [],
       "open_prs": [
         273,
         274
       ],
-      "blocker": "No compliance, model-risk, or security signoff is attached. Live trading stays unauthorized. Ghost + keyless feeds: paper-only indefinitely; live execution unauthorized. No live broker access."
+      "blocker": "The paper-only signoff worksheet and external security/vendor intake paths are implemented. Actual independent security/model-risk/licensing decisions and authorized operator release approval remain pending. Paper-only scope is unchanged and live execution remains unauthorized."
     }
   ]
 }

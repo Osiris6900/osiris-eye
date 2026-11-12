@@ -43,6 +43,7 @@ ENGINEERING_CHECKS = [
     ("python-tests", ["python", "-m", "pytest", "-q", "services/quant-api/tests", "tests/test_ultra_fast_feed.py"], None),
     ("native-process", ["python", "scripts/test_native_feed_process.py"], None),
     ("peer-receipts", ["python", "scripts/test_p2p_delivery_receipts.py"], None),
+    ("receipt-paper", ["python", "scripts/run_receipt_paper_acceptance.py", "--output", "@artifacts@/receipt-paper.json"], None),
     ("market-paper", ["python", "scripts/run_market_paper_acceptance.py", "--output", "@artifacts@/market-paper.json"], None),
     ("local-paper-dr", ["python", "scripts/run_paper_dr_exercise.py", "--output-dir", "@artifacts@/paper-dr"], None),
     ("local-dr-integrity", ["python", "scripts/verify_paper_dr_artifacts.py", "@artifacts@/paper-dr"], None),
@@ -58,16 +59,35 @@ ENGINEERING_CHECKS = [
     ("browser", ["bash", "scripts/run_platform20_browser.sh"], None),
 ]
 WORKSTREAM_CHECKS = {
-    "W01": ["python-tests", "vendor-intake"], "W02": ["python-tests", "rust-risk", "market-paper"],
+    "W01": ["python-tests", "vendor-intake"], "W02": ["python-tests", "rust-risk", "market-paper", "receipt-paper"],
     "W03": ["python-tests", "frontend-tests", "frontend-build", "browser"],
     "W04": ["python-tests", "frontend-tests", "browser"], "W05": ["python-tests", "security-intake"],
     "W06": ["python-tests", "recovery-intakes"], "W07": ["python-tests"],
-    "W08": ["rust-p2p", "peer-receipts", "python-tests"], "W09": ["python-tests"],
+    "W08": ["rust-p2p", "peer-receipts", "receipt-paper", "python-tests"], "W09": ["python-tests"],
     "W10": ["python-tests"], "W11": ["python-tests"], "W12": ["python-tests"],
     "W13": ["python-tests", "market-paper", "paper-failures"], "W14": ["python-tests", "browser"],
-    "W15": ["python-tests", "browser"], "W16": ["python-tests", "market-paper"],
+    "W15": ["python-tests", "browser"], "W16": ["python-tests", "market-paper", "receipt-paper"],
     "W17": ["python-tests"], "W18": ["python-tests", "recovery-intakes", "local-paper-dr", "local-dr-integrity", "portable-recovery"],
     "W19": ["python-tests", "security-intake"], "W20": ["rust-native", "native-process", "python-tests"],
+}
+
+# These checks exercise implementations; inventory acceptance is a separate
+# historical record and must never be inferred from a green local check.
+RELEASE_GATE_CHECKS = {
+    "T01": ["release-inventory", "p2p-workflows"],
+    "T02": ["p2p-workflows"], "T03": ["rust-p2p", "peer-receipts"],
+    "T04": ["rust-p2p", "peer-receipts"], "T05": ["rust-p2p"],
+    "T06": ["security-intake"], "T07": ["python-tests", "vendor-intake"],
+    "T08": ["python-tests"], "T09": ["vendor-intake"], "T10": ["python-tests"],
+    "T11": ["python-tests", "model-archive"], "T12": ["python-tests", "model-archive"],
+    "T13": ["python-tests", "rust-risk", "receipt-paper"],
+    "T14": ["python-tests", "market-paper", "receipt-paper"],
+    "T15": ["python-tests", "market-paper", "receipt-paper"],
+    "T16": ["python-tests", "paper-failures", "receipt-paper"],
+    "T17": ["browser", "peer-receipts", "python-tests"],
+    "T18": ["local-paper-dr", "local-dr-integrity", "portable-recovery", "recovery-intakes"],
+    "T19": ["receipt-paper", "market-paper", "peer-receipts", "paper-failures"],
+    "T20": ["release-inventory", "security-intake", "vendor-intake"],
 }
 
 
@@ -111,9 +131,22 @@ def engineering_report(results, before, after):
     workstreams = {name: {"checks": checks, "engineering_checks_passed": all(by_name.get(check) == "passed" for check in checks),
                          "independent_acceptance": "pending"} for name, checks in WORKSTREAM_CHECKS.items()}
     stable = before == after
+    inventory = json.loads((ROOT / "docs/release-gate-status.json").read_text())
+    release_gates = {
+        row["id"]: {
+            "checks": RELEASE_GATE_CHECKS[row["id"]],
+            "local_checks_passed": all(by_name.get(check) == "passed"
+                                       for check in RELEASE_GATE_CHECKS[row["id"]]),
+            "inventory_status": row["status"],
+            "remaining_requirement": row["blocker"],
+            "current_candidate_acceptance_inferred": False,
+        } for row in inventory["items"]
+    }
     inventory_complete = set(by_name) == {name for name, _, _ in ENGINEERING_CHECKS} and len(results) == len(ENGINEERING_CHECKS)
     report.update(profile="engineering", source=after, source_unchanged=stable, workstreams=workstreams,
                   check_inventory_complete=inventory_complete,
+                  release_gates=release_gates,
+                  remaining_release_gates=[row["id"] for row in inventory["items"] if not row["acceptance_satisfied"]],
                   all_passed=report["all_passed"] and stable and inventory_complete and all(row["engineering_checks_passed"] for row in workstreams.values()),
                   release_accepted=False, completion_scope="local_implementation_checks_only")
     return report

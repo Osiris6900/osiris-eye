@@ -941,6 +941,7 @@ def _submit_new_order(
     qty: Decimal, px: Decimal, cost: Decimal, qty_s: str, px_s: str, fee_s: str,
     observed_at: object, now: object, risk_service_available: object,
     kill_switch_active: object, working: bool, simulate_crash: bool,
+    origin_reference: str | None = None,
 ) -> dict[str, Any]:
     account = conn.execute("SELECT * FROM paper_exec_meta WHERE id=1").fetchone()
     effective_kill = bool(account["kill_switch"]) or kill_switch_active is not False
@@ -1012,6 +1013,8 @@ def _submit_new_order(
         "created_at": now if isinstance(now, str) else "",
         "live_execution": False, "broker_order_submitted": False,
     }
+    if origin_reference is not None:
+        payload["origin_reference"] = origin_reference
     audit_seq, digest = _append_audit(conn, "order_decided", key, payload)
     if status == "filled":
         conn.execute(
@@ -1062,8 +1065,14 @@ def submit_paper_order(
     live_execution: object = False,
     working: bool = False,
     simulate_crash: bool = False,
+    origin_reference: str | None = None,
 ) -> dict[str, Any]:
     _refuse_live(live_execution)
+    if origin_reference is not None and (
+        not isinstance(origin_reference, str) or len(origin_reference) != 64
+        or any(char not in "0123456789abcdef" for char in origin_reference)
+    ):
+        raise ValueError("invalid_paper_order_origin")
     if type(working) is not bool:
         raise ValueError("working_state_invalid")
     if not isinstance(client_order_id, str) or not 1 <= len(client_order_id.strip()) <= 128:
@@ -1101,6 +1110,7 @@ def submit_paper_order(
                     prior["symbol"], prior["side"], prior["quantity"], prior["price"], prior["fee"],
                     prior["execution_mode"],
                 ) == (normalized_symbol, normalized_side, qty_s, px_s, fee_s, mode)
+                same = same and _order_origin_reference(conn, prior) == origin_reference
                 event = "idempotent_replay" if same else "idempotency_conflict"
                 _append_audit(conn, event, key, {
                     "original_risk_decision_id": prior["risk_decision_id"],
@@ -1123,6 +1133,7 @@ def submit_paper_order(
                     kill_switch_active=kill_switch_active,
                     working=working is True,
                     simulate_crash=simulate_crash,
+                    origin_reference=origin_reference,
                 )
         except Exception:
             conn.rollback()
@@ -1693,6 +1704,14 @@ def snapshot() -> dict[str, Any]:
             conn.close()
 
 
+def _order_origin_reference(conn: sqlite3.Connection, order: sqlite3.Row) -> str | None:
+    row = conn.execute(
+        "SELECT payload FROM paper_exec_audit WHERE row_hash=? AND event='order_decided' "
+        "AND client_order_id=?", (order["risk_decision_id"], order["client_order_id"]),
+    ).fetchone()
+    return json.loads(row[0]).get("origin_reference") if row else None
+
+
 def get_paper_order(client_order_id: Any) -> dict[str, Any] | None:
     """Recover a durable order outcome without deciding or submitting it again."""
     key = _text_id(client_order_id, "invalid_client_order_id")
@@ -1712,6 +1731,9 @@ def get_paper_order(client_order_id: Any) -> dict[str, Any] | None:
                     "symbol", "side", "quantity", "price", "fee", "created_at",
                 )
             })
+            origin = _order_origin_reference(conn, order)
+            if origin is not None:
+                result["origin_reference"] = origin
             return result
         finally:
             conn.close()

@@ -6,6 +6,8 @@ the Unix adapter constructs after SO_PEERCRED succeeds. A boolean, including
 """
 from __future__ import annotations
 
+import sqlite3
+
 from .recipient_receipt_ledger import RecipientReceiptLedger
 from .verified_receipt_event import APPLIED, DUPLICATE, parse_event_envelope
 
@@ -24,6 +26,32 @@ class VerifiedReceiptConsumer:
                 envelope_sha256 TEXT NOT NULL,
                 accepted_at INTEGER NOT NULL
             )""")
+            db.execute("""CREATE TABLE IF NOT EXISTS verified_receipt_origins (
+                event_id TEXT PRIMARY KEY,
+                sender_peer_id TEXT NOT NULL,
+                rust_pid INTEGER NOT NULL,
+                rust_uid INTEGER NOT NULL
+            )""")
+
+    def verified_event(self, message_id: str, recipient: str, digest: str) -> dict | None:
+        """Read an exact acknowledged event with persisted sender/process provenance.
+
+        Historical events without an origin remain valid delivery history but
+        cannot supply this stronger trace until authenticated redelivery.
+        """
+        with self.ledger._connect() as db:
+            db.row_factory = sqlite3.Row
+            row = db.execute(
+                "SELECT e.*,o.sender_peer_id,o.rust_pid,o.rust_uid "
+                "FROM verified_receipt_events e JOIN verified_receipt_origins o USING(event_id) "
+                "JOIN recipient_receipts r ON r.message_id=e.message_id "
+                "AND r.recipient_peer_id=e.recipient_peer_id "
+                "AND r.envelope_sha256=e.envelope_sha256 "
+                "WHERE e.message_id=? AND e.recipient_peer_id=? AND e.envelope_sha256=? "
+                "AND o.sender_peer_id=? AND r.state='acknowledged'",
+                (message_id, recipient, digest, self.sender_peer_id),
+            ).fetchone()
+        return dict(row) if row else None
 
     def consume(self, event: dict, *, peer_credentials: object, now: int) -> str:
         """Commit one correlated event, or recognize an identical durable replay.
@@ -52,6 +80,7 @@ class VerifiedReceiptConsumer:
             if previous is not None:
                 if previous != identity:
                     raise ValueError("receipt_event_id_conflict")
+                self._record_origin(db, event_id, peer_credentials)
                 return DUPLICATE
             current = db.execute(
                 "SELECT envelope_sha256,state FROM recipient_receipts "
@@ -76,4 +105,16 @@ class VerifiedReceiptConsumer:
                 "VALUES (?,?,?,?,?)",
                 (event_id, *identity),
             )
+            self._record_origin(db, event_id, peer_credentials)
             return APPLIED
+
+    def _record_origin(self, db, event_id, credentials):
+        prior = db.execute(
+            "SELECT sender_peer_id FROM verified_receipt_origins WHERE event_id=?", (event_id,)
+        ).fetchone()
+        if prior is not None and prior[0] != self.sender_peer_id:
+            raise ValueError("receipt_event_sender_conflict")
+        db.execute(
+            "INSERT OR IGNORE INTO verified_receipt_origins VALUES (?,?,?,?)",
+            (event_id, self.sender_peer_id, credentials.pid, credentials.uid),
+        )
