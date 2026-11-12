@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { amount, Bars, count, Dashboard, object, Provider, readApi, parseBars, rows, textValue, useDashboard } from './dashboardData';
 import LiveCryptoTape from './LiveCryptoTape';
+import { SourceViews } from './SourceViews';
 import './dashboardWorkspace.css';
 
 function Panel({ title, children }: { title: string; children: React.ReactNode }) {
@@ -103,33 +104,44 @@ function Signals({ data }: { data: Dashboard }) {
   </Panel>;
 }
 
-function MarketBars({ authorization, providers }: { authorization: string; providers: Provider[] }) {
+function MarketBars({ authorization, providers, diagnostic = false }: { authorization: string; providers: Provider[]; diagnostic?: boolean }) {
   const [provider, setProvider] = useState('coinbase-public');
   const [symbol, setSymbol] = useState('BTC-USD');
   const [assetClass, setAssetClass] = useState('crypto');
   const [windowHours, setWindowHours] = useState('1');
   const [data, setData] = useState<Bars | null>(null);
+  const [regime, setRegime] = useState<Record<string, unknown> | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const generation = useRef(0), active = useRef<AbortController | null>(null);
   const selected = providers.find(p => p.provider === provider);
   useEffect(() => {
-    generation.current += 1; active.current?.abort(); setData(null); setError(''); setLoading(false);
+    generation.current += 1; active.current?.abort(); setData(null); setRegime(null); setError(''); setLoading(false);
     return () => { generation.current += 1; active.current?.abort(); };
-  }, [authorization, provider, symbol, windowHours, assetClass]);
+  }, [authorization, provider, symbol, windowHours, assetClass, diagnostic]);
   async function load() {
     if (!selected?.available) return;
     const current = ++generation.current;
     active.current?.abort();
     const controller = new AbortController(); active.current = controller;
-    setData(null); setError(''); setLoading(true);
+    setData(null); setRegime(null); setError(''); setLoading(true);
     const timeout = setTimeout(() => controller.abort(), 12_000);
     const end = new Date().toISOString(), start = new Date(Date.now() - Number(windowHours) * 3600_000).toISOString();
     const requested = symbol.trim().toUpperCase();
     const params = new URLSearchParams({ provider, symbol: requested, start, end, asset_class: assetClass });
     try {
-      const bars = parseBars(await readApi(`/market/bars?${params}`, authorization, controller.signal), provider, requested, start, end);
-      if (current === generation.current && !controller.signal.aborted) setData(bars);
+      const result = await readApi(`/market/${diagnostic ? 'regime' : 'bars'}?${params}`, authorization, controller.signal);
+      if (diagnostic) {
+        const report = object(result);
+        if (!report || report.schema !== 'osiris.regime-diagnostic.v1' || report.provider !== provider || report.symbol !== requested ||
+            report.live_execution !== false || report.independent_model_approval !== false ||
+            !['ranging', 'trending_up', 'trending_down', 'volatile', 'crisis'].includes(String(report.label)) ||
+            ![report.per_observation_volatility, report.directional_efficiency, report.max_drawdown].every(value => typeof value === 'number' && Number.isFinite(value))) throw new Error('Invalid regime diagnostic.');
+        if (current === generation.current && !controller.signal.aborted) setRegime(report);
+      } else {
+        const bars = parseBars(result, provider, requested, start, end);
+        if (current === generation.current && !controller.signal.aborted) setData(bars);
+      }
     } catch (failure) {
       if (current === generation.current) setError(controller.signal.aborted ? 'Market request timed out.' : failure instanceof Error ? failure.message : 'Market data unavailable.');
     } finally { clearTimeout(timeout); if (current === generation.current) setLoading(false); }
@@ -139,7 +151,7 @@ function MarketBars({ authorization, providers }: { authorization: string; provi
   const span = high - low || 1;
   const first = bars[0], last = bars.at(-1);
   const points = bars.map(b => `${20 + 660 * (Date.parse(b.event_time) - Date.parse(first.event_time)) / (Date.parse(last!.event_time) - Date.parse(first.event_time) || 1)},${185 - 160 * (b.close - low) / span}`).join(' ');
-  return <Panel title="Market price history">
+  return <Panel title={diagnostic ? 'Market regime evidence' : 'Market price history'}>
     <form className="market-query" onSubmit={event => { event.preventDefault(); void load(); }}>
       <label>Provider<select value={provider} onChange={event => {
         setProvider(event.target.value); setAssetClass(providers.find(p => p.provider === event.target.value)?.supported_asset_classes[0] ?? '');
@@ -154,11 +166,21 @@ function MarketBars({ authorization, providers }: { authorization: string; provi
       <label>History window<select value={windowHours} onChange={event => setWindowHours(event.target.value)}>
         <option value="1">Last hour</option><option value="24">Last day</option><option value="720">Last 30 days</option>
       </select></label>
-      <button type="submit" disabled={loading || !authorization.trim() || !selected?.available || !selected.supported_asset_classes.includes(assetClass) || !symbol.trim()}>Load price history</button>
+      <button type="submit" disabled={loading || !authorization.trim() || !selected?.available || !selected.supported_asset_classes.includes(assetClass) || !symbol.trim()}>{diagnostic ? 'Run regime diagnostic' : 'Load price history'}</button>
     </form>
     <p className="muted">Native provider candles; no fabricated interval or live-price claim. Use provider symbols (BTC-USD, BTCUSDT, AAPL.US). Price history is fetched only on request.</p>
     {loading && <p role="status">Loading market bars…</p>}{error && <p role="alert">{error}</p>}
-    {!data && !loading && !error && <p>No price history loaded.</p>}
+    {!data && !regime && !loading && !error && <p>{diagnostic ? 'Market regime unavailable. Load at least 21 provider bars to run a descriptive research diagnostic.' : 'No price history loaded.'}</p>}
+    {regime && <>
+      <h3>Descriptive regime: {textValue(regime.label)}</h3>
+      <Metrics values={[
+        ['Source', `${provider} · ${textValue(regime.source_mode)}`], ['Observations', count(regime.observations)],
+        ['Per-observation volatility', String(regime.per_observation_volatility)], ['Directional efficiency', String(regime.directional_efficiency)],
+        ['Maximum drawdown', String(regime.max_drawdown)], ['Last event time', textValue(regime.last_event_time)],
+      ]}/>
+      <p>Method: {textValue(regime.method)} · Bars SHA-256: {textValue(regime.bars_sha256)}</p>
+      <p className="muted">Describes the requested historical observations. No annualization, liquidity inference, profitable forecast, out-of-sample validation or independent model approval is asserted.</p>
+    </>}
     {data && <>
       <p>Source: {data.provider} · {data.mode.toUpperCase()} · {data.symbol} · {data.bars.length} bars</p>
       <p>Requested window: {data.window_start} to {data.window_end}</p>
@@ -210,13 +232,11 @@ export function DashboardWorkspace({ page, authorization, onAuthorization }: {
         {['Dashboard', 'AI Signals', 'Paper Trading'].includes(page) && <Signals data={data}/>}
       </div>
       {market && data.research_access === 'allowed' && <MarketBars authorization={authorization} providers={data.providers}/>}
-      {page === 'Options Chain' && <Panel title="Options chain source">
-        <p>Options chain unavailable. No backend chain snapshot or verified expiry/strike quotes are connected.</p>
-        <p>Configured option-capable adapters: {data.providers.filter(p => p.supported_asset_classes.includes('option')).map(p => p.provider).join(', ') || 'None'}.</p>
-        <p>Adapter capability alone does not establish chain data or exchange entitlement.</p>
-      </Panel>}
-      {page === 'Market Regime' && <Panel title="Market regime evidence"><p>Market regime unavailable. No timestamped, validated regime classification is connected to this dashboard.</p></Panel>}
-      {page === 'News & Sentiment' && <Panel title="News & sentiment sources"><p>News and sentiment unavailable. No licensed, timestamped headline or validated sentiment feed is connected.</p></Panel>}
+      {['Options Chain', 'Market Regime', 'News & Sentiment'].includes(page) && data.research_access !== 'allowed' ? <p>Access denied for this role.</p> : <>
+        {page === 'Options Chain' && <SourceViews kind="options" authorization={authorization}/>}
+        {page === 'Market Regime' && <MarketBars authorization={authorization} providers={data.providers} diagnostic/>}
+        {page === 'News & Sentiment' && <SourceViews kind="news" authorization={authorization}/>}
+      </>}
       {page === 'Dashboard' && <p className="muted">Options, volatility surfaces, regime labels, news and strategy performance appear only when an evidenced source is connected. Research results are available in Reports.</p>}
     </>}
   </div>;

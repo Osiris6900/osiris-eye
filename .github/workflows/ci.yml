@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, 'codex/**']
   workflow_dispatch:
 
 permissions:
@@ -34,7 +34,9 @@ jobs:
           python scripts/check_action_pinning.py
           python -m unittest discover -s scripts -p 'test_check_action_pinning.py' -v
       - name: Verify the read-only verification planner
-        run: python scripts/test_verify_all.py
+        run: |
+          python scripts/test_verify_all.py
+          python scripts/test_integration_ci_targets.py
       - name: Run Python tests
         run: pytest -q services/quant-api/tests tests/test_ultra_fast_feed.py
       - name: Run connected market-to-paper acceptance with offline candles
@@ -93,7 +95,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - name: Test Rust risk kernel
-        run: cargo test --manifest-path crates/risk-kernel/Cargo.toml
+        run: cargo test --locked --manifest-path crates/risk-kernel/Cargo.toml
       - name: Test and build native mapped-file feed
         run: |
           cargo test --locked --manifest-path crates/native-feed/Cargo.toml
@@ -125,6 +127,24 @@ jobs:
         run: python scripts/test_p2p_e2ee_three_process.py
       - name: Verify signed E2EE receiver delivery receipts
         run: python scripts/test_p2p_delivery_receipts.py
+      - name: Verify actual Rust receipt to durable paper account and process recovery
+        run: |
+          receipt_python_env="$RUNNER_TEMP/receipt-paper-venv"
+          python -m venv "$receipt_python_env"
+          "$receipt_python_env/bin/python" -m pip install --require-hashes -r services/quant-api/requirements-lock.txt
+          "$receipt_python_env/bin/python" -m pip install --no-deps -e services/quant-api
+          OSIRIS_P2P_TEST_BINARY="$PWD/services/p2p-node/target/release/osiris-p2p-node" \
+            "$receipt_python_env/bin/python" scripts/run_receipt_paper_acceptance.py --output "${{ runner.temp }}/receipt-paper.json"
+      - name: Retain receipt to paper process evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: receipt-paper-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/receipt-paper.json
+            ${{ runner.temp }}/receipt-paper.json.sha256
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Verify core-node E2EE through Circuit Relay v2
         run: python scripts/test_p2p_core_relay_e2ee.py --evidence "${{ runner.temp }}/core-relay-e2ee.json"
       - name: Verify observation freshness and fail-closed configuration

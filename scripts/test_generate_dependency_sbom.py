@@ -2,10 +2,15 @@
 """Offline tests for deterministic locked-dependency SBOM generation."""
 import base64
 import copy
+import hashlib
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from generate_dependency_sbom import (
     CARGO_REGISTRY,
@@ -214,6 +219,134 @@ dependencies = ["fastapi>=0.110,<1"]
                 component["licenses"],
                 [{"expression": licenses[(entry.normalized_name, entry.version)]}],
             )
+
+    def additional_locks(self):
+        native = self.root / "native.lock"
+        native.write_text(self.cargo.read_text().replace("osiris-p2p-node", "osiris-native-feed") + f'''
+[[package]]
+name = "mmap-fixture"
+version = "1.0.0"
+source = "{CARGO_REGISTRY}"
+checksum = "{'cd' * 32}"
+''')
+        risk = self.root / "risk.lock"
+        risk.write_text('version = 4\n[[package]]\nname = "osiris-risk-kernel"\nversion = "0.1.0"\n')
+        self.cache["crates"]["mmap-fixture@1.0.0"] = {
+            "license": "MIT", "checksum": "cd" * 32, "source": "https://fixture.invalid/mmap",
+        }
+        return {"crates/native-feed/Cargo.lock": native, "crates/risk-kernel/Cargo.lock": risk}
+
+    def build_multiple(self, locks):
+        return build_sbom(self.cargo, self.npm, self.python, copy.deepcopy(self.cache), True,
+                          additional_cargo_locks=locks)
+
+    def test_multiple_cargo_roots_include_unique_crates_and_every_application(self):
+        locks = self.additional_locks()
+        sbom = self.build_multiple(locks)
+        names = [item["name"] for item in sbom["components"]]
+        for name in ("osiris-p2p-node", "osiris-native-feed", "osiris-risk-kernel", "mmap-fixture"):
+            self.assertIn(name, names)
+        self.assertEqual(names.count("demo-crate"), 1)
+        properties = {p["name"]: p["value"] for p in sbom["metadata"]["component"]["properties"]}
+        for relative, path in locks.items():
+            self.assertEqual(properties["osiris:input-sha256:" + relative],
+                             hashlib.sha256(path.read_bytes()).hexdigest())
+        self.assertEqual(sbom, self.build_multiple(dict(reversed(list(locks.items())))))
+
+    def test_shared_crate_with_conflicting_checksums_fails_closed(self):
+        locks = self.additional_locks()
+        path = locks["crates/native-feed/Cargo.lock"]
+        path.write_text(path.read_text().replace(self.checksum, "ef" * 32))
+        with self.assertRaisesRegex(ValueError, "conflicting Cargo checksum"):
+            self.build_multiple(locks)
+
+    def test_missing_additional_crate_metadata_is_not_silently_omitted(self):
+        locks = self.additional_locks()
+        del self.cache["crates"]["mmap-fixture@1.0.0"]
+        with self.assertRaisesRegex(ValueError, "offline crate cache is missing"):
+            self.build_multiple(locks)
+
+    def test_additional_lock_bytes_change_the_bound_sbom_identity(self):
+        locks = self.additional_locks()
+        first = self.build_multiple(locks)
+        path = locks["crates/risk-kernel/Cargo.lock"]
+        path.write_text(path.read_text() + "\n# Changed source bytes\n")
+        second = self.build_multiple(locks)
+        self.assertNotEqual(first["serialNumber"], second["serialNumber"])
+        self.assertEqual(first["components"], second["components"])
+
+    def test_missing_required_additional_lock_fails_closed(self):
+        with self.assertRaises(FileNotFoundError):
+            self.build_multiple({"crates/native-feed/Cargo.lock": self.root / "absent.lock"})
+
+    def test_additional_lock_cannot_override_a_primary_input_hash(self):
+        with self.assertRaisesRegex(ValueError, "invalid additional Cargo lock identity"):
+            self.build_multiple({"services/p2p-node/Cargo.lock": self.cargo})
+
+    def test_lock_mutation_during_metadata_resolution_fails_closed(self):
+        import generate_dependency_sbom as generator
+
+        locks = self.additional_locks()
+        original = generator.resolve_crate_metadata
+
+        def resolve(*args):
+            result = original(*args)
+            path = locks["crates/native-feed/Cargo.lock"]
+            path.write_text(path.read_text() + "\n# Changed during resolution\n")
+            return result
+
+        with patch.object(generator, "resolve_crate_metadata", resolve):
+            with self.assertRaisesRegex(ValueError, "input changed during SBOM"):
+                self.build_multiple(locks)
+
+    def test_default_cli_covers_all_repository_cargo_locks_offline(self):
+        import tomllib
+
+        root = Path(__file__).resolve().parents[1]
+        cache = empty_cache()
+        for relative in ("services/p2p-node/Cargo.lock", "crates/native-feed/Cargo.lock",
+                         "crates/risk-kernel/Cargo.lock"):
+            for package in tomllib.loads((root / relative).read_text())["package"]:
+                if package.get("source") == CARGO_REGISTRY:
+                    cache["crates"][package["name"] + "@" + package["version"]] = {
+                        "license": "MIT", "checksum": package["checksum"],
+                        "source": "https://synthetic-test-fixture.invalid/metadata",
+                    }
+        cache_path, output = self.root / "cache.json", self.root / "sbom.json"
+        cache_path.write_text(json.dumps(cache))
+        provenance = self.root / "provenance.json"
+        result = subprocess.run([sys.executable, str(root / "scripts/generate_dependency_sbom.py"),
+                                 "--offline", "--crate-cache", str(cache_path), "--output", str(output),
+                                 "--provenance-output", str(provenance)],
+                                capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        sbom = json.loads(output.read_text())
+        for name in ("osiris-native-feed", "osiris-risk-kernel", "memmap2"):
+            self.assertIn(name, [item["name"] for item in sbom["components"]])
+        metadata = {p["name"]: p["value"] for p in sbom["metadata"]["component"]["properties"]}
+        self.assertEqual(metadata["osiris:input-sha256:crates/native-feed/Cargo.lock"],
+                         hashlib.sha256((root / "crates/native-feed/Cargo.lock").read_bytes()).hexdigest())
+        record = json.loads(provenance.read_text())
+        self.assertEqual(record["sbom_sha256"], hashlib.sha256(output.read_bytes()).hexdigest())
+        self.assertEqual(len(record["input_sha256"]), 6)
+        self.assertEqual(record["component_count"], len(sbom["components"]))
+        self.assertIs(record["signature_verified"], False)
+        self.assertIs(record["release_gate_accepted"], False)
+        self.assertIsInstance(record["checkout_dirty"], bool)
+        self.assertEqual(output.with_suffix(".json.sha256").read_text().split()[0], record["sbom_sha256"])
+
+    def test_invalid_declared_candidate_does_not_write_evidence(self):
+        root = Path(__file__).resolve().parents[1]
+        output, provenance = self.root / "invalid-sbom.json", self.root / "invalid-source.json"
+        result = subprocess.run([sys.executable, str(root / "scripts/generate_dependency_sbom.py"),
+                                 "--offline", "--crate-cache", str(root / "docs/CRATE_LICENSE_PROVENANCE.json"),
+                                 "--output", str(output), "--provenance-output", str(provenance)],
+                                env={**os.environ, "OSIRIS_CANDIDATE_HEAD": "invalid"},
+                                capture_output=True, text=True, check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("candidate SHA", result.stderr)
+        self.assertFalse(output.exists())
+        self.assertFalse(provenance.exists())
 
 
 if __name__ == "__main__":
