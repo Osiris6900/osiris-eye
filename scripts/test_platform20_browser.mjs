@@ -60,6 +60,34 @@ try {
   await call('Network.setBlockedURLs', { urls: ['https://*'] });
   await call('Page.navigate', { url: `http://127.0.0.1:${process.env.OSIRIS_BROWSER_WEB_PORT || '15173'}` });
   await wait(`!!document.querySelector('.sidebar nav')`, 'app navigation');
+  if (await evaluate(`document.body.textContent.includes('7,42,360') || document.body.textContent.includes('Database · Connected')`)) throw new Error('Synthetic dashboard claim visible');
+  await input('dashboard-auth', 'Bearer ' + fixture.tokens.analyst);
+  await click('Connect dashboard');
+  await wait(`document.querySelector('[aria-label="Canonical paper account"]')?.textContent.includes('1018')`, 'canonical dashboard valuation');
+  if (!await evaluate(`document.querySelector('[aria-label="Canonical paper account"]').textContent.includes('798')`)) throw new Error('Dashboard cash differs from canonical account');
+  await evaluate(`(() => { const select=document.querySelector('.market-query select'); Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(select,'browser-fixture'); select.dispatchEvent(new Event('change',{bubbles:true})); })()`);
+  await click('Load price history');
+  await wait(`!!document.querySelector('[aria-label="BTC-USD recorded closing prices"]')`, 'real gateway chart');
+  if (!await evaluate(`document.querySelector('[aria-label="Market price history"]').textContent.includes('SYNTHETIC')`)) throw new Error('Offline candle provenance missing');
+  const dashboardScreenshot = await call('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+  await writeFile(join(artifactDir, 'dashboard-browser.png'), Buffer.from(dashboardScreenshot.data, 'base64'));
+  checks.push('dashboard canonical cash/P&L and gateway chart with explicit synthetic provenance');
+  for (const [page, phrase] of [['Options Chain', 'Options chain unavailable'], ['Market Regime', 'Market regime unavailable'], ['News & Sentiment', 'News and sentiment unavailable']]) {
+    await click(page); await wait(`document.body.textContent.includes(${JSON.stringify(phrase)})`, 'missing-source navigation: ' + page);
+  }
+  await click('Risk Management');
+  await wait(`!!document.querySelector('[aria-label="Risk & alerts"]')`, 'dedicated risk page');
+  if (await evaluate(`!!document.querySelector('[aria-label="Canonical paper account"]')`)) throw new Error('Navigation reused unrelated paper page');
+  checks.push('dedicated navigation and truthful unavailable options/news/regime states');
+  await click('Paper Trading');
+  await wait(`!!document.querySelector('[aria-label="Canonical paper account"]')`, 'paper account page');
+  const corruption = spawnSync(process.env.OSIRIS_TEST_PYTHON || 'python3', ['-c',
+    "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute(\"UPDATE paper_exec_meta SET cash='999999'\"); c.commit(); c.close()", fixture.execution_database], { cwd: root, encoding: 'utf8', timeout: 10000 });
+  if (corruption.status !== 0) throw new Error('Disposable corruption fixture failed');
+  await click('Refresh dashboard');
+  await wait(`document.querySelector('[aria-label="Canonical paper account"]')?.textContent.includes('Verified paper accounting unavailable')`, 'withheld corrupted dashboard account');
+  if (await evaluate(`document.querySelector('[aria-label="Canonical paper account"]').textContent.includes('798') || document.body.textContent.includes('999999')`)) throw new Error('Stale or corrupted balance displayed');
+  checks.push('refresh withholds stale/corrupted canonical accounting');
   await click('Settings'); await wait(`!!document.getElementById('security-token')`, 'MFA settings');
   await input('security-token', 'Bearer ' + fixture.tokens.analyst);
   await click('Enroll authenticator'); await wait(`!!document.querySelector('[aria-label="Authenticator setup key"]')`, 'MFA enrollment');

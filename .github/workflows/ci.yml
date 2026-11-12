@@ -188,6 +188,7 @@ jobs:
         with:
           name: platform20-browser-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
+            ${{ runner.temp }}/platform20-browser/dashboard-browser.png
             ${{ runner.temp }}/platform20-browser/platform20-browser.png
             ${{ runner.temp }}/platform20-browser/platform20-browser.json
           if-no-files-found: ignore

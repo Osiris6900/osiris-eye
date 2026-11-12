@@ -8,7 +8,7 @@ import json
 import os
 import sqlite3
 
-from fastapi import APIRouter, Body, HTTPException, Request, Response
+from fastapi import APIRouter, Body, HTTPException, Query, Request, Response
 from fastapi.responses import PlainTextResponse
 
 from ..admin_centre import AdminAuth
@@ -101,6 +101,78 @@ def status(request: Request):
         "independent_host_acceptance": False,
         "recent_job_count": len(Coordinator(db).jobs(limit=10)),
     }
+
+
+def dashboard_response(payload: dict, request: Request, response: Response) -> dict:
+    from ..admin_centre import scan_payload
+
+    auth = AdminAuth.from_environment()
+    supplied = request.headers.get("authorization", "").partition(" ")[2]
+    if scan_payload(payload, (*auth.secrets(), supplied)):
+        raise HTTPException(500, "dashboard_response_redacted")
+    response.headers["Cache-Control"] = "no-store"
+    return payload
+
+
+@router.get("/dashboard")
+def dashboard(request: Request, response: Response):
+    """Reuse the account/health projections; never run a strategy or place an order."""
+    from .. import admin_centre
+    from ..admin_routes import _identity_registry, _outbox_counts
+    from ..market_routes import market_data_gateway
+    from ..paper_pipeline_status import get_paper_pipeline_status
+
+    db = database()
+    actor = principal(request, db)
+    network = admin_centre.network_status(
+        outbox_counts=_outbox_counts(), identity_registry=_identity_registry(),
+    )
+    feeds = admin_centre.feeds_status()
+    research_allowed = "research-read" in SCOPES.get(actor["role"], set())
+    paper = admin_centre.paper_status() if research_allowed else None
+    risk = admin_centre.risk_status(feeds, network, paper) if research_allowed else None
+    peer_metrics = db.get("peer-telemetry", "latest")
+    return dashboard_response({
+        "schema": "osiris.dashboard.v1", "generated_at": network["generated_at"],
+        "role": actor["role"], "network": network, "feeds": feeds,
+        "peer_metrics": peer_metrics["value"] if peer_metrics else None,
+        "paper": paper, "risk": risk,
+        "pipeline": get_paper_pipeline_status() if research_allowed else None,
+        "research_access": "allowed" if research_allowed else "denied",
+        "providers": [{key: item[key] for key in (
+            "provider", "mode", "supported_asset_classes", "available",
+        )} for item in market_data_gateway.providers()["providers"]],
+        "live_trading_authorized": False,
+    }, request, response)
+
+
+@router.get("/market/bars")
+def dashboard_bars(
+    request: Request, response: Response,
+    provider: str = Query(..., min_length=1, max_length=64),
+    symbol: str = Query(..., min_length=1, max_length=64),
+    start: str = Query(..., min_length=20, max_length=64),
+    end: str = Query(..., min_length=20, max_length=64),
+    asset_class: str = Query(..., min_length=1, max_length=32),
+):
+    """The same allowlisted read-only gateway, with role/session authorization."""
+    from ..market_gateway import MarketDataUnavailable, parse_market_time
+    from ..market_routes import market_data_gateway
+
+    db = database()
+    principal(request, db, "research-read")
+    try:
+        first, last = parse_market_time(start), parse_market_time(end)
+        if not 0 < (last - first).total_seconds() <= 366 * 86400:
+            raise ValueError("invalid_market_window")
+        payload = market_data_gateway.fetch_bars(
+            provider, symbol, start, end, asset_class=asset_class,
+        )
+    except MarketDataUnavailable:
+        raise HTTPException(503, "market_data_unavailable") from None
+    except (ValueError, TypeError, OverflowError):
+        raise HTTPException(422, "invalid_market_request") from None
+    return dashboard_response({**payload, "window_start": start, "window_end": end}, request, response)
 
 
 @router.post("/backtest/simulate")

@@ -1,4 +1,4 @@
-import { act, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeEach, expect, test, vi } from 'vitest';
 import LiveCryptoTape from '../LiveCryptoTape';
 import { App } from '../main';
@@ -21,13 +21,16 @@ beforeEach(() => {
 });
 const tick = (overrides = {}) => ({ s: 'BTCUSDT', c: '68000.5', P: '2.5', E: Date.now(), ...overrides });
 
-test('dashboard mounts the exchange feed alongside simulated panels', async () => {
+test('Live Markets opens the public exchange feed without simulated dashboard values', async () => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 503, ok: false, json: async () => ({ detail: 'Offline' }) }));
   await act(async () => { render(<App />); });
+  expect(Socket.instances).toHaveLength(0);
+  fireEvent.click(screen.getByRole('button', { name: 'Live Markets' }));
   expect(screen.getByRole('region', { name: 'Live crypto prices' })).toBeInTheDocument();
   expect(Socket.instances).toHaveLength(1);
   expect(Socket.instances[0].url).toContain('btcusdt@ticker');
-  expect(screen.getByText(/Illustrative market values/)).toBeInTheDocument();
+  expect(screen.getByText(/Live execution disabled/)).toBeInTheDocument();
+  expect(screen.queryByText('24,198.60')).not.toBeInTheDocument();
 });
 
 test('connection alone is not live; fresh ticks render with signed changes', () => {
