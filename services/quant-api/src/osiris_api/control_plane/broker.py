@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 from decimal import Decimal, InvalidOperation
+from fractions import Fraction
 from urllib.parse import quote, urlencode
 
 from ..risk import RiskLimits, check_execution
@@ -141,6 +142,18 @@ class AlpacaPaperBroker:
         )
         if not allowed:
             raise ValueError(reason)
+        # A float approval can round away a tiny excess at an exact budget.
+        # Compare the original decimal economics without Decimal-context rounding.
+        notional = Fraction(quantity) * Fraction(price)
+        if notional > Fraction(str(limits.max_order_notional)):
+            raise ValueError("max_order_notional_exceeded")
+        if order["side"].upper() == "BUY":
+            if notional > Fraction(str(limits.max_position_notional)) - Fraction(str(position)):
+                raise ValueError("max_position_notional_exceeded")
+            if notional > Fraction(str(limits.max_gross_exposure)) - Fraction(str(gross)):
+                raise ValueError("exposure_budget_exceeded")
+        elif notional > Fraction(str(position)) or notional > Fraction(str(gross)):
+            raise ValueError("invalid_order_or_position")
         if not self.enabled:
             raise ValueError("paper_broker_not_enabled")
         fingerprint = digest(order)

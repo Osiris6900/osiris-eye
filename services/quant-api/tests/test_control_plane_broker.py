@@ -172,3 +172,24 @@ def test_concurrent_retry_and_changed_intent_cannot_submit_a_second_order(tmp_pa
             release.set()
         assert pending.result(timeout=5) == snapshot()
     assert len(transport.calls) == 1
+
+
+@pytest.mark.parametrize("order,context,reason", [
+    ({**ORDER, "quantity": "1", "limit_price": "100.000000000000000001"},
+     {**CONTEXT, "limits": RiskLimits(max_order_notional=100)}, "max_order_notional_exceeded"),
+    ({**ORDER, "quantity": "1e-200", "limit_price": "1"},
+     {**CONTEXT, "position": 100, "gross": 100,
+      "limits": RiskLimits(max_position_notional=100)}, "max_position_notional_exceeded"),
+    ({**ORDER, "quantity": "1e-200", "limit_price": "1"},
+     {**CONTEXT, "gross": 100, "limits": RiskLimits(max_gross_exposure=100)},
+     "exposure_budget_exceeded"),
+    ({**ORDER, "side": "SELL", "quantity": "1", "limit_price": "100.000000000000000001"},
+     {**CONTEXT, "position": 100, "gross": 100}, "invalid_order_or_position"),
+])
+def test_float_rounding_cannot_authorize_an_order_above_exact_risk_budgets(tmp_path, order, context, reason):
+    db = Database(str(tmp_path / "broker.db"))
+    transport = Transport()
+    with pytest.raises(ValueError, match=reason):
+        broker(db, transport).submit(order, **context)
+    assert transport.calls == []
+    assert db.get("broker-orders", "order-1") is None
