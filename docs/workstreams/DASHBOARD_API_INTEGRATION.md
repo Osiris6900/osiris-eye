@@ -52,12 +52,14 @@ The existing caller-input Market Mechanics Lab remains accessible in Strategy
 Lab, with its separate legacy API-token control and explicit synthetic examples.
 The Admin Control Centre is linked explicitly.
 
-Options Chain, Market Regime and News & Sentiment have explicit unavailable
-states. The current backend has no connected chain snapshots with verified
-expiry/strike quotes, timestamped validated regime classification, or licensed
-headline/sentiment feed for these views. Adapter capability is not proof of
-such data. No chain/IV surface, profitable strategy claim, headline or sentiment
-score is invented. Connecting and accepting these sources remains work.
+Options Chain and News & Sentiment now read immutable records from the governed
+market-view intake. Without an allowed, unexpired source and a fresh visible
+record they show unavailable states. The Market Regime screen runs a descriptive
+threshold diagnostic on at least 21 provider bars; it is not a validated
+predictive model. Genuine vendor connections, source rights and independent
+acceptance remain outstanding. Adapter capability and an operator rights
+reference do not prove licensing. No headline, IV surface or confidence/return
+score is invented. See WORKSTREAM_DELIVERY_2026_11_12.md for configuration.
 
 ## Reproducible checks
 

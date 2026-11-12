@@ -2,7 +2,7 @@ name: Synthetic model research evidence (T11/T12 only)
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, 'codex/**']
     paths:
       - "scripts/record_model_research_evidence.py"
       - "scripts/test_record_model_research_evidence.py"

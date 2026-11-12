@@ -22,6 +22,34 @@ def load_module():
 
 
 class VerifyAllTests(unittest.TestCase):
+    def test_engineering_plan_includes_native_browser_and_actual_peer_receipts(self):
+        result = subprocess.run([sys.executable, str(SCRIPT), "--profile", "engineering"],
+                                cwd=ROOT, capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for name in ("rust-native", "native-process", "peer-receipts", "browser", "recovery-intakes"):
+            self.assertIn("PLAN " + name + ":", result.stdout)
+        self.assertNotIn("PLAN release-strict:", result.stdout)
+
+    def test_workstream_report_requires_every_check_and_unchanged_sources(self):
+        module = load_module()
+        passed = [{"name": name, "status": "passed"} for name, _, _ in module.ENGINEERING_CHECKS]
+        source = {"git_head": "a" * 40, "worktree_sha256": "b" * 64}
+        report = module.engineering_report(passed, source, source)
+        self.assertEqual(set(report["workstreams"]), {"W%02d" % index for index in range(1, 21)})
+        self.assertTrue(report["all_passed"])
+        self.assertFalse(report["release_accepted"])
+        self.assertFalse(report["merge_authorized"])
+        self.assertTrue(all(row["independent_acceptance"] == "pending" for row in report["workstreams"].values()))
+        failed = module.engineering_report([row for row in passed if row["name"] != "native-process"], source, source)
+        self.assertFalse(failed["all_passed"])
+        self.assertFalse(failed["workstreams"]["W20"]["engineering_checks_passed"])
+        missing_inventory = module.engineering_report([row for row in passed if row["name"] != "release-inventory"], source, source)
+        self.assertFalse(missing_inventory["all_passed"])
+        self.assertFalse(missing_inventory["check_inventory_complete"])
+        changed = module.engineering_report(passed, source, {**source, "worktree_sha256": "c" * 64})
+        self.assertFalse(changed["all_passed"])
+        self.assertFalse(changed["source_unchanged"])
+
     def test_default_is_dry_run_and_lists_risk_and_paper_checks(self):
         result = subprocess.run(
             [sys.executable, str(SCRIPT)],

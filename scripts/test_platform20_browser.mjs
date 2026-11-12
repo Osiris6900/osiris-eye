@@ -79,6 +79,16 @@ try {
   await wait(`!!document.querySelector('[aria-label="Risk & alerts"]')`, 'dedicated risk page');
   if (await evaluate(`!!document.querySelector('[aria-label="Canonical paper account"]')`)) throw new Error('Navigation reused unrelated paper page');
   checks.push('dedicated navigation and truthful unavailable options/news/regime states');
+  await click('Options Chain'); await click('Load option snapshots');
+  await wait(`document.body.textContent.includes('FIXTURE-NIFTY-CALL')`, 'persisted source-governed option chain');
+  if (!await evaluate(`document.querySelector('[aria-label="Options chain source"]').textContent.includes('SYNTHETIC')`)) throw new Error('Options provenance missing');
+  await click('News & Sentiment'); await click('Load news snapshots');
+  await wait(`document.body.textContent.includes('Offline fixture research headline')`, 'persisted news snapshot');
+  await click('Market Regime');
+  await evaluate(`(() => { const select=document.querySelector('.market-query select'); Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(select,'browser-fixture'); select.dispatchEvent(new Event('change',{bubbles:true})); })()`);
+  await click('Run regime diagnostic');
+  await wait(`document.body.textContent.includes('Descriptive regime: ranging')`, 'gateway-bound regime diagnostic');
+  checks.push('source-governed options/news and historical regime diagnostic preserve synthetic and unapproved provenance');
   await click('Paper Trading');
   await wait(`!!document.querySelector('[aria-label="Canonical paper account"]')`, 'paper account page');
   const corruption = spawnSync(process.env.OSIRIS_TEST_PYTHON || 'python3', ['-c',
