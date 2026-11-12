@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
-from datetime import datetime, timedelta, timezone
+import json
+from datetime import UTC, datetime, timedelta
 
+from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
 from .database import canonical, digest, identifier
@@ -32,7 +35,7 @@ def verify_bundle(bundle: dict, public_key: bytes):
         Ed25519PublicKey.from_public_bytes(public_key).verify(
             base64.b64decode(bundle["signature"], validate=True), canonical(bundle["payload"])
         )
-    except Exception:
+    except (InvalidSignature, ValueError, TypeError, binascii.Error):
         raise ValueError("evidence_signature_invalid") from None
     return bundle["payload"]
 
@@ -44,13 +47,16 @@ class S3Custody:
         if not bucket or not kms_key_id:
             raise ValueError("bucket_and_kms_key_required")
         self.client, self.bucket, self.kms_key_id = client, bucket, kms_key_id
-        self.clock = clock or (lambda: datetime.now(timezone.utc))
+        self.clock = clock or (lambda: datetime.now(UTC))
 
     def retain(self, evidence_id: str, bundle: dict, public_key: bytes, *, days: int = 30) -> dict:
         evidence_id = identifier(evidence_id)
         if type(days) is not int or not 1 <= days <= 3650:
             raise ValueError("invalid_retention_days")
-        verify_bundle(bundle, public_key)
+        # Freeze the verified bytes before any network call can yield control
+        # to code that might mutate the caller-owned bundle.
+        raw = canonical(bundle)
+        verify_bundle(json.loads(raw), public_key)
         configuration = self.client.get_object_lock_configuration(Bucket=self.bucket)
         versioning = self.client.get_bucket_versioning(Bucket=self.bucket)
         if (
@@ -58,7 +64,7 @@ class S3Custody:
             or versioning.get("Status") != "Enabled"
         ):
             raise ValueError("versioned_object_lock_bucket_required")
-        until, raw = self.clock() + timedelta(days=days), canonical(bundle)
+        until = self.clock() + timedelta(days=days)
         key = evidence_id + "/" + hashlib.sha256(raw).hexdigest() + ".json"
         response = self.client.put_object(
             Bucket=self.bucket,
@@ -81,13 +87,42 @@ class S3Custody:
         if (
             retention.get("Mode") != "COMPLIANCE"
             or not isinstance(retained_until, datetime)
+            or retained_until.tzinfo is None
+            or retained_until.utcoffset() is None
             or retained_until < until
         ):
             raise ValueError("object_retention_not_verified")
+        # Retention metadata alone says nothing about which bytes were stored.
+        # Read the exact immutable version back, with a hard allocation bound.
+        response = self.client.get_object(
+            Bucket=self.bucket, Key=key, VersionId=version, ChecksumMode="ENABLED"
+        )
+        stream = response.get("Body")
+        try:
+            if (
+                response.get("VersionId") != version
+                or type(response.get("ContentLength")) is not int
+                or response["ContentLength"] != len(raw)
+                or response.get("ServerSideEncryption") != "aws:kms"
+                or stream is None
+            ):
+                raise ValueError("evidence_readback_not_verified")
+            content = stream.read(len(raw) + 1)
+            if not isinstance(content, bytes) or content != raw:
+                raise ValueError("evidence_readback_not_verified")
+            checksum = response.get("ChecksumSHA256")
+            if checksum is not None and checksum != base64.b64encode(
+                hashlib.sha256(content).digest()
+            ).decode():
+                raise ValueError("evidence_readback_not_verified")
+        finally:
+            if stream is not None:
+                stream.close()
         return {
             "key": key,
             "version_id": version,
             "sha256": hashlib.sha256(raw).hexdigest(),
             "retained_until": retained_until.isoformat(),
+            "content_readback_verified": True,
             "independent_key_custody_attested": False,
         }

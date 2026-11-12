@@ -193,3 +193,44 @@ def test_float_rounding_cannot_authorize_an_order_above_exact_risk_budgets(tmp_p
         broker(db, transport).submit(order, **context)
     assert transport.calls == []
     assert db.get("broker-orders", "order-1") is None
+
+
+@pytest.mark.parametrize("side,prior_average,next_average", [
+    ("BUY", "50", "100"),   # Last unit implicitly costs 150, above the 100 limit.
+    ("BUY", "99", "49"),    # Positive cumulative average conceals a negative fill price.
+    ("BUY", "100", "50"),   # An incremental execution cannot have zero notional.
+    ("SELL", "150", "100"), # Last unit implicitly sells at 50, below the 100 limit.
+    ("BUY", "99.9999999999999999999999999999", "100"),
+    ("SELL", "100.000000000000000000000000001", "100"),
+])
+def test_cumulative_average_cannot_hide_invalid_incremental_fill(
+    tmp_path, side, prior_average, next_average
+):
+    db = Database(str(tmp_path / "broker.db"))
+    part = snapshot(side=side.lower(), status="partially_filled", filled_qty="1",
+                    filled_avg_price=prior_average)
+    next_part = {**part, "filled_qty": "2", "filled_avg_price": next_average}
+    transport = Transport(part, next_part)
+    context = {**CONTEXT, "position": 300, "gross": 300} if side == "SELL" else CONTEXT
+    service = broker(db, transport)
+    service.submit({**ORDER, "side": side}, **context)
+    before = db.get("broker-orders", "order-1")
+    with pytest.raises(ValueError, match="broker_snapshot_mismatch"):
+        service.reconcile("order-1")
+    assert db.get("broker-orders", "order-1") == before
+    assert [call[0] for call in transport.calls] == ["POST", "GET"]
+
+
+@pytest.mark.parametrize("side,prior_average,next_average", [
+    ("BUY", "50", "75"), ("SELL", "150", "125"),
+    ("BUY", "100", "100"), ("SELL", "100", "100"),
+])
+def test_valid_incremental_limit_fills_still_reconcile(tmp_path, side, prior_average, next_average):
+    db = Database(str(tmp_path / "broker.db"))
+    first = snapshot(side=side.lower(), status="partially_filled", filled_qty="1",
+                     filled_avg_price=prior_average)
+    following = {**first, "filled_qty": "2", "filled_avg_price": next_average}
+    service = broker(db, Transport(first, following))
+    context = {**CONTEXT, "position": 300, "gross": 300} if side == "SELL" else CONTEXT
+    service.submit({**ORDER, "side": side}, **context)
+    assert service.reconcile("order-1") == following
