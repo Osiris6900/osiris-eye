@@ -226,6 +226,19 @@ def simulate_backtest(request: Request, payload: dict = Body(...)):
     return run(execute_tool, "backtest", payload, db)
 
 
+@router.post("/portfolio/preview")
+def portfolio_allocation_preview(request: Request, response: Response, payload: dict = Body(...)):
+    from ..portfolio_construction import allocation_preview
+
+    db = database()
+    principal(request, db, "research-read")
+    if "assets" not in payload or set(payload) - {
+        "assets", "max_weight", "cash_reserve", "scenarios", "max_scenario_loss",
+    }:
+        raise HTTPException(422, "invalid_portfolio_preview_fields")
+    return dashboard_response(run(allocation_preview, **payload), request, response)
+
+
 @router.post("/auth/enroll")
 def enroll(request: Request, response: Response):
     db = database()
