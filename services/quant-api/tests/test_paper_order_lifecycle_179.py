@@ -423,6 +423,7 @@ def test_legacy_ledger_migrates_and_still_reconciles(db):
     assert resumed["snapshot"]["positions"][0]["quantity"] == "1"
     assert resumed["open_orders"] == []
     assert reconcile()["passed"] is True
+    assert reconciliation_report()["journal_binding"] == "legacy_unbound"
 
 
 def test_http_lifecycle_stays_paper_only(db):
