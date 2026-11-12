@@ -20,6 +20,7 @@ from typing import Any
 
 from fastapi import APIRouter, Body, HTTPException
 
+from .decimal_safety import bounded_decimal, validate_decimal_bounds
 from .risk import RiskLimits, check_execution
 
 # There is no branch that submits a broker order. A true value still refuses.
@@ -65,8 +66,15 @@ def _audit_live_refusal() -> None:
     if not path or path == ":memory:":
         return
     with _lock:
-        conn = _connect()
+        conn = None
         try:
+            # Refusal logging must never initialize/migrate a ledger or create
+            # a missing file. mode=rw also closes the existence-check race.
+            conn = sqlite3.connect(
+                Path(path).resolve().as_uri() + "?mode=rw", uri=True,
+                timeout=15, isolation_level=None,
+            )
+            conn.row_factory = sqlite3.Row
             conn.execute("BEGIN IMMEDIATE")
             if conn.execute("SELECT 1 FROM paper_exec_meta WHERE id=1").fetchone() is None:
                 conn.rollback()
@@ -80,9 +88,14 @@ def _audit_live_refusal() -> None:
             })
             conn.commit()
         except Exception:
-            conn.rollback()
+            if conn is not None:
+                try:
+                    conn.rollback()
+                except sqlite3.Error:
+                    pass
         finally:
-            conn.close()
+            if conn is not None:
+                conn.close()
 
 
 def _refuse_live(live_execution: object) -> None:
@@ -104,21 +117,14 @@ def _database() -> str:
 
 
 def _number(value: Any, *, positive: bool = False) -> Decimal:
-    if isinstance(value, bool) or isinstance(value, float) or not isinstance(
-        value, (str, int, Decimal)
-    ):
-        raise ValueError("invalid_number")
-    try:
-        number = Decimal(str(value))
-    except InvalidOperation as exc:
-        raise ValueError("invalid_number") from exc
-    if not number.is_finite() or (positive and number <= 0) or number < 0:
+    number = bounded_decimal(value)
+    if (positive and number <= 0) or number < 0:
         raise ValueError("invalid_number")
     return number
 
 
 def _canonical(number: Decimal) -> str:
-    text = format(number, "f")
+    text = format(validate_decimal_bounds(number), "f")
     if "." in text:
         text = text.rstrip("0").rstrip(".")
     return text or "0"
