@@ -1,0 +1,267 @@
+{
+  "schema": "osiris.downloaded-release-evidence.v1",
+  "repository": "Osiris6900/osiris-eye",
+  "baseline_commit": "5b43e61c8c974ef4e52b22c32dbd9cba17ccc62c",
+  "release_gate_accepted": false,
+  "live_trading_authorized": false,
+  "workflows": [
+    {
+      "id": 43312608086,
+      "name": "CI",
+      "head_sha": "5b43e61c8c974ef4e52b22c32dbd9cba17ccc62c",
+      "event": "push",
+      "run_attempt": 1,
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43312608086",
+      "jobs": [
+        {
+          "name": "web",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43312608086/job/131512300714"
+        },
+        {
+          "name": "python",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43312608086/job/131512301009"
+        },
+        {
+          "name": "rust",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43312608086/job/131512301108"
+        }
+      ]
+    },
+    {
+      "id": 43312608076,
+      "name": "Dependency Security Audit",
+      "head_sha": "5b43e61c8c974ef4e52b22c32dbd9cba17ccc62c",
+      "event": "push",
+      "run_attempt": 1,
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43312608076",
+      "jobs": [
+        {
+          "name": "dependency-inventory",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43312608076/job/131512299771"
+        },
+        {
+          "name": "npm-audit",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43312608076/job/131512300092"
+        },
+        {
+          "name": "rust-audit",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43312608076/job/131512300122"
+        },
+        {
+          "name": "python-audit",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43312608076/job/131512300288"
+        }
+      ]
+    },
+    {
+      "id": 43312607876,
+      "name": "Synthetic model research evidence (T11/T12 only)",
+      "head_sha": "5b43e61c8c974ef4e52b22c32dbd9cba17ccc62c",
+      "event": "push",
+      "run_attempt": 1,
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43312607876",
+      "jobs": [
+        {
+          "name": "Synthetic-only research archive (not model signoff)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43312607876/job/131512298547"
+        }
+      ]
+    }
+  ],
+  "artifacts": [
+    {
+      "artifact_id": 13987112213,
+      "name": "receipt-paper-43312608086-1",
+      "run_id": 43312608086,
+      "commit": "5b43e61c8c974ef4e52b22c32dbd9cba17ccc62c",
+      "expires_at": "2026-11-26T21:48:26Z",
+      "size_in_bytes": 44085,
+      "zip_sha256": "80466496cfeccc554d08e17f558e6a46432d7e44f69121b3dd45816d103f2165",
+      "files_sha256": {
+        "receipt-paper.json": "f50f1d2c81caf01d04127bbc19f7ef70fdcf479f01c4ebd6ca966f01793ecc36",
+        "receipt-paper.json.sha256": "74fc8e12472e18b7289038f458398b9bbc516ee9a30e9292ccd8475c30dadf60"
+      },
+      "source_files_verified": 792,
+      "checks": [
+        "actual_rust_e2ee_and_recipient_receipt",
+        "kernel_pinned_event_persisted",
+        "no_paper_execution_before_acknowledgement",
+        "actual_child_loss_after_fill_commit",
+        "new_process_idempotent_recovery",
+        "receipt_to_risk_decision_to_fill_trace",
+        "exact_fee_inclusive_round_trip_pnl",
+        "canonical_admin_account_matches",
+        "replay_and_changed_economics_guard",
+        "current_kill_switch_and_revocation_guard"
+      ],
+      "binary_sha256": "ec7aeffaccf927098b6797d7b143e0dac722373bcb56b9471a0e2696f65f4faf",
+      "scope": "two-local-rust-nodes-and-independent-local-python-processes",
+      "synthetic_market_and_strategy": true,
+      "downloaded_bytes_verified": true
+    },
+    {
+      "artifact_id": 13985768677,
+      "name": "dependency-sbom-43312608076-1",
+      "run_id": 43312608076,
+      "commit": "5b43e61c8c974ef4e52b22c32dbd9cba17ccc62c",
+      "expires_at": "2026-11-26T21:41:11Z",
+      "size_in_bytes": 86999,
+      "zip_sha256": "aa79bf3aa2a6ef7601b32d78305e36b8e2bcb90cda0f4d6e59320f02c999ec94",
+      "files_sha256": {
+        "dependency-sbom-provenance.json": "4da7f323f2732dbf5e62dc80e568a130b7c848d16af4d5471a1103292152d328",
+        "dependency-sbom.json": "75bf80041097973cf25d91822978a04e4a2b32ed31e3c394cc3a8fe031c4d7ac",
+        "dependency-sbom.json.sha256": "b32a04c8e26910412e64fbe68aa3b0e5251260cced7a715ee829680410d6dd03"
+      },
+      "verification": {
+        "checkout_commit": "5b43e61c8c974ef4e52b22c32dbd9cba17ccc62c",
+        "candidate_commit": "5b43e61c8c974ef4e52b22c32dbd9cba17ccc62c",
+        "checkout_tree": "302618d502fe0ca5103b1d040a78e6546610bf55",
+        "candidate_tree_matches_checkout": true,
+        "ci_run_id": "43312608076",
+        "ci_run_attempt": "1",
+        "component_count": 613,
+        "files_sha256": {
+          "dependency-sbom-provenance.json": "4da7f323f2732dbf5e62dc80e568a130b7c848d16af4d5471a1103292152d328",
+          "dependency-sbom.json": "75bf80041097973cf25d91822978a04e4a2b32ed31e3c394cc3a8fe031c4d7ac",
+          "dependency-sbom.json.sha256": "b32a04c8e26910412e64fbe68aa3b0e5251260cced7a715ee829680410d6dd03"
+        },
+        "input_sha256": {
+          "apps/web/package-lock.json": "fc7b7c0a8bc7216c037feea96eeae9003d32a059d2f34a538de8313136f21c49",
+          "crates/native-feed/Cargo.lock": "a3245172f873236cbe927b02085f8c02c1b07a6a1d66166c54e8370524eec938",
+          "crates/risk-kernel/Cargo.lock": "4323ac3971f58ff86b58615597d6fb3522b0adcd9d34368bf434d7fe4d065f0c",
+          "services/p2p-node/Cargo.lock": "29ae2856e7576c3e8474ad55478992166d73ddf586e17f7c7622af200287e07c",
+          "services/quant-api/pyproject.toml": "cc09246e40902345e7b7eac605e9b528e36c7bbc7df7d35c2229c1dee7676050",
+          "services/quant-api/requirements-lock.txt": "ff5e5ece6f90c6f97786e3cb3f199d06c57cef282b7daa057485277cf5b77ae5"
+        }
+      },
+      "scope": "complete locked dependency metadata; not independent license/security approval",
+      "downloaded_bytes_verified": true
+    },
+    {
+      "artifact_id": 13986412568,
+      "name": "market-paper-acceptance-43312608086-1",
+      "run_id": 43312608086,
+      "commit": "5b43e61c8c974ef4e52b22c32dbd9cba17ccc62c",
+      "expires_at": "2026-11-26T21:42:52Z",
+      "size_in_bytes": 5824,
+      "zip_sha256": "cabe244d7deec6576e0a0db2207a9678c87b9b8c34281333eacdbe5c073171c6",
+      "files_sha256": {
+        "market-paper-acceptance.json": "33007129ab48ccf85ec2d92e4e475af2fbf007588bcb18ffc3337a3752280baa",
+        "market-paper-acceptance.json.sha256": "385c15c011293d02af953483a242a3f3276610a1643007206e407eca422cde4e"
+      },
+      "source_files_verified": 8,
+      "checks": [
+        "market_adapter_to_strategy_to_risk_to_fill",
+        "exact_buy_cash_and_fee_cost_basis",
+        "marked_unrealized_pnl",
+        "same_candle_idempotency",
+        "exact_round_trip_cash_positions_and_pnl",
+        "persisted_kill_switch_blocks_new_orders",
+        "independent_order_notional_limit",
+        "invalid_market_data_fails_closed",
+        "separate_process_restart_recovers_exact_ledger_state"
+      ],
+      "scope": "single_runner_isolated_temporary_paper_sqlite",
+      "downloaded_bytes_verified": true
+    },
+    {
+      "artifact_id": 13986712181,
+      "name": "platform20-browser-43312608086-1",
+      "run_id": 43312608086,
+      "commit": "5b43e61c8c974ef4e52b22c32dbd9cba17ccc62c",
+      "expires_at": "2026-11-26T21:41:51Z",
+      "size_in_bytes": 789949,
+      "zip_sha256": "3985c0fffb03e2e2237a35b54a5aaea51db9c1c0fa8e6af738b50e5e0840a967",
+      "files_sha256": {
+        "dashboard-browser.png": "d48080dbe68d785c31bbda6a555b2dc8e08b2a89f722d0c13d6c0fb72ae3bd1c",
+        "platform20-browser.json": "0e345f9e6289f5bf70dc333702107a02db00e1adb84c9103b28e2dc22dfd8cd8",
+        "platform20-browser.png": "5432c877dec17f84d2673d1f46af60c0ed046a04630f8732c93ea4bf94bd2396"
+      },
+      "checks": [
+        "dashboard canonical cash/P&L and gateway chart with explicit synthetic provenance",
+        "dedicated navigation and truthful unavailable options/news/regime states",
+        "source-governed options/news and historical regime diagnostic preserve synthetic and unapproved provenance",
+        "refresh withholds stale/corrupted canonical accounting",
+        "browser MFA enrollment and session",
+        "browser backtest with MFA session",
+        "browser research request persisted",
+        "independent operator review from browser",
+        "separate worker claimed and completed job over verified HTTPS"
+      ],
+      "scope": "disposable browser/TLS/MFA fixture; no report-internal commit binding (CI run association only)",
+      "downloaded_bytes_verified": true
+    },
+    {
+      "artifact_id": 13987046733,
+      "name": "synthetic-model-research-43312607876-1",
+      "run_id": 43312607876,
+      "commit": "5b43e61c8c974ef4e52b22c32dbd9cba17ccc62c",
+      "expires_at": "2026-11-26T21:41:04Z",
+      "size_in_bytes": 3903,
+      "zip_sha256": "50381ae9d5b79663f8a339a511b10996d91d5ba083a091bfc4afea3f812dd0d6",
+      "files_sha256": {
+        "research-evidence-manifest.json": "223ac3625858e65477b9c12aa59d66f3c4157774d5a2496ba7a1016e17194111",
+        "research-governance.json": "23e9281c236bc7cd412d7f7a91511134cd9922801d33c99c5314ee5ab3e0ba6a",
+        "sha256sum.txt": "4bd783e089b7dda024a95cc9268ada21c80492671beda9bb1ca0e58f4b0a598f",
+        "synthetic-input-ticks.json": "d9f1b888cf675b64cc87c23f1b3516320d6e989e03cf0eca145e62f0e2b82cb3",
+        "walk-forward-report.json": "f1608aed7c88687439d0d77c4450c3a359ef9f863d491175b0f93ce576a7b38b"
+      },
+      "verification": {
+        "consistent": true,
+        "commit_sha": "5b43e61c8c974ef4e52b22c32dbd9cba17ccc62c",
+        "t11_t12_accepted": false,
+        "independent_model_reviewed": false,
+        "live_trading_authorized": false
+      },
+      "scope": "synthetic deterministic walk-forward diagnostics; independent model review pending",
+      "downloaded_bytes_verified": true
+    }
+  ],
+  "verification_boundary": "Actual ZIP and file digests recomputed after authenticated connector download. Implementation evidence for the named historical main commit only; no external gate or real-feed/production approval.",
+  "gate_counts": {
+    "implemented_with_evidence": 3,
+    "partial": 14,
+    "remaining": 3
+  },
+  "remaining_release_gates": [
+    "T01",
+    "T04",
+    "T06",
+    "T07",
+    "T08",
+    "T09",
+    "T10",
+    "T11",
+    "T12",
+    "T13",
+    "T14",
+    "T15",
+    "T16",
+    "T17",
+    "T18",
+    "T19",
+    "T20"
+  ]
+}
