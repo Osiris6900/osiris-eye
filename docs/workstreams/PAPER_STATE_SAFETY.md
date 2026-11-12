@@ -15,9 +15,12 @@ Two remaining defects were reproduced against integration commit
    `live_execution_disabled` refusal. Valid accounts still retain refusal events
    in their verified audit chain.
 
-`decimal_safety.py` limits incoming decimal text/coefficient size to 256
-characters/digits and absolute decimal exponent to 1,000. Oversized integers are
-rejected before string conversion. These are resource bounds, not order limits
+`decimal_safety.py` limits significant coefficient size to 256 digits and both
+raw and trailing-zero-adjusted absolute decimal exponent to 1,000. Text is bounded
+to 1,259 characters, allowing every permitted value's fixed-point representation
+to pass the same audit/replay parser. Trailing zeros are counted exactly without
+context-dependent normalization or rounding. Oversized integers are rejected
+before string conversion. These are resource bounds, not order limits
 or capital/risk budgets. Values are not rounded or silently truncated. Canonical
 ledger float rejection and the legacy ledger's existing float support are
 preserved. Existing stored values outside these bounds require investigation;
@@ -27,7 +30,8 @@ The regression suite exercises account initialization, orders, partial fills,
 marks, reconciliation and HTTP failures. It checks unchanged cash/positions/
 orders/audit on malformed input, missing/uninitialized/legacy/corrupt SQLite
 files, URI-sensitive file names, valid refusal audit recording, sub-float exact
-decimals and the legacy float contract. It uses only disposable local state and
+decimals, canonical audit replay at `1e-255`/`1e-300`, account storage at both
+exponent boundaries, and the legacy float contract. It uses only disposable local state and
 does not submit broker orders.
 
 ```bash

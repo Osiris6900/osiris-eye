@@ -17,9 +17,11 @@ ATTACKS = [
     pytest.param("1e999999999", id="huge-exponent"),
     pytest.param("0e999999999", id="zero-with-huge-exponent"),
     pytest.param("1e-1001", id="exponent-past-boundary"),
+    pytest.param("1e1001", id="positive-exponent-past-boundary"),
     pytest.param("1" * 257, id="long-coefficient"),
+    pytest.param("1" * 1260, id="long-input-text"),
     pytest.param(Decimal("1e-999999999"), id="decimal-object-exponent"),
-    pytest.param(10**1200, id="large-python-integer"),
+    pytest.param(10**5000, id="large-python-integer"),
 ]
 
 
@@ -144,6 +146,28 @@ def test_reconciliation_never_expands_a_corrupt_stored_decimal(ledger_paths):
         db.execute("UPDATE paper_exec_meta SET cash='1e-999999999'")
     with pytest.raises(ValueError, match="decimal_precision_out_of_range"):
         execution.reconciliation_report()
+
+
+@pytest.mark.parametrize("quantity", ["1e-255", "1e-300"])
+def test_small_exact_orders_survive_canonical_audit_replay(ledger_paths, quantity):
+    execution.initialize_paper_account("1000")
+    assert order(quantity=quantity, price="1")["state"] == "filled"
+    state = execution.snapshot()
+    assert state["fill_count"] == 1
+    assert Decimal(state["positions"][0]["quantity"]) == Decimal(quantity)
+    assert execution.reconcile()["passed"] is True
+    assert order(quantity=quantity, price="1")["status"] == "idempotent_replay"
+    replayed = execution.snapshot()
+    for field in ("cash", "positions", "fill_count", "realized_pnl"):
+        assert replayed[field] == state[field]
+    assert execution.reconcile()["passed"] is True
+
+
+@pytest.mark.parametrize("cash", ["1e1000", "1e-1000"])
+def test_bounded_account_values_remain_readable_after_fixed_point_storage(ledger_paths, cash):
+    execution.initialize_paper_account(cash)
+    assert Decimal(execution.snapshot()["cash"]) == Decimal(cash)
+    assert execution.reconcile()["passed"] is True
 
 
 @pytest.mark.parametrize("env_flag,requested", [("", True), ("1", False)])

@@ -9,16 +9,27 @@ from __future__ import annotations
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-MAX_DECIMAL_CHARACTERS = 256
 MAX_DECIMAL_DIGITS = 256
 MAX_DECIMAL_EXPONENT = 1000
+# Canonical fixed-point values must be valid inputs to audit/replay parsing.
+# Allow every bounded coefficient/exponent plus sign, leading zero and point.
+MAX_DECIMAL_CHARACTERS = MAX_DECIMAL_DIGITS + MAX_DECIMAL_EXPONENT + 3
 
 
 def validate_decimal_bounds(number: Decimal) -> Decimal:
     if not number.is_finite():
         raise ValueError("invalid_number")
     parts = number.as_tuple()
-    if len(parts.digits) > MAX_DECIMAL_DIGITS or abs(parts.exponent) > MAX_DECIMAL_EXPONENT:
+    if len(parts.digits) > MAX_DECIMAL_CHARACTERS or abs(parts.exponent) > MAX_DECIMAL_EXPONENT:
+        raise ValueError("decimal_precision_out_of_range")
+    # Fixed-point formatting materializes trailing coefficient zeroes. Count
+    # significant digits and the corresponding exponent without normalize(),
+    # which would round exact values using the ambient Decimal context.
+    end = len(parts.digits)
+    while end > 1 and parts.digits[end - 1] == 0:
+        end -= 1
+    exponent = parts.exponent + len(parts.digits) - end
+    if end > MAX_DECIMAL_DIGITS or abs(exponent) > MAX_DECIMAL_EXPONENT:
         raise ValueError("decimal_precision_out_of_range")
     return number
 
