@@ -45,12 +45,11 @@ def order_flow_imbalance(bid_volume: float, ask_volume: float) -> float:
 
 def inverse_volatility_weights(volatilities: Sequence[float]) -> list[float]:
     """Long-only normalized inverse-volatility weights; not an optimizer."""
-    vols = _finite(volatilities, "volatilities")
-    if any(v <= 0 for v in vols):
-        raise ValueError("volatilities must be positive")
-    inverse = [1.0 / v for v in vols]
-    total = sum(inverse)
-    return [v / total for v in inverse]
+    from .portfolio_construction import MAX_ASSETS, capped_inverse_volatility_weights
+
+    if not isinstance(volatilities, Sequence) or not 1 <= len(volatilities) <= MAX_ASSETS:
+        raise ValueError("volatilities must be a bounded sequence")
+    return capped_inverse_volatility_weights(list(volatilities), [1.0] * len(volatilities))
 
 
 def historical_var_es(returns: Sequence[float], confidence: float = 0.95) -> tuple[float, float]:
