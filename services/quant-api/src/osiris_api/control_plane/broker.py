@@ -48,7 +48,8 @@ def validate_broker_snapshot(order: dict, response: object, previous: dict | Non
             or (status == "filled" and filled != requested)
             or (status != "filled" and filled == requested)
             or (status == "partially_filled" and filled == 0)
-            or (status == "rejected" and filled != 0)
+            or (status in {"new", "pending_new", "accepted", "accepted_for_bidding", "rejected"}
+                and filled != 0)
         ):
             raise ValueError()
         if filled:

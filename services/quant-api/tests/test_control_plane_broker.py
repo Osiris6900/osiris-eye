@@ -85,6 +85,19 @@ def test_partial_full_fill_progress_and_exact_decimal_equivalence_survive_restar
     assert [call[0] for call in transport.calls] == ["POST", "GET", "GET"]
 
 
+@pytest.mark.parametrize("status", ["new", "pending_new", "accepted", "accepted_for_bidding"])
+def test_pre_execution_state_cannot_hide_already_reported_fills(tmp_path, status):
+    db = Database(str(tmp_path / "broker.db"))
+    partial = snapshot(status="partially_filled", filled_qty="1", filled_avg_price="99")
+    transport = Transport(partial, {**partial, "status": status})
+    service = broker(db, transport)
+    service.submit(ORDER, **CONTEXT)
+    before = db.get("broker-orders", "order-1")
+    with pytest.raises(ValueError, match="broker_snapshot_mismatch"):
+        service.reconcile("order-1")
+    assert db.get("broker-orders", "order-1") == before
+
+
 @pytest.mark.parametrize("changes", [
     {"id": "different-broker-order"}, {"filled_qty": "0", "filled_avg_price": None},
     {"filled_avg_price": "98"}, {"symbol": "OTHER"},
