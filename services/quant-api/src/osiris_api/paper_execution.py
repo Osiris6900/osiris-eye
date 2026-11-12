@@ -30,6 +30,11 @@ ORDER_STATES = (
     "new", "accepted", "partially_filled", "filled", "cancelled", "rejected",
 )
 OPEN_ORDER_STATES = frozenset({"accepted", "partially_filled"})
+JOURNAL_SCHEMA = "osiris.paper_order_journal.v2"
+_JOURNAL_POLICY_FIELDS = (
+    "max_order_notional", "max_position_notional", "max_daily_loss", "max_gross_exposure",
+    "max_market_age_seconds", "max_future_skew_seconds",
+)
 _ORDER_TRANSITIONS = {
     "new": frozenset({"accepted", "rejected"}),
     "accepted": frozenset({"partially_filled", "filled", "cancelled"}),
@@ -83,7 +88,7 @@ def _audit_live_refusal() -> None:
 def _refuse_live(live_execution: object) -> None:
     if (
         LIVE_EXECUTION_ENABLED is not False
-        or live_execution is True
+        or live_execution is not False
         or os.getenv("OSIRIS_ENABLE_LIVE_EXECUTION")
     ):
         _audit_live_refusal()
@@ -454,7 +459,132 @@ def _reconcile_breaks(conn: sqlite3.Connection) -> list[str]:
     if recorded_unrealized != expected_unrealized:
         breaks.append("unrealized_pnl")
     breaks.extend(_order_breaks(conn))
+    breaks.extend(_journal_projection_breaks(conn))
     return breaks
+
+
+def _journal_schema(conn: sqlite3.Connection) -> str:
+    row = conn.execute("SELECT payload FROM paper_exec_audit WHERE seq=1").fetchone()
+    payload = json.loads(row[0]) if row else {}
+    return JOURNAL_SCHEMA if isinstance(payload, dict) and payload.get("journal_schema") == JOURNAL_SCHEMA else "legacy_unbound"
+
+
+def _journal_projection_breaks(conn: sqlite3.Connection) -> list[str]:
+    """Bind mutable account projections to the already verified event chain.
+
+    Older journals lack complete fill/mark economics. Preserve their existing
+    arithmetic reconciliation without claiming the new journal-bound contract.
+    A privileged rewrite of the chain itself still requires an external anchor
+    to detect; this function does not replace independent evidence custody.
+    """
+    if _journal_schema(conn) != JOURNAL_SCHEMA:
+        return []
+    try:
+        rows = conn.execute("SELECT * FROM paper_exec_audit ORDER BY seq").fetchall()
+        initial = json.loads(rows[0]["payload"])
+        if rows[0]["event"] != "account_initialized":
+            return ["journal_initialization"]
+        account = conn.execute("SELECT * FROM paper_exec_meta WHERE id=1").fetchone()
+        breaks = []
+        if initial["cash"] != account["initial_cash"]:
+            breaks.append("journal_initial_cash")
+        if initial["risk_policy"] != {field: account[field] for field in _JOURNAL_POLICY_FIELDS}:
+            breaks.append("journal_risk_policy")
+        orders, fills, marks = {}, {}, {}
+        filled_order_ids = set()
+        kill_switch = False
+        for row in rows[1:]:
+            event, key, payload = row["event"], row["client_order_id"], json.loads(row["payload"])
+            if not isinstance(payload, dict):
+                raise ValueError("invalid_journal_payload")
+            if event == "order_decided":
+                if key in orders or not isinstance(key, str):
+                    raise TypeError("duplicate_or_invalid_journal_order")
+                state = payload["state"]
+                if state not in {"accepted", "filled", "rejected"}:
+                    raise ValueError("invalid_initial_order_state")
+                orders[key] = {
+                    field: payload[field] for field in (
+                        "symbol", "side", "quantity", "price", "fee", "status", "state",
+                        "reason", "execution_mode", "created_at",
+                    )
+                }
+                orders[key].update({
+                    "risk_decision_id": row["row_hash"],
+                    "limits_evaluated": int(payload["limits_evaluated"] is True),
+                    "filled_quantity": payload["quantity"] if state == "filled" else "0",
+                    "leaves_quantity": payload["quantity"] if state == "accepted" else "0",
+                })
+            elif event == "fill_recorded":
+                order = orders[key]
+                seq = payload["fill_seq"]
+                if type(seq) is not int or seq <= 0 or seq in fills:
+                    raise ValueError("duplicate_journal_fill")
+                if payload["risk_decision_id"] != order["risk_decision_id"]:
+                    raise ValueError("journal_fill_risk_mismatch")
+                if payload["symbol"] != order["symbol"] or payload["side"] != order["side"]:
+                    raise ValueError("journal_fill_order_mismatch")
+                qty = _number(payload["quantity"], positive=True)
+                if order["execution_mode"] == "immediate":
+                    if key in filled_order_ids or order["state"] != "filled" or (
+                        qty != Decimal(order["quantity"]) or payload["fee"] != order["fee"]
+                    ):
+                        raise ValueError("invalid_immediate_fill")
+                    target = "filled"
+                else:
+                    leaves = Decimal(order["leaves_quantity"]) - qty
+                    if leaves < 0:
+                        raise ValueError("journal_overfill")
+                    target = "filled" if leaves == 0 else "partially_filled"
+                    order_transition(order["state"], target)
+                    order["filled_quantity"] = _canonical(Decimal(order["filled_quantity"]) + qty)
+                    order["leaves_quantity"] = _canonical(leaves)
+                if payload["state"] != target:
+                    raise ValueError("journal_fill_state_mismatch")
+                order.update({"state": target, "status": target})
+                filled_order_ids.add(key)
+                fills[seq] = {
+                    "seq": seq, "client_order_id": key,
+                    **{field: payload[field] for field in (
+                        "client_fill_id", "symbol", "side", "quantity", "price", "fee", "realized_pnl",
+                    )},
+                }
+            elif event == "order_cancelled":
+                order = orders[key]
+                if payload["filled_quantity"] != order["filled_quantity"] or (
+                    payload["released_quantity"] != order["leaves_quantity"]
+                ):
+                    raise ValueError("journal_cancel_quantity_mismatch")
+                order_transition(order["state"], "cancelled")
+                order.update({"state": "cancelled", "status": "cancelled", "leaves_quantity": "0"})
+            elif event == "mark_to_market":
+                for symbol, price in payload["marks"].items():
+                    marks[symbol] = {"symbol": symbol, "price": price, "observed_at": payload["observed_at"]}
+            elif event == "kill_switch_set":
+                if type(payload["active"]) is not bool:
+                    raise ValueError("invalid_journal_kill_switch")
+                kill_switch = payload["active"]
+            elif event == "account_initialized":
+                raise ValueError("duplicate_journal_initialization")
+        recorded_orders = {row["client_order_id"]: dict(row)
+                           for row in conn.execute("SELECT * FROM paper_exec_orders")}
+        if set(orders) != set(recorded_orders):
+            breaks.append("journal_order_inventory")
+        for key, expected in orders.items():
+            actual = recorded_orders.get(key, {})
+            if any(actual.get(field) != value for field, value in expected.items()):
+                breaks.append(f"journal_order:{key}")
+        recorded_fills = {row["seq"]: dict(row) for row in conn.execute("SELECT * FROM paper_exec_fills")}
+        if fills != recorded_fills:
+            breaks.append("journal_fills")
+        recorded_marks = {row["symbol"]: dict(row) for row in conn.execute("SELECT * FROM paper_exec_marks")}
+        if marks != recorded_marks:
+            breaks.append("journal_marks")
+        if account["kill_switch"] != int(kill_switch):
+            breaks.append("journal_kill_switch")
+        return breaks
+    except (KeyError, ValueError, TypeError, ArithmeticError, AttributeError):
+        return ["journal_projection_invalid"]
 
 
 def _assert_ready(conn: sqlite3.Connection) -> None:
@@ -740,8 +870,11 @@ def initialize_paper_account(
                     _canonical(max_age), _canonical(skew), "0",
                 ),
             )
+            stored_policy = conn.execute("SELECT * FROM paper_exec_meta WHERE id=1").fetchone()
             _append_audit(conn, "account_initialized", None, {
                 "cash": _canonical(cash), "live_execution": False, "broker_order_submitted": False,
+                "journal_schema": JOURNAL_SCHEMA,
+                "risk_policy": {field: stored_policy[field] for field in _JOURNAL_POLICY_FIELDS},
             })
             _assert_ready(conn)
             conn.commit()
@@ -804,7 +937,7 @@ def _submit_new_order(
     kill_switch_active: object, working: bool, simulate_crash: bool,
 ) -> dict[str, Any]:
     account = conn.execute("SELECT * FROM paper_exec_meta WHERE id=1").fetchone()
-    effective_kill = bool(account["kill_switch"]) or kill_switch_active is True
+    effective_kill = bool(account["kill_switch"]) or kill_switch_active is not False
     fresh = _fresh(account, observed_at, now)
     filled_notional, filled_gross = _book(conn, symbol, px)
     if side == "BUY":
@@ -870,6 +1003,7 @@ def _submit_new_order(
         "status": status, "reason": reason, "limits_evaluated": limits_evaluated,
         "state": state, "execution_mode": execution_mode,
         "symbol": symbol, "side": side, "quantity": qty_s, "price": px_s, "fee": fee_s,
+        "created_at": now if isinstance(now, str) else "",
         "live_execution": False, "broker_order_submitted": False,
     }
     audit_seq, digest = _append_audit(conn, "order_decided", key, payload)
@@ -883,6 +1017,7 @@ def _submit_new_order(
         _append_audit(conn, "fill_recorded", key, {
             "fill_seq": audit_seq, "client_fill_id": key, "risk_decision_id": digest,
             "realized_pnl": _canonical(realized_delta), "quantity": qty_s, "price": px_s,
+            "symbol": symbol, "side": side, "fee": fee_s, "state": "filled",
             "live_execution": False, "broker_order_submitted": False,
         })
     created = now if isinstance(now, str) else ""
@@ -923,6 +1058,8 @@ def submit_paper_order(
     simulate_crash: bool = False,
 ) -> dict[str, Any]:
     _refuse_live(live_execution)
+    if type(working) is not bool:
+        raise ValueError("working_state_invalid")
     if not isinstance(client_order_id, str) or not 1 <= len(client_order_id.strip()) <= 128:
         raise ValueError("invalid_client_order_id")
     if not isinstance(symbol, str) or not 1 <= len(symbol.strip()) <= 64:
@@ -1160,6 +1297,7 @@ def apply_paper_fill(
                                 "risk_decision_id": order["risk_decision_id"],
                                 "realized_pnl": _canonical(realized),
                                 "quantity": qty_s, "price": px_s, "state": target,
+                                "symbol": order["symbol"], "side": order["side"], "fee": fee_s,
                                 "live_execution": False, "broker_order_submitted": False,
                             })
                             conn.execute(
@@ -1318,6 +1456,7 @@ def mark_to_market(marks: Any, *, observed_at: object, now: object) -> dict[str,
             _refresh_unrealized(conn)
             _append_audit(conn, "mark_to_market", None, {
                 "marks": {symbol: _canonical(price) for symbol, price in sorted(parsed.items())},
+                "observed_at": observed,
                 "live_execution": False, "broker_order_submitted": False,
             })
             _assert_ready(conn)
@@ -1413,6 +1552,7 @@ def _build_reconciliation_report(conn: sqlite3.Connection, account: sqlite3.Row)
         "live_execution": False,
         "broker_order_submitted": False,
         "mode": "paper_only",
+        "journal_binding": _journal_schema(conn),
     }
 
 
