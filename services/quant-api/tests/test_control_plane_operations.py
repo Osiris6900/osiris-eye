@@ -164,7 +164,7 @@ def test_l2_capture_replay_rejection_and_partial_depth(tmp_path):
     assert result["average_price"] == "101.5"
     with pytest.raises(ValueError, match="replayed"):
         service.capture("BTC-USD")
-    stale = DepthService(db, entitlement_reference="fixture", clock=lambda: 106)
+    stale = DepthService(db, entitlement_reference="fixture-only", clock=lambda: 106)
     with pytest.raises(ValueError, match="stale"):
         stale.impact("BTC-USD", "buy", "1")
 
