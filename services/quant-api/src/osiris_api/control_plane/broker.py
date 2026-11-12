@@ -89,6 +89,10 @@ def money(value: object, *, positive: bool = True) -> Decimal:
         raise ValueError("invalid_decimal") from None
     if not amount.is_finite() or amount.copy_abs() > Decimal("1e15") or (positive and amount <= 0):
         raise ValueError("decimal_out_of_range")
+    # Input length alone does not bound numeric work: a short exponent such as
+    # 1e-999999999 would allocate an enormous denominator in Fraction below.
+    if abs(amount.as_tuple().exponent) > 1000:
+        raise ValueError("decimal_precision_out_of_range")
     return amount
 
 

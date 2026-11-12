@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import secrets
 import time
 from urllib.parse import urlsplit
@@ -20,6 +21,8 @@ class Observability:
             component not in {"platform", "vendor", "worker", "depth", "shadow"}
             or type(status) is not int
             or not 100 <= status <= 599
+            or type(duration_ms) not in (int, float)
+            or not math.isfinite(duration_ms)
             or not 0 <= duration_ms <= 3_600_000
         ):
             raise ValueError("invalid_metric")
@@ -64,9 +67,11 @@ class Observability:
         bucket = int(self.clock() // 300)
         payload = {"component": component, "code": code, "severity": severity, "window": bucket}
         key = digest(payload)
-        if self.db.get("telemetry-outbox", key) is None:
-            self.db.put(
-                "telemetry-outbox", key, {"kind": "alert", "payload": payload, "delivered": False}
+        with self.db.transaction() as conn:
+            conn.execute(
+                "INSERT INTO cp_documents VALUES ('telemetry-outbox',?,1,?) "
+                "ON CONFLICT(collection,id) DO NOTHING",
+                (key, canonical({"kind": "alert", "payload": payload, "delivered": False}).decode()),
             )
         return key
 
@@ -109,11 +114,16 @@ class Observability:
         delivered = 0
         if type(limit) is not int or not 1 <= limit <= 1000:
             raise ValueError("invalid_export_limit")
+        kinds = (["trace"] if trace_endpoint else []) + (["alert"] if alert_endpoint else [])
+        if not kinds:
+            return {"delivered": 0, "delivery_semantics": "at_least_once_with_idempotency_key"}
         with self.db.transaction() as conn:
             pending = conn.execute(
                 "SELECT id,version,body FROM cp_documents WHERE collection='telemetry-outbox' "
-                "AND json_extract(body,'$.delivered')=0 ORDER BY rowid LIMIT ?",
-                (limit,),
+                "AND json_extract(body,'$.delivered')=0 "
+                f"AND json_extract(body,'$.kind') IN ({','.join('?' for _ in kinds)}) "
+                "ORDER BY rowid LIMIT ?",
+                (*kinds, limit),
             ).fetchall()
         for record in pending:
             row = {
@@ -146,12 +156,21 @@ class Observability:
                 if item["kind"] == "trace"
                 else item["payload"]
             )
-            transport.request(
+            response = transport.request(
                 "POST",
                 endpoint,
                 body=payload,
                 headers={**(headers or {}), "Idempotency-Key": row["id"]},
             )
+            # OTLP can return HTTP 200 while rejecting spans. Keep the durable
+            # item pending so that a partial success is never recorded as delivery.
+            if item["kind"] == "trace":
+                partial = response.get("partialSuccess", {}) if isinstance(response, dict) else None
+                if not isinstance(partial, dict) or (
+                    type(partial.get("rejectedSpans", 0)) not in (str, int)
+                    or str(partial.get("rejectedSpans", 0)) != "0"
+                ):
+                    raise ValueError("trace_export_not_accepted")
             self.db.put(
                 "telemetry-outbox",
                 row["id"],

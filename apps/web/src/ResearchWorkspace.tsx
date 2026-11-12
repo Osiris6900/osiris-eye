@@ -22,7 +22,7 @@ export function ResearchWorkspace({ page, authorization, onAuthorization }: {
   useEffect(() => {
     generation.current += 1; pending.current?.abort(); setLoading(false); setResult(null); setError(''); setReports(null);
     return () => { generation.current += 1; pending.current?.abort(); };
-  }, [page]);
+  }, [page, authorization]);
 
   async function request(path: string, body?: unknown) {
     const current = ++generation.current;
