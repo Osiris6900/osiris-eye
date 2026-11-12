@@ -638,6 +638,40 @@ def _cost_basis_gross(positions: Any) -> str | None:
 
 def paper_status(*, now: datetime | None = None) -> dict[str, Any]:
     current = _utcnow(now)
+    # Explicit execution-account configuration is authoritative even when the
+    # file is absent or corrupt. Never fall back to a different funded account.
+    if os.getenv("OSIRIS_PAPER_EXECUTION_DB", "").strip():
+        from .paper_execution import account_valuation, execution_status
+
+        result = {
+            "schema": PAPER_SCHEMA, "generated_at": current.isoformat(),
+            "source_ledger": "canonical_execution", "mode": "paper_only",
+            "initialized": False, "cash": None, "positions": None,
+            "fill_count": None, "recent_fills": None, "pnl": None,
+            "cost_basis_gross": None, "market_value": None, "open_orders": None,
+            "orders": None, "open_orders_reason": "account_unavailable",
+            "marks_available": False, "kill_switch_active": None,
+            "reconciliation": {"passed": False, "breaks": ["account_unavailable"]},
+            "live_trading_authorized": False,
+        }
+        try:
+            status = execution_status(read_only=True)
+            account, report = status["account"], status["reconciliation"]
+            result["initialized"] = account.get("initialized") is True
+            result["reconciliation"] = report
+            if report.get("passed") is not True:
+                return result
+            result.update({
+                "cash": account["cash"], "positions": account["positions"],
+                "fill_count": account["fill_count"], "recent_fills": account["recent_fills"],
+                "cost_basis_gross": _cost_basis_gross(account["positions"]),
+                "open_orders": account["open_orders"], "orders": account["orders"],
+                "open_orders_reason": None, "kill_switch_active": account["kill_switch_active"],
+                **account_valuation(account, now=current),
+            })
+        except (ValueError, ArithmeticError, sqlite3.Error, OSError):
+            result["reconciliation"] = {"passed": False, "breaks": ["account_unavailable"]}
+        return result
     ledger = paper_ledger_snapshot()
     initialized = bool(ledger.get("initialized"))
     positions = ledger.get("positions", []) if initialized else []
@@ -645,6 +679,7 @@ def paper_status(*, now: datetime | None = None) -> dict[str, Any]:
     return {
         "schema": PAPER_SCHEMA,
         "generated_at": current.isoformat(),
+        "source_ledger": "legacy_synthetic",
         "mode": ledger.get("mode", "synthetic-paper-only"),
         "initialized": initialized,
         "cash": ledger.get("cash") if initialized else None,
@@ -729,6 +764,14 @@ def risk_status(
                 "message": "Paper ledger is not initialized; cash, positions and P&L unavailable",
             }
         )
+    if paper.get("source_ledger") == "canonical_execution":
+        if (paper.get("reconciliation") or {}).get("passed") is not True:
+            flags.append({"kind": "paper_reconciliation_failed", "key": "canonical",
+                          "severity": "critical",
+                          "message": "Paper account reconciliation failed; accounting unavailable"})
+        if paper.get("kill_switch_active") is True:
+            flags.append({"kind": "paper_execution_halted", "key": "canonical",
+                          "severity": "critical", "message": "Paper execution kill switch is active"})
     market_value = paper.get("market_value")
     return {
         "schema": RISK_SCHEMA,

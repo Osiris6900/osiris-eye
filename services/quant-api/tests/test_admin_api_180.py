@@ -278,7 +278,9 @@ def test_contract_schemas_and_keys(client, tmp_path):
         "schema", "generated_at", "mode", "initialized", "cash", "positions",
         "fill_count", "recent_fills", "pnl", "cost_basis_gross", "market_value",
         "open_orders", "open_orders_reason", "marks_available", "live_trading_authorized",
+        "source_ledger",
     }
+    assert paper["source_ledger"] == "legacy_synthetic"
     assert paper["open_orders"] is None
     assert paper["open_orders_reason"] == "not_stored"
     assert paper["cost_basis_gross"] is None

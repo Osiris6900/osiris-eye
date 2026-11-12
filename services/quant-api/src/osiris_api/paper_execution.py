@@ -1504,6 +1504,13 @@ def _snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
         "marks": [dict(row) for row in conn.execute(
             "SELECT symbol, price, observed_at FROM paper_exec_marks ORDER BY symbol"
         )],
+        "recent_fills": [
+            {**dict(row), "created_at": None}
+            for row in conn.execute(
+                """SELECT symbol, side, quantity, price, fee, realized_pnl
+                   FROM paper_exec_fills ORDER BY seq DESC LIMIT 20"""
+            )
+        ],
         "orders": [
             {
                 "client_order_id": row["client_order_id"], "state": row["state"],
@@ -1564,10 +1571,24 @@ def get_paper_order(client_order_id: Any) -> dict[str, Any] | None:
             conn.close()
 
 
-def execution_status() -> dict[str, Any]:
+def execution_status(*, read_only: bool = False) -> dict[str, Any]:
     """Account and reconciliation from one SQLite snapshot, including across processes."""
     with _lock:
-        conn = _connect()
+        if read_only:
+            path = os.getenv("OSIRIS_PAPER_EXECUTION_DB", "")
+            if not path or path == ":memory:" or not Path(path).is_file():
+                return {
+                    "account": {"initialized": False, "mode": "paper_only", "positions": [],
+                                "fill_count": 0, "live_execution": False,
+                                "broker_order_submitted": False},
+                    "reconciliation": {"initialized": False, "passed": False,
+                                       "breaks": ["account_not_initialized"]},
+                }
+            conn = sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True,
+                                   timeout=15, isolation_level=None)
+            conn.row_factory = sqlite3.Row
+        else:
+            conn = _connect()
         try:
             conn.execute("BEGIN")
             account = conn.execute("SELECT * FROM paper_exec_meta WHERE id=1").fetchone()
@@ -1593,6 +1614,57 @@ def execution_status() -> dict[str, Any]:
             return {"account": _snapshot(conn), "reconciliation": report}
         finally:
             conn.close()
+
+
+def account_valuation(
+    account: dict[str, Any], *, now: datetime | None = None,
+    max_age_seconds: float = 300, max_future_skew_seconds: float = 60,
+) -> dict[str, Any]:
+    """One valuation policy for every read-only view of the canonical account.
+
+    Cash and realized P&L remain known without marks. Equity, market value and
+    unrealized P&L require a fresh mark for every holding; partial totals stay null.
+    Callers must reconcile the account before using this projection.
+    """
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None or current.utcoffset() is None:
+        raise ValueError("valuation_timezone_required")
+    policies = (max_age_seconds, max_future_skew_seconds)
+    if any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v)
+           for v in policies) or max_age_seconds <= 0 or max_future_skew_seconds < 0:
+        raise ValueError("invalid_valuation_policy")
+    marks = {row["symbol"]: row for row in account.get("marks", [])}
+    market_value, times, warnings = Decimal("0"), [], []
+    for position in account["positions"]:
+        quantity = Decimal(position["quantity"])
+        if quantity == 0:
+            continue
+        symbol = position["symbol"]
+        if symbol not in marks:
+            warnings.append(f"unmarked:{symbol}")
+            continue
+        marked_at = _parse_time(marks[symbol].get("observed_at"))
+        if marked_at is None:
+            warnings.append(f"invalid_mark_time:{symbol}")
+            continue
+        age = (current - marked_at).total_seconds()
+        if not -max_future_skew_seconds <= age <= max_age_seconds:
+            warnings.append(f"stale_mark:{symbol}")
+            continue
+        market_value += quantity * Decimal(marks[symbol]["price"])
+        times.append(marked_at)
+    complete = not warnings
+    return {
+        "market_value": _canonical(market_value) if complete else None,
+        "pnl": {
+            "realized": account["realized_pnl"],
+            "unrealized": account["unrealized_pnl"] if complete else None,
+            "equity": _canonical(Decimal(account["cash"]) + market_value) if complete else None,
+        },
+        "valuation_warnings": warnings,
+        "valuation_as_of": min(times).isoformat() if times and complete else None,
+        "marks_available": complete,
+    }
 
 
 def reconcile() -> dict[str, Any]:
