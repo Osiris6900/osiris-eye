@@ -5,6 +5,12 @@ gap and makes every gate's remaining requirement explicit. It does not supply
 missing independent approvals or change any acceptance status. The inventory
 continues to record 3 evidenced, 14 partial and 3 remaining gates.
 
+The subsequent [downloaded-byte verification checkpoint](../release/VERIFICATION_2026_11_12.md)
+records successful main-baseline jobs and five actual artifacts, including
+complete source reproduction of the SBOM. `verify_dependency_sbom.py` now checks
+fresh SBOM evidence before CI upload and rejects rehashed incomplete inventories.
+Its verification scope does not replace any external acceptance below.
+
 ## Receipt to canonical paper execution
 
 `osiris_api.paper_receipt_execution.execute_receipted_observation` is an

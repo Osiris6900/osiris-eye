@@ -1,6 +1,6 @@
 {
   "schema": "osiris.release-gate-inventory.v1",
-  "baseline_commit": "8a531b37869655d683e3af2b610404965f6376a6",
+  "baseline_commit": "5b43e61c8c974ef4e52b22c32dbd9cba17ccc62c",
   "live_trading_authorized": false,
   "facts": {
     "mutable_action_uses": 0,
@@ -33,16 +33,13 @@
         "docs/P2P_DEPENDENCY_ADVISORIES.json",
         "services/quant-api/requirements-lock.txt",
         "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md",
-        "docs/workstreams/SBOM_ALL_RUST_ROOTS.md"
+        "docs/workstreams/SBOM_ALL_RUST_ROOTS.md",
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json"
       ],
       "evidence_commits": [
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9"
       ],
-      "open_prs": [
-        276,
-        281,
-        286
-      ],
+      "open_prs": [],
       "blocker": "The hashed Python deployment lock, resolved Python SBOM components and license/provenance checker are implemented and exercised in dependency-security CI. The paste 1.0.15 maintenance advisory remains; accepted final-candidate audit/SBOM/provenance artifacts and a reviewed maintenance disposition are still required."
     },
     {
@@ -86,10 +83,7 @@
         "154a65111d92cbd344ad2cc1b49a80ed8f53cd28",
         "8a531b37869655d683e3af2b610404965f6376a6"
       ],
-      "open_prs": [
-        270,
-        274
-      ],
+      "open_prs": [],
       "blocker": "3-host E2EE run 42724204891 passed with retained artifact three-e2ee-evidence-42724204891-1 (14-day retention); 2-host run 42720301712 passed. Binary SHA-256 contents must be reviewed inside retained artifact before external certification."
     },
     {
@@ -150,9 +144,7 @@
         "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md"
       ],
       "evidence_commits": [],
-      "open_prs": [
-        270
-      ],
+      "open_prs": [],
       "blocker": "Independent crypto/operational-security intake and validation are implemented. No independently signed reviewer report, verified reviewer identity, remediation/retest and approval decision has been supplied; source tests cannot commission or approve that review."
     },
     {
@@ -175,9 +167,7 @@
         "30f5f2a4dd0d302548594f38f7740655241b9316",
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9"
       ],
-      "open_prs": [
-        264
-      ],
+      "open_prs": [],
       "blocker": "The integration candidate implements Alpaca, OANDA, Polygon and Twelve Data bar adapters with bounded pagination, normalization and declared entitlement checks. Authorized vendor credentials, genuine captures, instrument/corporate-action coverage and independent source-owner acceptance remain pending."
     },
     {
@@ -197,9 +187,7 @@
       "evidence_commits": [
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9"
       ],
-      "open_prs": [
-        264
-      ],
+      "open_prs": [],
       "blocker": "Feed quality, freshness, timestamp/availability checks, source-governed views and native offline capture paths are implemented and tested. Genuine sustained vendor streaming captures, corporate-action artifacts and independently verified time/source provenance remain pending."
     },
     {
@@ -215,9 +203,7 @@
         "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md"
       ],
       "evidence_commits": [],
-      "open_prs": [
-        264
-      ],
+      "open_prs": [],
       "blocker": "Vendor entitlement intake, expiry/revocation checks and feed-policy enforcement are implemented. Original source-owner licences, permitted-use/redistribution terms and independent rights approval have not been supplied."
     },
     {
@@ -251,14 +237,13 @@
         "https://github.com/Osiris6900/osiris-eye/pull/243",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42467036806",
         "services/quant-api/tests/test_walk_forward_178.py",
-        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md"
+        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md",
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json"
       ],
       "evidence_commits": [
         "30f5f2a4dd0d302548594f38f7740655241b9316"
       ],
-      "open_prs": [
-        273
-      ],
+      "open_prs": [],
       "blocker": "Point-in-time features, ridge fitting, immutable experiment reproduction and a retained synthetic walk-forward archive are implemented. A frozen genuine candidate dataset/model/feature archive and independent lifecycle acceptance remain pending."
     },
     {
@@ -272,14 +257,13 @@
       "evidence": [
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42494850551",
         "services/quant-api/tests/test_walk_forward_178.py",
-        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md"
+        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md",
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json"
       ],
       "evidence_commits": [
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9"
       ],
-      "open_prs": [
-        273
-      ],
+      "open_prs": [],
       "blocker": "Chronological holdout, cost-adjusted walk-forward and reproducible experiment checks are implemented for research. A genuine blinded holdout, independent leakage review and calibrated cost/turnover/impact/borrow sensitivity report remain pending."
     },
     {
@@ -295,15 +279,13 @@
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42494850551",
         "services/quant-api/src/osiris_api/risk.py",
         "services/quant-api/tests/test_paper_risk_acceptance_179.py",
-        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md"
+        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md",
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json"
       ],
       "evidence_commits": [
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9"
       ],
-      "open_prs": [
-        268,
-        277
-      ],
+      "open_prs": [],
       "blocker": "Canonical pretrade limits, exact broker economics, stale-feed/kill-switch controls and receipt-bound risk decisions are implemented. Independent ownership/approval of budgets, limits, concentration, drawdown and exception governance remains pending."
     },
     {
@@ -319,16 +301,14 @@
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42494850551",
         "services/quant-api/src/osiris_api/durable_paper_ledger.py",
         "services/quant-api/tests/test_durable_paper_ledger.py",
-        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md"
+        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md",
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json"
       ],
       "evidence_commits": [
         "305ceb1d4d4c6f3d649cb58ee2c82eedb3818644",
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9"
       ],
-      "open_prs": [
-        265,
-        277
-      ],
+      "open_prs": [],
       "blocker": "The integration candidate implements opt-in Alpaca paper transport, persisted intent/ack binding, monotonic fill reconciliation and canonical internal paper OMS. Authorized actual broker-paper captures, operational reconciliation and broader FIX-session acceptance remain pending; no live broker routing is enabled."
     },
     {
@@ -342,16 +322,13 @@
       "evidence": [
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42494850551",
         "services/quant-api/tests/test_durable_paper_ledger.py",
-        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md"
+        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md",
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json"
       ],
       "evidence_commits": [
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9"
       ],
-      "open_prs": [
-        265,
-        277,
-        278
-      ],
+      "open_prs": [],
       "blocker": "Canonical cash/positions, partial fills/cancellation, fee-inclusive realized/unrealized P&L and bounded adverse slippage are implemented and tested. Venue-calibrated liquidity/queue/impact, margin/borrow models and independent multi-asset execution comparison remain incomplete."
     },
     {
@@ -368,7 +345,8 @@
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42471703916",
         "services/quant-api/tests/test_admin_api_180.py",
         "scripts/test_paper_order_journal.py",
-        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md"
+        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md",
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json"
       ],
       "evidence_commits": [
         "0a610db74cac5381ebbb4abe358286a80a6e6298"
@@ -390,17 +368,14 @@
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42494850551",
         "apps/web/src/AdminCentre.tsx",
         "services/quant-api/src/osiris_api/admin_centre.py",
-        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md"
+        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md",
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json"
       ],
       "evidence_commits": [
         "0a610db74cac5381ebbb4abe358286a80a6e6298",
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9"
       ],
-      "open_prs": [
-        271,
-        278,
-        284
-      ],
+      "open_prs": [],
       "blocker": "Authenticated canonical account/risk/feed/network/source views, actual Rust receipt metrics, role/MFA boundaries and Chromium navigation are implemented. Genuine source connections, sustained authenticated-node monitoring/alerts and independent operational acceptance remain pending."
     },
     {
@@ -420,9 +395,7 @@
       "evidence_commits": [
         "0a610db74cac5381ebbb4abe358286a80a6e6298"
       ],
-      "open_prs": [
-        272
-      ],
+      "open_prs": [],
       "blocker": "Actual temporary SQLite backup/restore/continuation, cross-runner integrity intake, authority fencing and rollout/rollback checks are implemented. Approved independent-host service DR with measured RTO/RPO, accepted custody/storage and operator signoff remain pending."
     },
     {
@@ -441,7 +414,8 @@
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42495167271",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42740964830",
         "capacity-report-42740964830-1 (downloaded ZIP SHA-256: 229553051305aabbc28c44af50bb58c4f6dfe9ec746ff3f2f85178333661d239)",
-        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md"
+        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md",
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json"
       ],
       "evidence_commits": [
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9",
@@ -463,10 +437,7 @@
         "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md"
       ],
       "evidence_commits": [],
-      "open_prs": [
-        273,
-        274
-      ],
+      "open_prs": [],
       "blocker": "The paper-only signoff worksheet and external security/vendor intake paths are implemented. Actual independent security/model-risk/licensing decisions and authorized operator release approval remain pending. Paper-only scope is unchanged and live execution remains unauthorized."
     }
   ]
