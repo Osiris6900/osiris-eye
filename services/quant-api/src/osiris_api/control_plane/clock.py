@@ -28,7 +28,11 @@ def measure_reply(
     packet: bytes, nonce: bytes, sent: float, received: float, elapsed: float
 ) -> dict:
     if (
-        len(packet) != 48
+        not isinstance(packet, bytes)
+        or not isinstance(nonce, bytes)
+        or any(type(value) not in (int, float) or not math.isfinite(value)
+               for value in (sent, received, elapsed))
+        or len(packet) != 48
         or len(nonce) != 8
         or packet[24:32] != nonce
         or packet[0] >> 6 == 3

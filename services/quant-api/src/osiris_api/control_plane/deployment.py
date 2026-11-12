@@ -49,12 +49,16 @@ class KubernetesTarget:
         image = next((c["image"] for c in containers if c["name"] == self.container), None)
         if not image:
             raise ValueError("deployment_container_missing")
+        desired = data["spec"].get("replicas", 1)
+        status = data.get("status", {})
         return {
             "image": image,
-            "replicas": data["spec"].get("replicas", 1),
-            "ready": data.get("status", {}).get("readyReplicas", 0)
-            == data["spec"].get("replicas", 1)
-            and data.get("status", {}).get("observedGeneration", -1)
+            "replicas": desired,
+            # Old ready pods may survive while a new ReplicaSet is still pending.
+            "ready": all(status.get(field, 0) == desired for field in (
+                "replicas", "updatedReplicas", "readyReplicas", "availableReplicas",
+            ))
+            and status.get("observedGeneration", -1)
             >= data["metadata"]["generation"],
         }
 
@@ -94,6 +98,15 @@ class RolloutController:
         self.db, self.key, self.production, self.canary = db, public_key, production, canary
         self.health, self.sleep = health_check, sleep
 
+    def _wait_ready(self, target, expected):
+        for _ in range(30):
+            self.sleep(1)
+            current = target.state()
+            if (current["ready"] and current["image"] == expected["image"]
+                    and current["replicas"] == expected["replicas"]):
+                return True
+        return False
+
     def deploy(self, signed_release: dict) -> dict:
         release = verify_bundle(signed_release, self.key)
         if (
@@ -120,12 +133,7 @@ class RolloutController:
             raise ValueError("immutable_previous_images_required_for_rollback")
         try:
             self.canary.apply(release["image"], 1)
-            for attempt in range(30):
-                self.sleep(1)
-                current = self.canary.state()
-                if current["ready"] and current["image"] == release["image"]:
-                    break
-            else:
+            if not self._wait_ready(self.canary, {"image": release["image"], "replicas": 1}):
                 raise ValueError("canary_readiness_timeout")
             for _ in range(3):
                 self.sleep(1)
@@ -133,35 +141,37 @@ class RolloutController:
                 if (
                     not current["ready"]
                     or current["image"] != release["image"]
+                    or current["replicas"] != 1
                     or self.health() is not True
                 ):
                     raise ValueError("canary_health_failed")
             self.production.apply(release["image"], original["replicas"])
-            ready = False
-            for _ in range(30):
-                self.sleep(1)
-                current = self.production.state()
-                if current["ready"] and current["image"] == release["image"]:
-                    ready = True
-                    break
-            if not ready:
+            if not self._wait_ready(self.production, {
+                "image": release["image"], "replicas": original["replicas"],
+            }):
                 raise ValueError("production_readiness_timeout")
             outcome = {"status": "promoted", "image": release["image"], "live_execution": False}
-        except Exception:
-            try:
-                self.production.apply(original["image"], original["replicas"])
-                self.canary.apply(old_canary["image"], old_canary["replicas"])
-                outcome = {
-                    "status": "rolled_back",
-                    "image": original["image"],
-                    "live_execution": False,
-                }
-            except Exception:
-                outcome = {"status": "rollback_failed_operator_required", "live_execution": False}
+        except Exception:  # noqa: BLE001 - any target failure requires best-effort rollback
+            restored = True
+            # Try both targets even if one rollback request fails. An accepted
+            # PATCH is not proof that the prior workload has actually recovered.
+            for target, expected in ((self.production, original), (self.canary, old_canary)):
+                try:
+                    target.apply(expected["image"], expected["replicas"])
+                    if not self._wait_ready(target, expected):
+                        restored = False
+                except Exception:  # noqa: BLE001 - still attempt recovery of the other target
+                    restored = False
+            outcome = {"status": "rolled_back" if restored else "rollback_failed_operator_required",
+                       "live_execution": False}
+            if restored:
+                outcome["image"] = original["image"]
         else:
             try:
                 self.canary.apply(old_canary["image"], old_canary["replicas"])
-            except Exception:
+                if not self._wait_ready(self.canary, old_canary):
+                    outcome["status"] = "promoted_canary_cleanup_required"
+            except Exception:  # noqa: BLE001 - persist uncertain cleanup for operator recovery
                 outcome["status"] = "promoted_canary_cleanup_required"
         self.db.put("rollouts", release_id, outcome, expected_version=1)
         return outcome

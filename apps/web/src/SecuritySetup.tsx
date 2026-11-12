@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 export function SecuritySetup({ authorization, onAuthorization }: { authorization: string; onAuthorization: (value: string) => void }) {
   const [seed, setSeed] = useState('');
@@ -6,23 +6,41 @@ export function SecuritySetup({ authorization, onAuthorization }: { authorizatio
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [pending, setPending] = useState(false);
+  const generation = useRef(0);
+  const active = useRef<AbortController | null>(null);
+  const currentAuthorization = useRef(authorization);
+  useEffect(() => {
+    if (currentAuthorization.current !== authorization) {
+      generation.current += 1; active.current?.abort();
+      currentAuthorization.current = authorization;
+      setSeed(''); setCode(''); setMessage(''); setError(''); setPending(false);
+    }
+  }, [authorization]);
+  useEffect(() => () => { generation.current += 1; active.current?.abort(); }, []);
   async function call(action: 'enroll' | 'login' | 'logout') {
+    const current = ++generation.current;
+    active.current?.abort();
+    const controller = new AbortController(); active.current = controller;
     setPending(true); setError(''); setMessage('');
     try {
       const header = /^(Bearer|Session) /.test(authorization.trim()) ? authorization.trim() : `Bearer ${authorization.trim()}`;
       const response = await fetch(`/api/control-plane/auth/${action}`, { method: 'POST',
+        signal: controller.signal,
         headers: { Authorization: header, 'Content-Type': 'application/json' }, body: JSON.stringify(action === 'login' ? { code } : {}) });
       if (!response.ok) throw new Error(`Authentication request failed (${response.status}).`);
       const result = await response.json();
+      if (generation.current !== current || controller.signal.aborted) return;
       if (action === 'enroll') {
         if (typeof result.secret !== 'string' || !/^[A-Z2-7]{32}$/.test(result.secret)) throw new Error('Invalid enrollment response.');
         setSeed(result.secret); setMessage('Add this key to your authenticator app, then enter its current six-digit code.');
       } else if (action === 'login') {
         if (typeof result.session_token !== 'string' || result.session_token.length < 32) throw new Error('Invalid session response.');
-        onAuthorization(`Session ${result.session_token}`); setSeed(''); setCode(''); setMessage('MFA session active for 15 minutes. It stays in memory and expires on reload.');
-      } else { onAuthorization(''); setSeed(''); setCode(''); setMessage('Session revoked.'); }
-    } catch (failure) { setError(failure instanceof Error ? failure.message : 'Authentication unavailable.'); }
-    finally { setPending(false); }
+        currentAuthorization.current = `Session ${result.session_token}`;
+        onAuthorization(currentAuthorization.current); setSeed(''); setCode(''); setMessage('MFA session active for 15 minutes. It stays in memory and expires on reload.');
+      } else { currentAuthorization.current = ''; onAuthorization(''); setSeed(''); setCode(''); setMessage('Session revoked.'); }
+    } catch (failure) {
+      if (generation.current === current && !controller.signal.aborted) setError(failure instanceof Error ? failure.message : 'Authentication unavailable.');
+    } finally { if (generation.current === current) setPending(false); }
   }
   return <section className="panel research-workspace" aria-label="MFA and session settings">
     <div className="panel-head"><h2>MFA and session settings</h2><span className="mini-tag">AUTHENTICATOR · TOTP</span></div>

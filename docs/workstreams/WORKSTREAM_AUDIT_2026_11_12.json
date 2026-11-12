@@ -1,0 +1,196 @@
+{
+  "schema": "osiris.workstream-audit.v1",
+  "created_at": "2026-11-12T02:39:35.857275+00:00",
+  "base_main_commit": "ff7ba8e44dbfb96327457969e9aa1eae62fe0cdf",
+  "base_integration_commit": "cb5be6bea4dceef9a8ddefc33fafcca53c41bfd4",
+  "scope": "local engineering verification of the integration candidate plus listed source changes",
+  "live_trading_authorized": false,
+  "independent_release_acceptance": false,
+  "changed_source_sha256": {
+    "apps/web/src/ResearchWorkspace.tsx": "c65813f4e5b4d6cc397e182a3b6f12606f00061ab241a02299958ab7cf91ee58",
+    "apps/web/src/SecuritySetup.tsx": "1c6eca4b88a5cac9bc6c051d1fc183e7858585ea78f33a9b12f180aa5adcf82b",
+    "apps/web/src/test/ResearchWorkspace.test.tsx": "6fdb182a91f9f0c7db0a420190c0eb955cdaccd9346a8e3af8ba4077cdc93a8e",
+    "services/quant-api/src/osiris_api/control_plane/broker.py": "ed48b405c8f4233350091de425dd0f4d037be0b889c1f9f0a7ee6007d907d5e9",
+    "services/quant-api/src/osiris_api/control_plane/clock.py": "a1ce35df0ddb4866bfe739a1864a82e986e31ffcbd8cb13e75946c717ed3d69b",
+    "services/quant-api/src/osiris_api/control_plane/deployment.py": "dda9f381bd94f7a7bd71fc2696df1acc906a78cb0b14fc4e89de407b6626749f",
+    "services/quant-api/src/osiris_api/control_plane/observability.py": "63b8c6cc8d405a397dad0c7c0df1982daca2edbf49b4d1f16ae33afcab9a14f0",
+    "services/quant-api/tests/test_control_plane_hardening.py": "bfe7449914848b6f7fa61f2dc4f5f031e95cf978aac61d1ce6d5197d8ea17fc4"
+  },
+  "runtime": {
+    "python": "3.12.14",
+    "node": "v24.22.1",
+    "rust": "rustc 1.99.1 (58cf8f9c3 2026-10-13)"
+  },
+  "results": {
+    "python": {
+      "passed": 1672,
+      "skipped": 0,
+      "failed": 0,
+      "subtests_passed": 26
+    },
+    "web": {
+      "passed": 56,
+      "failed": 0,
+      "typecheck": "passed",
+      "build": "passed"
+    },
+    "rust_p2p": {
+      "passed": 247,
+      "failed": 0,
+      "command": "cargo test --locked --manifest-path services/p2p-node/Cargo.toml --all-targets"
+    },
+    "rust_risk": {
+      "passed": 6,
+      "failed": 0
+    },
+    "rust_native": {
+      "passed": 3,
+      "failed": 0
+    },
+    "native_capture_process": {
+      "passed": 2,
+      "failed": 0
+    },
+    "offline_workstreams": {
+      "passed": 91,
+      "failed": 0
+    },
+    "recovery_validators": {
+      "passed": 14,
+      "failed": 0,
+      "actual_independent_host_dr": false
+    },
+    "master_integration_validators": {
+      "passed": 16,
+      "failed": 0
+    },
+    "crypto_intake": {
+      "passed": 6,
+      "failed": 0,
+      "independent_crypto_review_performed": false
+    },
+    "vendor_intake": {
+      "passed": 4,
+      "failed": 0,
+      "rights_independently_verified": false
+    },
+    "browser": {
+      "checks": [
+        "browser MFA enrollment and session",
+        "browser backtest with MFA session",
+        "browser research request persisted",
+        "independent operator review from browser",
+        "separate worker claimed and completed job over verified HTTPS"
+      ],
+      "status": "passed",
+      "live_execution": false
+    },
+    "p2p_receipts": {
+      "status": "passed",
+      "processes": 3,
+      "topology": "same-host numeric loopback",
+      "verified_recipient_admission_and_peer_metrics": true,
+      "independent_hosts": false
+    },
+    "market_to_paper": {
+      "broker_order_submitted": false,
+      "checks": [
+        "market_adapter_to_strategy_to_risk_to_fill",
+        "exact_buy_cash_and_fee_cost_basis",
+        "marked_unrealized_pnl",
+        "same_candle_idempotency",
+        "exact_round_trip_cash_positions_and_pnl",
+        "persisted_kill_switch_blocks_new_orders",
+        "independent_order_notional_limit",
+        "invalid_market_data_fails_closed",
+        "separate_process_restart_recovers_exact_ledger_state"
+      ],
+      "live_execution_enabled": false,
+      "mode": "offline_fixture",
+      "passed": true,
+      "release_gate_accepted": false
+    },
+    "release_inventory": {
+      "status": "passed",
+      "counts": {
+        "Implemented with evidence": 3,
+        "Partial": 14,
+        "Remaining": 3
+      }
+    },
+    "strict_release": {
+      "passed": false,
+      "baseline_commit": "8a531b37869655d683e3af2b610404965f6376a6",
+      "live_trading_authorized": false,
+      "counts": {
+        "Partial": 14,
+        "Implemented with evidence": 3,
+        "Remaining": 3
+      },
+      "errors": [
+        "strict mode blocked by T01, T04, T06, T07, T08, T09, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19, T20"
+      ]
+    },
+    "action_pinning": "passed",
+    "workflow_validation": "passed",
+    "admin_disclosure": "passed"
+  },
+  "local_logs": {
+    "python": {
+      "path": "/tmp/osiris-final-rust-tests.log",
+      "sha256": "7602f30cbc6d29a6c211e2f3fd330dc26b508441608c48a773be347107d52813"
+    },
+    "web": {
+      "path": "/tmp/osiris-web-final.log",
+      "sha256": "4872ff9bd63bfda6db819777579b2a28cc1e17e8d7de30cb591204f1566c42b2"
+    },
+    "rust_p2p": {
+      "path": "/tmp/osiris-rust-p2p.log",
+      "sha256": "0bead2ba541df313bd4036af35bb46dee279747e9c6ab93e282a0da3f49613df"
+    },
+    "rust_risk": {
+      "path": "/tmp/osiris-rust-risk.log",
+      "sha256": "0ea1927e8754798b2a8c5e1d931b2d306314676047369bbe10b9ca98ffe6dfa4"
+    },
+    "rust_native": {
+      "path": "/tmp/osiris-rust-native.log",
+      "sha256": "e4ec339f1a93a785b905443484b95e2f9243f069c5e808416e744e9984b1c216"
+    },
+    "browser": {
+      "path": "/tmp/osiris-workstream-browser.log",
+      "sha256": "30bca77990a3aed0d5e9af925d83cad5265b52c47e2af88c54fa3d084ba64772"
+    },
+    "p2p_receipts": {
+      "path": "/tmp/osiris-p2p-receipt-acceptance.log",
+      "sha256": "37ad1aaaabc6217c09591eacf489978c38405c4783cfef1976696a21779e33fb"
+    },
+    "offline_workstreams": {
+      "path": "/tmp/osiris-offline-workstreams.log",
+      "sha256": "ab5e12eeed1a55a5bea7ae03eab2068826ddf12c88eae46342f3293b10f75633"
+    },
+    "recovery_validators": {
+      "path": "/tmp/osiris-artifact-checks.log",
+      "sha256": "4774f720e257b8af2b5025b2898666da29a46dfbe31444199ca2970986cd31c5"
+    },
+    "master_integration_validators": {
+      "path": "/tmp/osiris-master-integration-tests.log",
+      "sha256": "8165b0d3d37c6a3e82a71b7c90652fc8c9a7f5da334589ba6860fd104c96c33b"
+    },
+    "crypto_intake": {
+      "path": "/tmp/osiris-crypto-intake.log",
+      "sha256": "97019c0ebe7560ea8ae885eed8aaf719ffb20979ded4414ae0772c7747843065"
+    },
+    "vendor_intake": {
+      "path": "/tmp/osiris-rights-intake.log",
+      "sha256": "2cb2649d2a6ad5c4940b341a04187fd15806cf2537bd0cb19b810acd0b49a0cc"
+    }
+  },
+  "evidence_custody": "Local test outputs; no independent artifact custody, reviewer attestation or new GitHub run acceptance is claimed.",
+  "limitations": [
+    "P2P and browser processes run on one host.",
+    "Vendor/broker/Vault/S3/Kubernetes transports use fixtures; no deployed service acceptance.",
+    "Source hashes plus base commit bind code, not independent execution or source-event truth.",
+    "Expansion backlog #413-#416 contains unimplemented features beyond this candidate.",
+    "PR #408 and this hardening change require review; no main merge or release is performed."
+  ]
+}
