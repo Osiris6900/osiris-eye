@@ -13,6 +13,70 @@ from ..risk import RiskLimits, check_execution
 from .database import Database, digest, identifier
 from .vendors import HttpJson
 
+BROKER_STATES = frozenset({
+    "new", "pending_new", "accepted", "accepted_for_bidding", "partially_filled",
+    "filled", "done_for_day", "canceled", "expired", "pending_cancel", "stopped",
+    "rejected", "suspended", "calculated",
+})
+TERMINAL_BROKER_STATES = frozenset({"filled", "canceled", "expired", "rejected"})
+
+
+def validate_broker_snapshot(order: dict, response: object, previous: dict | None = None) -> None:
+    """Bind a paper-broker snapshot to the persisted intent and prior fill progress.
+
+    A client ID alone is not proof that an acknowledgement describes the order
+    we authorized. Unknown states and corrections require operator investigation.
+    """
+    try:
+        if not isinstance(response, dict):
+            raise TypeError()
+        identifier(response.get("id"))
+        requested = money(order["quantity"])
+        filled = money(response.get("filled_qty"), positive=False)
+        status = response.get("status")
+        if (
+            response.get("client_order_id") != order["client_order_id"]
+            or response.get("symbol") != order["symbol"]
+            or response.get("side") != order["side"].lower()
+            or money(response.get("qty")) != requested
+            or money(response.get("limit_price")) != money(order["limit_price"])
+            or response.get("type") != "limit"
+            or response.get("time_in_force") != "day"
+            or not isinstance(status, str)
+            or status not in BROKER_STATES
+            or not 0 <= filled <= requested
+            or (status == "filled" and filled != requested)
+            or (status != "filled" and filled == requested)
+            or (status == "partially_filled" and filled == 0)
+            or (status == "rejected" and filled != 0)
+        ):
+            raise ValueError()
+        if filled:
+            average = money(response.get("filled_avg_price"))
+            limit = money(order["limit_price"])
+            if (order["side"].upper() == "BUY" and average > limit) or (
+                order["side"].upper() == "SELL" and average < limit
+            ):
+                raise ValueError()
+        elif response.get("filled_avg_price") is not None and (
+            money(response["filled_avg_price"], positive=False) != 0
+        ):
+            raise ValueError()
+        if previous is not None:
+            prior_filled = money(previous["filled_qty"], positive=False)
+            if (
+                response["id"] != previous["id"]
+                or filled < prior_filled
+                or (previous["status"] in TERMINAL_BROKER_STATES and (
+                    status != previous["status"] or filled != prior_filled
+                ))
+                or (filled == prior_filled and filled > 0 and
+                    money(response["filled_avg_price"]) != money(previous["filled_avg_price"]))
+            ):
+                raise ValueError()
+    except (ValueError, KeyError, TypeError, AttributeError):
+        raise ValueError("broker_snapshot_mismatch") from None
+
 
 def money(value: object, *, positive: bool = True) -> Decimal:
     if not isinstance(value, (str, int)) or isinstance(value, bool) or len(str(value)) > 64:
@@ -21,7 +85,7 @@ def money(value: object, *, positive: bool = True) -> Decimal:
         amount = Decimal(value)
     except InvalidOperation:
         raise ValueError("invalid_decimal") from None
-    if not amount.is_finite() or abs(amount) > Decimal("1e15") or (positive and amount <= 0):
+    if not amount.is_finite() or amount.copy_abs() > Decimal("1e15") or (positive and amount <= 0):
         raise ValueError("decimal_out_of_range")
     return amount
 
@@ -54,8 +118,12 @@ class AlpacaPaperBroker:
         kill_switch: bool = True,
         fresh: bool = False,
     ):
-        if set(order) != {"client_order_id", "symbol", "side", "quantity", "limit_price"}:
+        if not isinstance(order, dict) or set(order) != {
+            "client_order_id", "symbol", "side", "quantity", "limit_price",
+        }:
             raise ValueError("invalid_order_shape")
+        # Use the same detached intent for risk, transport and reconciliation.
+        order = dict(order)
         client_id, symbol = identifier(order["client_order_id"]), identifier(order["symbol"])
         quantity, price = money(order["quantity"]), money(order["limit_price"])
         allowed, reason, _ = check_execution(
@@ -84,12 +152,17 @@ class AlpacaPaperBroker:
                 state = json.loads(row[0])
                 if state["fingerprint"] != fingerprint:
                     raise ValueError("order_id_conflict")
+                if state.get("order") != order:
+                    raise ValueError("broker_order_contract_required")
                 if state["status"] != "acknowledged":
                     raise ValueError("order_outcome_unknown_reconcile_first")
+                validate_broker_snapshot(order, state.get("response"))
                 return state["response"]
             conn.execute(
                 "INSERT INTO cp_documents VALUES ('broker-orders',?,1,?)",
-                (client_id, json.dumps({"fingerprint": fingerprint, "status": "submitting"})),
+                (client_id, json.dumps({
+                    "fingerprint": fingerprint, "status": "submitting", "order": order,
+                })),
             )
         body = {
             "client_order_id": client_id,
@@ -102,18 +175,14 @@ class AlpacaPaperBroker:
         }
         try:
             response = self._request("POST", "/v2/orders", body)
-            if (
-                not isinstance(response, dict)
-                or response.get("client_order_id") != client_id
-                or not response.get("id")
-            ):
-                raise ValueError("invalid_broker_acknowledgement")
-        except Exception:
+            validate_broker_snapshot(order, response)
+        except Exception:  # noqa: BLE001 - any send failure leaves an uncertain broker outcome
             raise ValueError("order_outcome_unknown_reconcile_first") from None
         self.db.put(
             "broker-orders",
             client_id,
-            {"fingerprint": fingerprint, "status": "acknowledged", "response": response},
+            {"fingerprint": fingerprint, "status": "acknowledged",
+             "order": order, "response": response},
             expected_version=1,
         )
         return response
@@ -123,15 +192,13 @@ class AlpacaPaperBroker:
         prior = self.db.get("broker-orders", client_id)
         if not prior:
             raise ValueError("unknown_client_order")
+        order = prior["value"].get("order")
+        if not isinstance(order, dict) or digest(order) != prior["value"].get("fingerprint"):
+            raise ValueError("broker_order_contract_required")
         response = self._request(
             "GET", "/v2/orders:by_client_order_id?" + urlencode({"client_order_id": client_id})
         )
-        if (
-            not isinstance(response, dict)
-            or response.get("client_order_id") != client_id
-            or not response.get("id")
-        ):
-            raise ValueError("broker_reconciliation_failed")
+        validate_broker_snapshot(order, response, previous=prior["value"].get("response"))
         self.db.put(
             "broker-orders",
             client_id,
@@ -183,7 +250,7 @@ def decode_fix(raw: bytes) -> dict[int, str]:
             or fields[1][0] != 9
             or fields[-1][0] != 10
             or fields[2][0] != 35
-            or len(set(tag for tag, _ in fields)) != len(fields)
+            or len({tag for tag, _ in fields}) != len(fields)
             or int(fields[1][1]) != checksum_start - body_start
             or fields[-1][1] != f"{sum(raw[:checksum_start]) % 256:03d}"
         ):

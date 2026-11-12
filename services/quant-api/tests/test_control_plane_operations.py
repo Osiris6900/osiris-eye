@@ -114,7 +114,10 @@ def test_paper_broker_risk_idempotency_and_uncertain_outcome(tmp_path):
     context = dict(
         limits=RiskLimits(), position=0, gross=0, daily_pnl=0, kill_switch=False, fresh=True
     )
-    ack = {"id": "broker-1", "client_order_id": "order-1", "status": "accepted"}
+    ack = {"id": "broker-1", "client_order_id": "order-1", "status": "accepted",
+           "symbol": "TEST", "side": "buy", "qty": "1", "limit_price": "100",
+           "type": "limit", "time_in_force": "day", "filled_qty": "0",
+           "filled_avg_price": None}
     transport = FakeTransport([ValueError("unknown-network-outcome"), ack])
     broker = AlpacaPaperBroker(
         db, {"key": "TEST", "secret": "TEST"}, enabled=True, transport=transport
