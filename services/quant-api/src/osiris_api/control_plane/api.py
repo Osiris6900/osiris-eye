@@ -15,6 +15,7 @@ from ..admin_centre import AdminAuth
 from .agents import ResearchAgents
 from .coordination import Coordinator
 from .database import Database
+from .experiments import ExperimentRegistry
 from .features import FeatureStore
 from .identity import IdentityService
 from .models import ModelService
@@ -123,6 +124,39 @@ def enroll(request: Request, response: Response):
         raise HTTPException(400, "tls_required_for_mfa")
     seed = run(identities(db).enroll, actor["actor"])
     return {"secret": seed, "algorithm": "SHA1", "digits": 6, "period": 30, "expires_seconds": 600}
+
+
+@router.post("/experiments")
+def create_experiment(request: Request, payload: dict = Body(...)):
+    db = database()
+    actor = principal(request, db, "research")
+    if set(payload) != {"id", "payload"}:
+        raise HTTPException(422, "invalid_experiment_request")
+    return run(ExperimentRegistry(db).run, payload["id"], actor["actor"], payload["payload"])
+
+
+@router.get("/experiments")
+def list_experiments(request: Request, limit: int = 100):
+    db = database()
+    principal(request, db, "research-read")
+    return {"experiments": run(ExperimentRegistry(db).list, limit=limit)}
+
+
+@router.get("/experiments/{experiment_id}")
+def get_experiment(experiment_id: str, request: Request):
+    db = database()
+    principal(request, db, "research-read")
+    item = run(ExperimentRegistry(db).get, experiment_id)
+    if item is None:
+        raise HTTPException(404, "experiment_not_found")
+    return item
+
+
+@router.post("/experiments/{experiment_id}/reproduce")
+def reproduce_experiment(experiment_id: str, request: Request):
+    db = database()
+    principal(request, db, "research")
+    return run(ExperimentRegistry(db).reproduce, experiment_id)
 
 
 @router.post("/auth/login")
