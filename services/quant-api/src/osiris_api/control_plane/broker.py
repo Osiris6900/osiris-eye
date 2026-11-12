@@ -76,6 +76,22 @@ def validate_broker_snapshot(order: dict, response: object, previous: dict | Non
                     money(response["filled_avg_price"]) != money(previous["filled_avg_price"]))
             ):
                 raise ValueError()
+            if filled > prior_filled:
+                # An in-limit cumulative average can conceal an impossible or
+                # out-of-limit incremental execution. Use the exact reported
+                # amounts, without float or ambient Decimal-context rounding.
+                prior_notional = (
+                    Fraction(prior_filled) * Fraction(money(previous["filled_avg_price"]))
+                    if prior_filled else Fraction(0)
+                )
+                added_notional = Fraction(filled) * Fraction(average) - prior_notional
+                added_limit = (Fraction(filled) - Fraction(prior_filled)) * Fraction(limit)
+                if (
+                    added_notional <= 0
+                    or (order["side"].upper() == "BUY" and added_notional > added_limit)
+                    or (order["side"].upper() == "SELL" and added_notional < added_limit)
+                ):
+                    raise ValueError()
     except (ValueError, KeyError, TypeError, AttributeError):
         raise ValueError("broker_snapshot_mismatch") from None
 

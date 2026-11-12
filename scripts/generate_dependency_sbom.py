@@ -15,7 +15,9 @@ import base64
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
+import os
 from pathlib import Path
+import subprocess
 import tomllib
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -278,8 +280,37 @@ def build_sbom(
     offline: bool,
     python_lock: Path | None = None,
     pypi_licenses: dict[tuple[str, str], str] | None = None,
+    additional_cargo_locks: dict[str, Path] | None = None,
 ) -> dict:
+    input_files = {
+        "apps/web/package-lock.json": npm_lock,
+        "services/p2p-node/Cargo.lock": cargo_lock,
+        "services/quant-api/pyproject.toml": pyproject,
+    }
+    if python_lock is not None:
+        input_files[LOCK_RELATIVE_PATH] = python_lock
+    additional_cargo_locks = dict(additional_cargo_locks or {})
+    for relative, path in additional_cargo_locks.items():
+        if (not isinstance(relative, str) or not relative.strip() or Path(relative).is_absolute()
+                or ".." in Path(relative).parts or relative in input_files
+                or relative == LOCK_RELATIVE_PATH):
+            raise ValueError("invalid additional Cargo lock identity")
+        input_files[relative] = path
+    lock_hashes = {relative: sha256_file(path) for relative, path in input_files.items()}
     local_cargo, registry_cargo = cargo_packages(cargo_lock)
+    local = {(item["name"], item["version"]): item for item in local_cargo}
+    registry = {(item["name"], item["version"]): item for item in registry_cargo}
+    for relative, path in sorted(additional_cargo_locks.items()):
+        additional_local, additional_registry = cargo_packages(path)
+        for item in additional_local:
+            local[(item["name"], item["version"])] = item
+        for item in additional_registry:
+            key = (item["name"], item["version"])
+            if key in registry and registry[key]["checksum"] != item["checksum"]:
+                raise ValueError(f"conflicting Cargo checksum for {key[0]}@{key[1]}")
+            registry[key] = item
+    local_cargo = [local[key] for key in sorted(local)]
+    registry_cargo = [registry[key] for key in sorted(registry)]
     crate_metadata = resolve_crate_metadata(registry_cargo, cache, offline)
     npm_root, locked_npm = npm_packages(npm_lock)
     python_project = tomllib.loads(pyproject.read_text()).get("project", {})
@@ -306,13 +337,6 @@ def build_sbom(
     elif pypi_licenses is not None:
         raise ValueError("Python license evidence requires the hashed deployment lock")
 
-    lock_hashes = {
-        "apps/web/package-lock.json": sha256_file(npm_lock),
-        "services/p2p-node/Cargo.lock": sha256_file(cargo_lock),
-        "services/quant-api/pyproject.toml": sha256_file(pyproject),
-    }
-    if python_lock is not None:
-        lock_hashes[LOCK_RELATIVE_PATH] = sha256_file(python_lock)
     serial_material = "\n".join(f"{key}:{value}" for key, value in sorted(lock_hashes.items()))
     python_properties = [
         {"name": "osiris:dependency-resolution", "value": python_resolution},
@@ -370,6 +394,8 @@ def build_sbom(
     references = [component["bom-ref"] for component in components]
     if len(references) != len(set(references)):
         raise ValueError("duplicate CycloneDX bom-ref detected")
+    if any(sha256_file(path) != lock_hashes[relative] for relative, path in input_files.items()):
+        raise ValueError("input changed during SBOM generation")
     return {
         "bomFormat": "CycloneDX",
         "specVersion": "1.5",
@@ -394,6 +420,8 @@ def main() -> None:
         default=Path.home() / ".cache/osiris-eye/crate-license-cache.json",
     )
     parser.add_argument("--offline", action="store_true")
+    parser.add_argument("--provenance-output", type=Path,
+                        help="Retain unsigned source/input/output digests alongside the SBOM")
     parser.add_argument("--python-lock", type=Path, default=root / LOCK_RELATIVE_PATH)
     parser.add_argument(
         "--license-evidence",
@@ -413,14 +441,52 @@ def main() -> None:
             args.offline,
             args.python_lock,
             pypi_license_map(args.license_evidence, args.python_lock),
+            additional_cargo_locks={
+                "crates/native-feed/Cargo.lock": root / "crates/native-feed/Cargo.lock",
+                "crates/risk-kernel/Cargo.lock": root / "crates/risk-kernel/Cargo.lock",
+            },
         )
         serialized = json.dumps(sbom, indent=2, sort_keys=True) + "\n"
+        provenance = None
+        if args.provenance_output:
+            def git_value(*arguments):
+                return subprocess.check_output(["git", *arguments], cwd=root, text=True).strip()
+
+            checkout = git_value("rev-parse", "HEAD")
+            candidate = os.getenv("OSIRIS_CANDIDATE_HEAD", checkout)
+            if len(candidate) != 40 or any(char not in "0123456789abcdef" for char in candidate):
+                raise ValueError("full lowercase candidate SHA required")
+            properties = sbom["metadata"]["component"]["properties"]
+            provenance = {
+                "schema": "osiris.dependency-sbom-provenance.v1",
+                "candidate_commit": candidate, "checkout_commit": checkout,
+                "checkout_tree": git_value("rev-parse", "HEAD^{tree}"),
+                "checkout_dirty": bool(git_value("status", "--porcelain")),
+                "generator_sha256": sha256_file(Path(__file__)),
+                "crate_license_metadata_sha256": hashlib.sha256(
+                    (json.dumps(cache, indent=2, sort_keys=True) + "\n").encode()
+                ).hexdigest(),
+                "python_license_evidence_sha256": sha256_file(args.license_evidence),
+                "input_sha256": {item["name"].removeprefix("osiris:input-sha256:"): item["value"]
+                                  for item in properties if item["name"].startswith("osiris:input-sha256:")},
+                "sbom_sha256": hashlib.sha256(serialized.encode()).hexdigest(),
+                "component_count": len(sbom["components"]),
+                "ci_run_id": os.getenv("GITHUB_RUN_ID"),
+                "ci_run_attempt": os.getenv("GITHUB_RUN_ATTEMPT"),
+                "signature_verified": False, "licences_independently_reviewed": False,
+                "release_gate_accepted": False, "live_trading_authorized": False,
+            }
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(serialized)
+        if provenance is not None:
+            args.provenance_output.parent.mkdir(parents=True, exist_ok=True)
+            args.provenance_output.write_text(json.dumps(provenance, indent=2, sort_keys=True) + "\n")
+            args.output.with_suffix(args.output.suffix + ".sha256").write_text(
+                provenance["sbom_sha256"] + "  " + args.output.name + "\n")
         if not args.offline:
             args.crate_cache.parent.mkdir(parents=True, exist_ok=True)
             args.crate_cache.write_text(json.dumps(cache, indent=2, sort_keys=True) + "\n")
-    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError, json.JSONDecodeError) as error:
         raise SystemExit(str(error)) from error
     pypi_count = sum(component["purl"].startswith("pkg:pypi/") for component in sbom["components"])
     print(

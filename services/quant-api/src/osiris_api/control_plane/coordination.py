@@ -7,8 +7,10 @@ All worker decisions use the authority's clock; clients cannot supply a time.
 from __future__ import annotations
 
 import json
+import math
 import secrets
 import time
+from contextlib import contextmanager
 
 from .database import Database, canonical, identifier
 
@@ -17,12 +19,50 @@ class Coordinator:
     def __init__(self, db: Database, *, clock=time.time):
         self.db, self.clock = db, clock
 
+    @contextmanager
+    def _timed_transaction(self):
+        """Persist observed authority time even when the operation is refused.
+
+        Sampling inside the write lock avoids validating against time captured
+        before lock contention. The durable high-water mark prevents a clock
+        rollback (including across a restart) from reviving expired authority.
+        A savepoint keeps refused business writes out of the clock commit.
+        """
+        failure = None
+        with self.db.transaction() as conn:
+            now = self.clock()
+            if (
+                type(now) not in (int, float)
+                or not 0 <= now <= 253402300799  # Last supported UTC calendar second.
+                or not math.isfinite(now)
+            ):
+                raise ValueError("invalid_authority_clock")
+            row = conn.execute(
+                "SELECT body FROM cp_documents WHERE collection='authority-clock' AND id='leases'"
+            ).fetchone()
+            if row and now < json.loads(row[0])["observed_at"]:
+                raise ValueError("authority_clock_rollback")
+            conn.execute(
+                "INSERT INTO cp_documents VALUES ('authority-clock','leases',1,?) "
+                "ON CONFLICT(collection,id) DO UPDATE SET version=version+1,body=excluded.body",
+                (canonical({"observed_at": now}).decode(),),
+            )
+            conn.execute("SAVEPOINT lease_operation")
+            try:
+                yield conn, now
+            except BaseException as exc:  # noqa: BLE001 - roll back all writes before re-raising
+                conn.execute("ROLLBACK TO lease_operation")
+                failure = exc
+            finally:
+                conn.execute("RELEASE lease_operation")
+        if failure is not None:
+            raise failure
+
     def acquire(self, name: str, owner: str, *, ttl: int = 30) -> dict:
         name, owner = identifier(name), identifier(owner)
         if type(ttl) is not int or not 1 <= ttl <= 300:
             raise ValueError("invalid_lease_ttl")
-        now = self.clock()
-        with self.db.transaction() as conn:
+        with self._timed_transaction() as (conn, now):
             row = conn.execute("SELECT * FROM cp_leases WHERE name=?", (name,)).fetchone()
             if row and row["expires"] > now:
                 raise ValueError("lease_held")
@@ -34,30 +74,30 @@ class Coordinator:
             )
         return {"name": name, "owner": owner, "epoch": epoch, "expires": now + ttl}
 
-    def _assert_lease(self, conn, name, owner, epoch):
+    def _assert_lease(self, conn, name, owner, epoch, now):
         row = conn.execute("SELECT * FROM cp_leases WHERE name=?", (identifier(name),)).fetchone()
         if (
             not row
             or type(epoch) is not int
             or row["owner"] != owner
             or row["epoch"] != epoch
-            or row["expires"] <= self.clock()
+            or row["expires"] <= now
         ):
             raise ValueError("stale_or_foreign_lease")
 
     def renew(self, name: str, owner: str, epoch: int, *, ttl: int = 30):
         if type(ttl) is not int or not 1 <= ttl <= 300:
             raise ValueError("invalid_lease_ttl")
-        with self.db.transaction() as conn:
-            self._assert_lease(conn, name, owner, epoch)
-            expires = self.clock() + ttl
+        with self._timed_transaction() as (conn, now):
+            self._assert_lease(conn, name, owner, epoch, now)
+            expires = now + ttl
             conn.execute("UPDATE cp_leases SET expires=? WHERE name=?", (expires, name))
         return {"name": name, "owner": owner, "epoch": epoch, "expires": expires}
 
     def write(self, name: str, owner: str, epoch: int, key: str, value: object):
         key, body = identifier(key), canonical(value).decode()
-        with self.db.transaction() as conn:
-            self._assert_lease(conn, name, owner, epoch)
+        with self._timed_transaction() as (conn, now):
+            self._assert_lease(conn, name, owner, epoch, now)
             previous = conn.execute(
                 "SELECT epoch FROM cp_writes WHERE resource=? AND id=?", (name, key)
             ).fetchone()
@@ -113,8 +153,8 @@ class Coordinator:
         ):
             raise ValueError("invalid_claim")
         kinds = [identifier(kind) for kind in kinds]
-        now, token = self.clock(), secrets.token_urlsafe(32)
-        with self.db.transaction() as conn:
+        token = secrets.token_urlsafe(32)
+        with self._timed_transaction() as (conn, now):
             # Abandoned work is retried, never silently treated as successful.
             conn.execute(
                 "UPDATE cp_jobs SET status='queued',owner=NULL,token=NULL WHERE status='running' AND expires<=? AND attempts<3",
@@ -146,14 +186,14 @@ class Coordinator:
 
     def finish(self, job_id: str, worker: str, token: str, result: object, *, failed: bool = False):
         body = canonical(result).decode()
-        with self.db.transaction() as conn:
+        with self._timed_transaction() as (conn, now):
             row = conn.execute("SELECT * FROM cp_jobs WHERE id=?", (identifier(job_id),)).fetchone()
             if (
                 not row
                 or row["status"] != "running"
                 or row["owner"] != worker
                 or row["token"] != token
-                or row["expires"] <= self.clock()
+                or row["expires"] <= now
             ):
                 raise ValueError("stale_or_foreign_job_claim")
             conn.execute(
