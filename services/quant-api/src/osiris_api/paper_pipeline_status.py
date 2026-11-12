@@ -9,7 +9,6 @@ import os
 import sqlite3
 from copy import deepcopy
 from datetime import datetime, timezone
-from decimal import Decimal
 from pathlib import Path
 from threading import Lock
 
@@ -78,11 +77,6 @@ def _read_pipeline_run() -> dict | None:
     return result
 
 
-def _format_money(value: Decimal) -> str:
-    text = format(value, "f")
-    return text.rstrip("0").rstrip(".") if "." in text else text
-
-
 def _run_status(result: dict) -> dict:
     workflow = result.get("workflow", {})
     risk = workflow.get("risk", {})
@@ -121,9 +115,9 @@ def _run_status(result: dict) -> dict:
 def _refresh_account(status: dict) -> dict:
     # Import lazily: the execution engine can record a pipeline run without a
     # module-import cycle. Evaluation-only status never reads the legacy ledger.
-    from .paper_execution import execution_status
+    from .paper_execution import account_valuation, execution_status
 
-    current = execution_status()
+    current = execution_status(read_only=True)
     account, report = current["account"], current["reconciliation"]
     status["reconciliation"] = report
     status["account_initialized"] = account.get("initialized") is True
@@ -138,45 +132,9 @@ def _refresh_account(status: dict) -> dict:
         return status
     status["cash"] = account["cash"]
     status["positions"] = account["positions"]
-    marks = {mark["symbol"]: mark for mark in account.get("marks", [])}
-    # Zero positions require no mark. Never imply an unmarked holding has zero value.
-    equity = Decimal(account["cash"])
-    complete_marks = True
-    mark_times = []
-    warnings = []
-    max_age = float(status.get("provenance", {}).get("max_age_seconds", 300))
-    current_time = datetime.now(timezone.utc)
-    for position in account["positions"]:
-        quantity = Decimal(position["quantity"])
-        if quantity == 0:
-            continue
-        symbol = position["symbol"]
-        if symbol not in marks:
-            complete_marks = False
-            warnings.append(f"unmarked:{symbol}")
-            continue
-        try:
-            marked_at = datetime.fromisoformat(marks[symbol]["observed_at"].replace("Z", "+00:00"))
-            if marked_at.tzinfo is None:
-                raise ValueError("mark_timezone_required")
-            age = (current_time - marked_at).total_seconds()
-        except (TypeError, ValueError):
-            complete_marks = False
-            warnings.append(f"invalid_mark_time:{symbol}")
-            continue
-        if not -60 <= age <= max_age:
-            complete_marks = False
-            warnings.append(f"stale_mark:{symbol}")
-            continue
-        equity += quantity * Decimal(marks[symbol]["price"])
-        mark_times.append(marked_at)
-    status["valuation_warnings"] = warnings
-    status["valuation_as_of"] = min(mark_times).isoformat() if mark_times and complete_marks else None
-    status["pnl"] = {
-        "realized": account["realized_pnl"],
-        "unrealized": account["unrealized_pnl"] if complete_marks else None,
-        "equity": _format_money(equity) if complete_marks else None,
-    }
+    status.update(account_valuation(
+        account, max_age_seconds=float(status.get("provenance", {}).get("max_age_seconds", 300)),
+    ))
     # A previously pending order may have filled or been cancelled since this run.
     key = status.get("order_detail", {}).get("client_order_id")
     if key:
@@ -233,7 +191,7 @@ def get_paper_pipeline_status():
         fallback = deepcopy(_latest)
         try:
             result = _read_pipeline_run()
-        except (ValueError, sqlite3.Error):
+        except (ValueError, ArithmeticError, sqlite3.Error):
             result = None
             fallback = {
                 "mode": "offline-paper", "feed": "missing", "proposal": "none",
@@ -244,7 +202,7 @@ def get_paper_pipeline_status():
     if result is not None:
         try:
             return _refresh_account(_run_status(result))
-        except (ValueError, sqlite3.Error):
+        except (ValueError, ArithmeticError, sqlite3.Error):
             status = _run_status(result)
             status.update({"risk": "blocked", "order": "none",
                            "detail": "Paper execution ledger unavailable; accounting unavailable."})

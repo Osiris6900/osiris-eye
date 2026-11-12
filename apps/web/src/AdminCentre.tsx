@@ -349,27 +349,34 @@ export function AdminCentre({ apiBase = '/api' }: { apiBase?: string }) {
       </section>}
 
       {view === 'paper' && <section className="panel" aria-label="Paper trading">
-        {renderSection('paper', paper?.initialized ? <>
-          <p className="muted">Open orders are not stored. Recent rows are synthetic fills only.</p>
+        {renderSection('paper', paper?.source_ledger === 'canonical_execution' &&
+          (paper?.reconciliation as JsonObject | undefined)?.passed !== true
+          ? <p role="note">Paper account reconciliation unavailable or failed. Balances, positions and P&amp;L are unavailable.</p>
+          : paper?.initialized ? <>
+          <p className="muted">{paper?.source_ledger === 'canonical_execution'
+            ? 'Paper execution account · reconciled orders, fills and balances.'
+            : 'Legacy synthetic account · open orders are not stored.'}</p>
           <div className="settings">
             <div className="setting"><span>Mode</span><span>{String(paper?.mode)}</span></div>
             <div className="setting"><span>Cash</span><span>{String(paper?.cash)}</span></div>
-            <div className="setting"><span>Synthetic fills</span><span>{String(paper?.fill_count)}</span></div>
+            <div className="setting"><span>Paper fills</span><span>{String(paper?.fill_count)}</span></div>
+            <div className="setting"><span>Open orders</span><span>{Array.isArray(paper?.open_orders) ? paper.open_orders.length : 'Unavailable'}</span></div>
             <div className="setting"><span>Cost basis</span><span>{paper?.cost_basis_gross == null ? 'Unavailable' : String(paper.cost_basis_gross)}</span></div>
             <div className="setting"><span>Market value</span><span>{paper?.market_value == null ? 'Unavailable without marks' : String(paper.market_value)}</span></div>
             <div className="setting"><span>Realized P&amp;L</span><span>{String((paper?.pnl as JsonObject | undefined)?.realized)}</span></div>
             <div className="setting"><span>Unrealized P&amp;L</span><span>{String((paper?.pnl as JsonObject | undefined)?.unrealized ?? 'Unavailable without marks')}</span></div>
+            <div className="setting"><span>Equity</span><span>{String((paper?.pnl as JsonObject | undefined)?.equity ?? 'Unavailable without marks')}</span></div>
           </div>
           {positions === null && <p className="muted">Positions unavailable.</p>}
           {positions?.map(position => <p key={String(position.symbol)} className="muted">
             {String(position.symbol)}: {String(position.quantity)} units · average cost {String(position.average_cost)}
           </p>)}
           {positions?.length === 0 && <p className="muted">No open paper positions.</p>}
-          <h3>Recent synthetic fills</h3>
+          <h3>Recent paper fills</h3>
           {fillRows(paper).map(fill => <p key={`${fill.side}-${fill.symbol}-${fill.quantity}-${fill.price}`} className="muted">
             {fill.side} {fill.symbol} {fill.quantity} @ {fill.price}
           </p>)}
-          {fillRows(paper).length === 0 && <p className="muted">{Array.isArray(paper?.recent_fills) ? 'No synthetic fills recorded.' : 'Recent fills unavailable.'}</p>}
+          {fillRows(paper).length === 0 && <p className="muted">{Array.isArray(paper?.recent_fills) ? 'No paper fills recorded.' : 'Recent fills unavailable.'}</p>}
         </> : <p className="muted">Paper ledger not initialized · cash, positions and P&amp;L unavailable</p>)}
       </section>}
 

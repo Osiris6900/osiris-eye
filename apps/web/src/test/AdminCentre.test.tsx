@@ -209,6 +209,42 @@ test('network, paper, risk and alerts stay read-only and show supported fields',
   expect(calls.every(call => call.init?.method === undefined)).toBe(true);
 });
 
+test('paper view identifies the execution account and displays stored open orders', async () => {
+  stubFetch(allOk({
+    '/admin/paper/status': reply(200, {
+      ...PAPER, source_ledger: 'canonical_execution', reconciliation: { passed: true },
+      cash: '798', pnl: { realized: '0', unrealized: '18', equity: '1018' },
+      open_orders: [{ client_order_id: 'partial-1', state: 'partially_filled' }],
+      recent_fills: [{ side: 'BUY', symbol: 'BTC-USD', quantity: '1', price: '100' }],
+    }),
+  }));
+  render(<AdminCentre />);
+  connect();
+  await screen.findByText('operator');
+  fireEvent.click(screen.getByRole('button', { name: 'paper' }));
+  expect(await screen.findByText(/Paper execution account/)).toBeInTheDocument();
+  expect(screen.getByText('Open orders').parentElement).toHaveTextContent('1');
+  expect(screen.getByText('BUY BTC-USD 1 @ 100')).toBeInTheDocument();
+  expect(screen.getByText('Equity').parentElement).toHaveTextContent('1018');
+  expect(screen.queryByText(/open orders are not stored/)).not.toBeInTheDocument();
+});
+
+test('paper view hides unverified balances after canonical reconciliation failure', async () => {
+  stubFetch(allOk({
+    '/admin/paper/status': reply(200, {
+      ...PAPER, source_ledger: 'canonical_execution', cash: '987654321',
+      reconciliation: { passed: false, breaks: ['cash'] },
+    }),
+  }));
+  render(<AdminCentre />);
+  connect();
+  await screen.findByText('operator');
+  fireEvent.click(screen.getByRole('button', { name: 'paper' }));
+  expect(await screen.findByRole('note')).toHaveTextContent('reconciliation unavailable or failed');
+  expect(screen.queryByText('987654321')).not.toBeInTheDocument();
+  expect(screen.queryByText('Realized P&L')).not.toBeInTheDocument();
+});
+
 test('blank token, loading, errors, empty states and disconnect stay honest', async () => {
   const fetchMock = vi.fn();
   vi.stubGlobal('fetch', fetchMock);
