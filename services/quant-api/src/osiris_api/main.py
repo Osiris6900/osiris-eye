@@ -54,6 +54,26 @@ store = ResearchStore()
 app.include_router(verified_paper_gate_router)
 app.include_router(signed_paper_signal_router)
 app.include_router(intelligence_router)
+from .control_plane.api import router as control_plane_router
+app.include_router(control_plane_router)
+
+
+@app.middleware("http")
+async def platform_observability(request: Request, call_next):
+    import time
+    import sqlite3
+    from starlette.concurrency import run_in_threadpool
+    started = time.perf_counter()
+    response = await call_next(request)
+    if request.url.path.startswith("/control-plane/") and os.getenv("OSIRIS_CONTROL_DB"):
+        from .control_plane.database import Database
+        from .control_plane.observability import Observability
+        try:
+            await run_in_threadpool(lambda: Observability(Database(os.environ["OSIRIS_CONTROL_DB"])).observe(
+                "platform", response.status_code, (time.perf_counter() - started) * 1000))
+        except (ValueError, OSError, sqlite3.Error):
+            response.headers["X-Osiris-Telemetry"] = "unavailable"
+    return response
 
 
 @app.middleware("http")
@@ -61,7 +81,7 @@ async def require_api_token(request: Request, call_next):
     """Protect API routes when configured; production fails closed without a token."""
     if request.url.path == "/health":
         return await call_next(request)
-    if request.url.path.startswith("/admin/"):
+    if request.url.path.startswith(("/admin/", "/control-plane/")):
         # The admin router enforces its own fail-closed RBAC and audit (#180);
         # exempt it here so its 401/403/503 semantics are not masked.
         return await call_next(request)

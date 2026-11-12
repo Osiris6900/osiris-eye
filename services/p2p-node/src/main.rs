@@ -1442,7 +1442,7 @@ fn build_health_snapshot(
     }
 }
 
-async fn serve_health_connection(mut stream: TcpStream, state: watch::Receiver<HealthSnapshot>) {
+async fn serve_health_connection(mut stream: TcpStream, state: watch::Receiver<HealthSnapshot>, metrics: watch::Receiver<Vec<osiris_p2p_node::peer_metrics::PeerMetric>>) {
     let mut request = [0_u8; 1024];
     let read = match tokio::time::timeout(Duration::from_secs(2), stream.read(&mut request)).await {
         Ok(Ok(count)) => count,
@@ -1461,6 +1461,10 @@ async fn serve_health_connection(mut stream: TcpStream, state: watch::Receiver<H
     } else if path == "/health" {
         let snapshot = state.borrow().clone();
         ("200 OK", serde_json::to_string(&snapshot).unwrap_or_else(|_| r#"{"status":"error"}"#.to_owned()))
+    } else if path == "/peer-metrics" {
+        ("200 OK", serde_json::json!({"schema": "osiris.peer-metrics.v1", "peers": metrics.borrow().clone(),
+            "scope": "local-node-process", "latency_kind": "verified_receipt_admission_ack",
+            "independent_hosts_verified": false, "live_execution": false}).to_string())
     } else if path == "/ready" {
         let snapshot = state.borrow().clone();
         let status = if snapshot.ready { "200 OK" } else { "503 Service Unavailable" };
@@ -1478,13 +1482,15 @@ async fn serve_health_connection(mut stream: TcpStream, state: watch::Receiver<H
 async fn serve_health_endpoint(
     address: SocketAddr,
     state: watch::Receiver<HealthSnapshot>,
+    metrics: watch::Receiver<Vec<osiris_p2p_node::peer_metrics::PeerMetric>>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let listener = TcpListener::bind(address).await?;
     emit!("health_http_listening={}", listener.local_addr()?);
     loop {
         let (stream, _) = listener.accept().await?;
         let state = state.clone();
-        tokio::spawn(async move { serve_health_connection(stream, state).await; });
+        let metrics = metrics.clone();
+        tokio::spawn(async move { serve_health_connection(stream, state, metrics).await; });
     }
 }
 
@@ -1872,8 +1878,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .parse()?;
     let initial_health = build_health_snapshot(&peer_id, started_at, &swarm, &bootstrap_peers, relay_readiness(&relay_addresses, &active_relay_reservations), relay_addresses.len(), active_relay_reservations.len());
     let (health_tx, health_rx) = watch::channel(initial_health);
+    let mut peer_metrics = osiris_p2p_node::peer_metrics::PeerMetrics::default();
+    let (peer_metrics_tx, peer_metrics_rx) = watch::channel(peer_metrics.snapshot());
     tokio::spawn(async move {
-        if let Err(error) = serve_health_endpoint(health_address, health_rx).await {
+        if let Err(error) = serve_health_endpoint(health_address, health_rx, peer_metrics_rx).await {
             eprintln!("health_http_server_error={error}");
         }
     });
@@ -1932,6 +1940,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
             _ = receipt_tick.tick(), if delivery_receipts_enabled => {
                 for (recipient, message_id) in pending_receipts.expire(Instant::now()) {
+                    peer_metrics.timeout(&recipient.to_string(), &message_id);
                     emit!("observation_delivery_unconfirmed recipient={recipient} message_id={message_id} reason=receipt_timeout");
                 }
                 if let Some(bridge) = receipt_bridge.as_mut() {
@@ -1991,6 +2000,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 let connected_peers = snapshot.connected_peers;
                 let connected_bootstrap_peers = snapshot.bootstrap_peers_connected;
                 health_tx.send_replace(snapshot);
+                peer_metrics_tx.send_replace(peer_metrics.snapshot());
                 emit!(
                     "node_health status=alive ready={} peer_id={} uptime_seconds={} connected_peers={} bootstrap_peers_connected={}/{}",
                     build_health_snapshot(&peer_id, started_at, &swarm, &bootstrap_peers, relay_readiness(&relay_addresses, &active_relay_reservations), relay_addresses.len(), active_relay_reservations.len()).ready,
@@ -2238,6 +2248,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         continue;
                     }
                     reconnect_failures.remove(&peer_id);
+                    peer_metrics.connected(&peer_id.to_string());
                     emit!("peer_connected={peer_id}");
                     emit!("peer_connection_path peer={peer_id} relayed={}", endpoint.is_relayed());
                     let connected_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
@@ -2262,6 +2273,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 SwarmEvent::ConnectionClosed { peer_id, cause, num_established, .. } => {
                     emit!("peer_disconnected={peer_id} cause={cause:?} remaining={num_established}");
                     if num_established == 0 {
+                        peer_metrics.disconnected(&peer_id.to_string());
                         active_relay_reservations.remove(&peer_id);
                         if let Some(listener) = relay_listeners.remove(&peer_id) {
                             let _ = swarm.remove_listener(listener);
@@ -2368,6 +2380,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                             &binding.identity_public_key, receipt_now, Instant::now(), policy,
                         ) {
                             Ok(event) => {
+                                peer_metrics.verified_receipt(&event.recipient_peer_id, &event.message_id, Instant::now());
                                 if let Some(bridge) = receipt_bridge.as_mut() {
                                     // Spool the verified event before dropping the pending attempt.
                                     match bridge.enqueue(&event) {
@@ -2860,7 +2873,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                         match pending_receipts.track(
                                             recipient_peer, message_id.clone(), envelope_sha256.clone(), Instant::now(),
                                         ) {
-                                            Ok(()) => emit!("encrypted_observation_published recipient={recipient_peer} message_id={message_id} envelope_sha256={envelope_sha256} receipts_tracked=true"),
+                                            Ok(()) => {
+                                                peer_metrics.sent(&recipient_peer.to_string(), &message_id, Instant::now());
+                                                emit!("encrypted_observation_published recipient={recipient_peer} message_id={message_id} envelope_sha256={envelope_sha256} receipts_tracked=true");
+                                            },
                                             Err(reason) => emit!("observation_delivery_unconfirmed recipient={recipient_peer} message_id={message_id} reason={reason}"),
                                         }
                                     } else {

@@ -8,25 +8,22 @@ from __future__ import annotations
 import os
 import re
 import sqlite3
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from pathlib import Path
 from threading import Lock
 from typing import Any
 
 from fastapi import APIRouter, Body, HTTPException
 
+from .decimal_safety import bounded_decimal
+
 router = APIRouter()
 _lock = Lock()
 
 
 def _number(value: Any, *, positive: bool = False) -> Decimal:
-    if isinstance(value, bool) or not isinstance(value, (str, int, float, Decimal)):
-        raise ValueError("invalid_number")
-    try:
-        number = Decimal(str(value))
-    except InvalidOperation as exc:
-        raise ValueError("invalid_number") from exc
-    if not number.is_finite() or (positive and number <= 0) or (not positive and number < 0):
+    number = bounded_decimal(value, allow_float=True)
+    if (positive and number <= 0) or (not positive and number < 0):
         raise ValueError("invalid_number")
     return number
 

@@ -1,0 +1,79 @@
+{
+  "limitations": [
+    "Point-in-time package matching only; not an independent security review or exploitability assessment."
+  ],
+  "lock_path": "crates/native-feed/Cargo.lock",
+  "lock_sha256": "a3245172f873236cbe927b02085f8c02c1b07a6a1d66166c54e8370524eec938",
+  "matches": [],
+  "packages": [
+    {
+      "ecosystem": "crates.io",
+      "name": "itoa",
+      "version": "1.0.19"
+    },
+    {
+      "ecosystem": "crates.io",
+      "name": "libc",
+      "version": "0.2.191"
+    },
+    {
+      "ecosystem": "crates.io",
+      "name": "memchr",
+      "version": "2.8.3"
+    },
+    {
+      "ecosystem": "crates.io",
+      "name": "memmap2",
+      "version": "0.9.12"
+    },
+    {
+      "ecosystem": "crates.io",
+      "name": "proc-macro2",
+      "version": "1.0.107"
+    },
+    {
+      "ecosystem": "crates.io",
+      "name": "quote",
+      "version": "1.0.47"
+    },
+    {
+      "ecosystem": "crates.io",
+      "name": "serde",
+      "version": "1.0.229"
+    },
+    {
+      "ecosystem": "crates.io",
+      "name": "serde_core",
+      "version": "1.0.229"
+    },
+    {
+      "ecosystem": "crates.io",
+      "name": "serde_derive",
+      "version": "1.0.229"
+    },
+    {
+      "ecosystem": "crates.io",
+      "name": "serde_json",
+      "version": "1.0.154"
+    },
+    {
+      "ecosystem": "crates.io",
+      "name": "syn",
+      "version": "3.0.10"
+    },
+    {
+      "ecosystem": "crates.io",
+      "name": "unicode-ident",
+      "version": "1.0.27"
+    },
+    {
+      "ecosystem": "crates.io",
+      "name": "zmij",
+      "version": "1.0.23"
+    }
+  ],
+  "queried_at": "2026-11-11T21:18:56.031628+00:00",
+  "schema": "osiris.native-feed-dependency-scan.v1",
+  "service": "OSV",
+  "source_commit": "d479d2e5ac2215faf55c61332fa80a3c5ae39b2b"
+}

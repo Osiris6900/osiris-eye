@@ -5,6 +5,7 @@
 //! verification.
 
 pub mod delivery_receipt;
+pub mod peer_metrics;
 
 #[cfg(target_os = "linux")]
 pub mod verified_receipt_bridge;

@@ -71,6 +71,29 @@ def _register_ibkr_paper_adapter() -> None:
 _register_ibkr_paper_adapter()
 
 
+def _register_research_vendor_adapters() -> None:
+    from .control_plane.vendors import VendorBarAdapter
+    if os.getenv("OSIRIS_VENDOR_ADAPTERS_ENABLED", "").lower() not in {"1", "true"}:
+        return
+    profiles = {
+        "alpaca": ({"key": "OSIRIS_ALPACA_API_KEY", "secret": "OSIRIS_ALPACA_API_SECRET"}, ["equity"]),
+        "oanda": ({"key": "OSIRIS_OANDA_API_TOKEN"}, ["fx"]),
+        "polygon": ({"key": "OSIRIS_POLYGON_API_KEY"}, ["equity"]),
+        "twelvedata": ({"key": "OSIRIS_TWELVEDATA_API_KEY"}, ["equity"]),
+    }
+    for name, (bindings, assets) in profiles.items():
+        reference = os.getenv(f"OSIRIS_{name.upper()}_ENTITLEMENT_REFERENCE", "")
+        credentials = {field: os.getenv(variable, "") for field, variable in bindings.items()}
+        if not reference or not all(credentials.values()):
+            continue
+        adapter = VendorBarAdapter(name, credentials, entitlement_reference=reference)
+        market_data_gateway.register_adapter(name, adapter, supported_asset_classes=assets,
+            entitlement_reference=reference, credential_reference="env:" + bindings["key"])
+
+
+_register_research_vendor_adapters()
+
+
 def _configured_provider_order() -> list[str]:
     return [item.strip() for item in os.getenv("OSIRIS_MARKET_PROVIDER_ORDER", "").split(",") if item.strip()]
 
