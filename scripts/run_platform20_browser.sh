@@ -40,7 +40,7 @@ setsid "$chrome_binary" --headless=new --no-sandbox --disable-dev-shm-usage --di
   --remote-debugging-port="$OSIRIS_BROWSER_DEBUG_PORT" --window-size=1440,1100 about:blank > "$fixture_dir/chrome.log" 2>&1 &
 runtime_pids+=("$!")
 ready=false
-for attempt in {1..100}; do
+for attempt in {1..300}; do
   if curl --noproxy 127.0.0.1 -fsS "http://127.0.0.1:$OSIRIS_BROWSER_DEBUG_PORT/json/list" > /dev/null 2>&1 && \
      curl --noproxy 127.0.0.1 -fsS "http://127.0.0.1:$OSIRIS_BROWSER_WEB_PORT" > /dev/null 2>&1; then ready=true; break; fi
   sleep .1
@@ -51,6 +51,10 @@ if [ "$ready" != true ]; then
   ps -p "${runtime_pids[2]}" -o pid=,stat=,args= || true
   echo 'Web process diagnostics:'
   ps -p "${runtime_pids[1]}" -o pid=,stat=,args= || true
+  echo 'Chromium DevTools endpoint diagnostics:'
+  curl --noproxy 127.0.0.1 --max-time 3 -v "http://127.0.0.1:$OSIRIS_BROWSER_DEBUG_PORT/json/version" 2>&1 || true
+  echo 'Vite HTTP endpoint diagnostics:'
+  curl --noproxy 127.0.0.1 --max-time 3 -v "http://127.0.0.1:$OSIRIS_BROWSER_WEB_PORT/" -o /dev/null 2>&1 || true
   echo 'Browser log (last 60 lines):'
   tail -n 60 "$fixture_dir/chrome.log" || true
   echo 'Web log (last 60 lines):'
