@@ -4,7 +4,7 @@
   "live_trading_authorized": false,
   "facts": {
     "mutable_action_uses": 0,
-    "pinned_action_uses": 121,
+    "pinned_action_uses": 122,
     "workflow_files": 19,
     "advisory_inputs_match_worktree": true,
     "advisory_source_commit": "d479d2e5ac2215faf55c61332fa80a3c5ae39b2b",
@@ -32,7 +32,8 @@
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42494850772",
         "docs/P2P_DEPENDENCY_ADVISORIES.json",
         "services/quant-api/requirements-lock.txt",
-        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md"
+        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md",
+        "docs/workstreams/SBOM_ALL_RUST_ROOTS.md"
       ],
       "evidence_commits": [
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9"

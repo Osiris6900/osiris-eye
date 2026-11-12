@@ -6,7 +6,7 @@ The candidate on top of #427 adds actual Rust-receipt to canonical paper-order
 execution and process-loss recovery. Current implementation, local check coverage
 and the exact remaining requirement for every open gate are documented in
 [RELEASE_GATE_EXECUTION_2026_11_12.md](workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md).
-The engineering profile maps 24 checks to both W01–W20 and T01–T20.
+The engineering profile maps 25 checks, including complete offline SBOM generation, to both W01–W20 and T01–T20.
 
 The current blocker column below distinguishes implemented adapters, source views,
 model archives, paper reconciliation, actual-node telemetry and temporary
