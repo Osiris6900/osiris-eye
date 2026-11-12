@@ -11,7 +11,7 @@ import json
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
-from .database import Database, canonical, digest, identifier
+from .database import MAX_SQLITE_INTEGER, Database, canonical, digest, identifier
 
 
 class Replicator:
@@ -26,7 +26,7 @@ class Replicator:
 
     @staticmethod
     def sign(origin: str, seq: int, event_id: str, payload: object, key: Ed25519PrivateKey) -> dict:
-        if type(seq) is not int or seq < 1:
+        if type(seq) is not int or not 1 <= seq <= MAX_SQLITE_INTEGER:
             raise ValueError("invalid_sequence")
         event = {
             "origin": identifier(origin),
@@ -56,7 +56,8 @@ class Replicator:
             }:
                 raise ValueError("invalid_replication_envelope")
             origin, eid = identifier(item["origin"]), identifier(item["id"])
-            if origin not in self.keys or type(item["seq"]) is not int or item["seq"] < 1:
+            if (origin not in self.keys or type(item["seq"]) is not int
+                    or not 1 <= item["seq"] <= MAX_SQLITE_INTEGER):
                 raise ValueError("untrusted_replication_origin_or_sequence")
             event = {key: item[key] for key in ("origin", "seq", "id", "payload")}
             if digest(event) != item["digest"]:
@@ -100,7 +101,8 @@ class Replicator:
         }
 
     def export(self, origin: str, *, after: int = 0, limit: int = 100) -> list[dict]:
-        if type(after) is not int or after < 0 or type(limit) is not int or not 1 <= limit <= 1000:
+        if (type(after) is not int or not 0 <= after <= MAX_SQLITE_INTEGER
+                or type(limit) is not int or not 1 <= limit <= 1000):
             raise ValueError("invalid_replication_cursor")
         with self.db.transaction() as conn:
             rows = conn.execute(

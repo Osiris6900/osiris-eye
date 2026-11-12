@@ -25,6 +25,24 @@ def test_point_in_time_values_exclude_future_backfills(tmp_path):
     )
 
 
+@pytest.mark.parametrize("invalid", [2**63, 10**100, -1, True])
+def test_feature_timestamp_bounds_before_sqlite(tmp_path, invalid):
+    store = FeatureStore(Database(str(tmp_path / "features.db")))
+    with pytest.raises(ValueError, match="invalid_feature"):
+        store.put("price", "A", invalid, invalid, 10.0, "a" * 64)
+    with pytest.raises(ValueError, match="invalid_feature_query"):
+        store.point_in_time("A", ["price"], invalid)
+    with store.db.transaction() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM cp_features").fetchone()[0] == 0
+
+
+def test_largest_sqlite_feature_timestamp_is_supported(tmp_path):
+    store = FeatureStore(Database(str(tmp_path / "features.db")))
+    stamp = 2**63 - 1
+    store.put("price", "A", stamp, stamp, 10.0, "a" * 64)
+    assert store.point_in_time("A", ["price"], stamp)["features"]["price"]["value"] == 10
+
+
 def training_rows():
     return [
         {

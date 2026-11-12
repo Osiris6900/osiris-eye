@@ -10,6 +10,8 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
+MAX_SQLITE_INTEGER = 2**63 - 1
+
 
 def identifier(value: object) -> str:
     if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", value):

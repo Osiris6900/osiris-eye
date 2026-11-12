@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import math
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from itertools import pairwise
 from statistics import pstdev
 from urllib.parse import urlsplit
@@ -290,41 +290,49 @@ class MarketViews:
         if not allowed:
             return result
         placeholders = ",".join("?" for _ in allowed)
+        oldest_event = cutoff - timedelta(seconds=max(p["max_age_seconds"] for p in allowed.values()))
+        oldest_event_ms = int(oldest_event.timestamp() * 1000)
+        saw_records = False
         with self.db.transaction() as conn:
             records = conn.execute(
                 "SELECT body FROM cp_documents WHERE collection='market-views' AND json_extract(body,'$.kind')=? AND json_extract(body,'$.entity')=? "
                 f"AND json_extract(body,'$.source') IN ({placeholders}) "
-                "AND json_extract(body,'$.event_ms')<=? AND json_extract(body,'$.available_ms')<=? ORDER BY json_extract(body,'$.event_ms') DESC, json_extract(body,'$.available_ms') DESC, id LIMIT ?",
+                "AND json_extract(body,'$.event_ms')<=? AND json_extract(body,'$.available_ms')<=? ORDER BY json_extract(body,'$.event_ms') DESC, json_extract(body,'$.available_ms') DESC, id",
                 (
                     kind,
                     entity,
                     *allowed,
                     int(cutoff.timestamp() * 1000),
                     int(cutoff.timestamp() * 1000),
-                    limit,
                 ),
-            ).fetchall()
-        for row in records:
-            item = self._verified(json.loads(row["body"]))
-            policy = allowed[item["source"]]
-            if (
-                parse_market_time(item["available_at"]) > cutoff
-                or parse_market_time(item["event_time"]) > cutoff
-            ):
-                continue
-            if kind == "options" and item["payload"]["expiry"] < cutoff.date().isoformat():
-                continue
-            if (
-                item["source_mode"] != policy["mode"]
-                or item["rights_reference"] != policy["rights_reference"]
-            ):
-                continue
-            age = (cutoff - parse_market_time(item["event_time"])).total_seconds()
-            if 0 <= age <= policy["max_age_seconds"]:
-                result["records"].append(item)
+            )
+            # Stream a consistent snapshot and count only eligible records toward
+            # the response limit. Superseded rights or short-lived sources must
+            # not hide valid observations from another configured source.
+            for row in records:
+                saw_records = True
+                item = self._verified(json.loads(row["body"]))
+                policy = allowed[item["source"]]
+                event = parse_market_time(item["event_time"])
+                if item["event_ms"] < oldest_event_ms:
+                    break
+                if parse_market_time(item["available_at"]) > cutoff or event > cutoff:
+                    continue
+                if kind == "options" and item["payload"]["expiry"] < cutoff.date().isoformat():
+                    continue
+                if (
+                    item["source_mode"] != policy["mode"]
+                    or item["rights_reference"] != policy["rights_reference"]
+                ):
+                    continue
+                age = (cutoff - event).total_seconds()
+                if 0 <= age <= policy["max_age_seconds"]:
+                    result["records"].append(item)
+                    if len(result["records"]) == limit:
+                        break
         if result["records"]:
             result.update(status="available", reason=None)
-        elif records:
+        elif saw_records:
             result["reason"] = "stale_or_changed_source_policy"
         return result
 
