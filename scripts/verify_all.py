@@ -34,6 +34,7 @@ CHECKS = [
 # default strict release profile, vendor rights or independent-host acceptance.
 ENGINEERING_CHECKS = [
     ("release-inventory", ["python", "scripts/check_release_gate_status.py"], None),
+    ("supply-chain-sbom", ["python", "scripts/generate_dependency_sbom.py", "--offline", "--crate-cache", "docs/CRATE_LICENSE_PROVENANCE.json", "--output", "@artifacts@/dependency-sbom.json", "--provenance-output", "@artifacts@/dependency-sbom-provenance.json"], None),
     ("p2p-workflows", ["python", "scripts/check_p2p_workflows.py"], None),
     ("rust-risk", ["cargo", "test", "--locked", "--manifest-path", "crates/risk-kernel/Cargo.toml"], None),
     ("rust-p2p", ["cargo", "test", "--locked", "--manifest-path", "services/p2p-node/Cargo.toml", "--all-targets"], None),
@@ -74,7 +75,7 @@ WORKSTREAM_CHECKS = {
 # These checks exercise implementations; inventory acceptance is a separate
 # historical record and must never be inferred from a green local check.
 RELEASE_GATE_CHECKS = {
-    "T01": ["release-inventory", "p2p-workflows"],
+    "T01": ["release-inventory", "p2p-workflows", "supply-chain-sbom"],
     "T02": ["p2p-workflows"], "T03": ["rust-p2p", "peer-receipts"],
     "T04": ["rust-p2p", "peer-receipts"], "T05": ["rust-p2p"],
     "T06": ["security-intake"], "T07": ["python-tests", "vendor-intake"],

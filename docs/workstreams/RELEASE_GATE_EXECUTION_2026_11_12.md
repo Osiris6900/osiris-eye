@@ -64,7 +64,8 @@ disposable. It retains the before/after source binding, binary digest, receipt
 identifiers, order/risk IDs, account audit and explicit limitations. Existing
 output files are not overwritten; failures return nonzero and a failed report.
 
-The engineering profile now has 24 checks, maps local coverage to T01–T20 as
+The engineering profile now has 25 checks, including complete offline SBOM
+generation with retained source/input/output digests, maps local coverage to T01–T20 as
 well as W01–W20, and lists the seventeen still-open release gates. Missing
 `receipt-paper` coverage fails the relevant local groups. A green report never
 sets `release_accepted`, `merge_authorized` or `live_trading_authorized` true.

@@ -470,7 +470,10 @@ def depth_impact(instrument: str, request: Request, payload: dict = Body(...)):
     return run(
         lambda: DepthService(
             db, entitlement_reference=os.getenv("OSIRIS_L2_ENTITLEMENT_REFERENCE", "")
-        ).impact(instrument, payload.get("side"), payload.get("quantity"))
+        ).impact(
+            instrument, payload.get("side"), payload.get("quantity"),
+            limit_price=payload.get("limit_price"),
+        )
     )
 
 
