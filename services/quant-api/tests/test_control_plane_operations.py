@@ -251,9 +251,21 @@ def test_signed_compliance_retention_requires_verified_bucket_and_version():
                 }
             }
 
+        def get_object(self, **kwargs):
+            from io import BytesIO
+
+            assert kwargs["VersionId"] == "version-1"
+            return {
+                "VersionId": "version-1",
+                "ContentLength": len(self.put["Body"]),
+                "ServerSideEncryption": "aws:kms",
+                "Body": BytesIO(self.put["Body"]),
+            }
+
     s3 = S3()
     result = S3Custody(s3, "fixture-bucket", "fixture-kms").retain("evidence-1", bundle, public)
     assert result["version_id"] == "version-1"
+    assert result["content_readback_verified"] is True
     assert s3.put["ObjectLockMode"] == "COMPLIANCE"
     assert s3.put["IfNoneMatch"] == "*"
     bundle["payload"]["run"] = "tampered"
