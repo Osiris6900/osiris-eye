@@ -175,7 +175,8 @@ def run_paper_pipeline(
         format(Decimal(price) * slip_multiplier, "f") if slippage else price
     )
     context = execution.execution_context(
-        symbol=symbol, price=execution_price, side=side if side != "HOLD" else "BUY"
+        symbol=symbol, price=execution_price, side=side if side != "HOLD" else "BUY",
+        now=decision_time.isoformat(),
     )
     age = (decision_time - observed).total_seconds()
     if not 0 <= age <= float(context["max_market_age_seconds"]):
