@@ -200,6 +200,43 @@ def test_existing_journal_without_accounting_model_retains_original_allocations(
     assert reconcile()["passed"] is True
 
 
+@pytest.mark.parametrize("working", [False, True])
+def test_full_fractional_crypto_exit_does_not_fail_from_float_product_rounding(db, working):
+    initialize_paper_account("1000")
+    assert order("buy", quantity="0.0001", price="68197.19")["state"] == "filled"
+    sold = order("sell", quantity="0.0001", side="SELL", price="68192.49", working=working)
+    if working:
+        assert sold["state"] == "accepted"
+        sold = fill("sell", "close", quantity="0.0001")
+    assert sold["state"] == "filled"
+    assert snapshot()["positions"] == []
+    assert snapshot()["cash"] == "999.99953"
+    assert snapshot()["realized_pnl"] == "-0.00047"
+    assert reconcile()["passed"] is True
+
+
+def test_fractional_exit_still_refuses_even_sub_float_precision_oversell(db):
+    initialize_paper_account("1000")
+    order("buy", quantity="0.0001", price="68197.19")
+    before = snapshot()
+    sold = order("sell", quantity="0.0001000000000000000000000000001", side="SELL", price="68192.49")
+    assert sold["state"] == "rejected"
+    assert snapshot()["cash"] == before["cash"]
+    assert snapshot()["positions"] == before["positions"]
+    assert snapshot()["fill_count"] == 1
+
+
+def test_fractional_exit_cannot_override_an_independent_risk_refusal(db, monkeypatch):
+    initialize_paper_account("1000")
+    order("buy", quantity="0.0001", price="68197.19")
+    order("sell", quantity="0.0001", side="SELL", price="68192.49", working=True)
+    monkeypatch.setattr(ledger, "check_execution", lambda **kwargs: (False, "independent_risk_refusal", True))
+    with pytest.raises(ValueError, match="independent_risk_refusal"):
+        fill("sell", "refused", quantity="0.0001")
+    assert snapshot()["fill_count"] == 1
+    assert snapshot()["positions"][0]["quantity"] == "0.0001"
+
+
 def test_exact_risk_limits_cannot_be_bypassed_by_float_rounding(db):
     initialize_paper_account("1000", RiskLimits(max_order_notional=100))
     refused = order("just-over", price="100.000000000000000001")

@@ -36,6 +36,10 @@ cash flows less previously allocated realized P&L. This eliminates a repeating
 average-cost rounding residue. Partial inventory retains the existing Decimal
 average-cost display. Journals without this accounting marker preserve their
 original allocations; historical economics are not rewritten.
+Covered fractional SELLs also provide internally consistent float notionals to
+the independent risk gate. Otherwise a one-ULP multiplication difference can
+reject a complete exit of a genuine fractional crypto holding. Exact Decimal
+and reserved-share checks still refuse oversells, and risk refusals are final.
 
 The operator loss view now uses the same realized-plus-adverse-unrealized policy
 as execution, within a single reconciled read-only snapshot. It cannot report
@@ -57,6 +61,11 @@ It retains original response bytes, byte hashes, URLs, request/receive times,
 normalized books, durable ledgers, fills, fees, cash/P&L, simulated pre-commit crash
 rollback and actual new-process idempotent replay. Output is private and outside
 the checkout; an existing operator ledger is never selected for the exercise.
+Each buy/sell side captures a fresh book. Historical process replay runs after
+the round trips, so process startup cannot consume a later execution's freshness
+budget; the replay remains valid after inventory has closed.
+A duplicate source sequence receives at most three GET attempts, separated by
+one second; it never refreshes the saved book's age or restores liquidity.
 Unreachable/malformed sources, insufficient liquidity, stale books and refused
 risk decisions produce a failed report. There is no fabricated substitute.
 

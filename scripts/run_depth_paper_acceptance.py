@@ -54,6 +54,19 @@ def require(condition, reason):
         raise ValueError(reason)
 
 
+def fresh_capture(service, symbol):
+    for attempt in range(3):
+        try:
+            return service.capture(symbol)
+        except ValueError as error:
+            if str(error) != "stale_or_replayed_depth" or attempt == 2:
+                raise
+            # An identical sequence never rejuvenates a saved book. Wait for
+            # a genuinely newer source response; retain every attempted GET.
+            time.sleep(1)
+    raise RuntimeError("fresh_depth_not_obtained")
+
+
 class CaptureTransport:
     def __init__(self, directory):
         self.directory, self.captures = directory, []
@@ -66,6 +79,7 @@ class CaptureTransport:
         requested = datetime.now(UTC).isoformat()
         with build_opener(NoRedirect()).open(Request(url, headers={
             "User-Agent": "Osiris-Eye/0.2 keyless-paper-depth", "Accept": "application/json",
+            "Cache-Control": "no-cache",
         }), timeout=10) as response:
             raw = response.read(2_097_153)
         received = datetime.now(UTC).isoformat()
@@ -94,6 +108,8 @@ def probe(directory):
             "created_at": datetime.now(UTC).isoformat(), "symbols": list(SYMBOLS),
             "quantity": "0.0001", "assumed_fee_bps": 10, "participation_bps": 1000,
             "min_latency_ms": 250, "max_age_ms": 5000, "max_levels_per_order": 20,
+            "book_refresh": "before_each_order", "restart_replay": "after_flat",
+            "duplicate_sequence_attempts": 3, "duplicate_delay_seconds": 1,
             "purpose": "execution_diagnostic_not_strategy_validation",
             "source_files": code, "live_trading_authorized": False,
             "redistribution_authorized": False, "release_gate_accepted": False}
@@ -110,12 +126,13 @@ def probe(directory):
         ledger.initialize_paper_account("10000")
         service = DepthService(Database(str(directory / "control.sqlite3")),
                                entitlement_reference=REFERENCE, transport=transport)
+        replay_target = None
         for symbol in SYMBOLS:
-            book = service.capture(symbol)
-            write(directory / (symbol + "-normalized-book.json"), book)
-            time.sleep(0.3)
             for side, field in (("BUY", "asks"), ("SELL", "bids")):
                 key = symbol + "-" + side
+                book = fresh_capture(service, symbol)
+                write(directory / (key + "-normalized-book.json"), book)
+                time.sleep(0.3)
                 price = book[field][min(19, len(book[field]) - 1)][0]
                 fee = ledger._canonical(Decimal(plan["quantity"]) * Decimal(price) * Decimal("0.001"))
                 stamp = datetime.fromtimestamp(book["captured_ms"] / 1000, UTC).isoformat()
@@ -124,9 +141,9 @@ def probe(directory):
                     price=price, fee=fee, observed_at=stamp, now=datetime.now(UTC).isoformat(),
                     risk_service_available=True, kill_switch_active=False, working=True,
                 )
-                require(order["state"] == "accepted", "diagnostic_order_refused")
                 exercise = {"symbol": symbol, "side": side, "order": order, "fills": []}
                 report["exercises"].append(exercise)
+                require(order["state"] == "accepted", "diagnostic_order_refused:" + str(order.get("reason")))
                 for level in range(plan["max_levels_per_order"]):
                     plan_id = key + "-" + str(level)
                     args = {"client_order_id": key, "client_plan_id": plan_id,
@@ -144,8 +161,17 @@ def probe(directory):
                     result = execute_depth_fill(service, **args)
                     exercise["fills"].append(result)
                     require(result["depth"]["outcome"] == "filled", "insufficient_conservative_displayed_liquidity")
-                    if not report.get("new_process_replay_verified"):
-                        child_code = '''
+                    if replay_target is None:
+                        replay_target = (key, plan_id, result["fill"])
+                    if result["state"] == "filled":
+                        break
+                require(ledger.get_paper_order(key)["state"] == "filled", "diagnostic_order_not_fully_filled")
+            require(not ledger.snapshot()["positions"], "round_trip_left_inventory")
+        # Process startup is not part of a new order's latency budget. Reuse
+        # an old plan only after all genuine executions; this replay must not
+        # require fresh data or authorize another fill, even after closing.
+        key, plan_id, expected_fill = replay_target
+        child_code = '''
 import json,sys
 from osiris_api.control_plane.database import Database
 from osiris_api.control_plane.depth import DepthService
@@ -153,16 +179,12 @@ from osiris_api.paper_depth_execution import execute_depth_fill
 service=DepthService(Database(sys.argv[1]),entitlement_reference=sys.argv[2])
 print(json.dumps(execute_depth_fill(service,client_order_id=sys.argv[3],client_plan_id=sys.argv[4])))
 '''
-                        child = subprocess.run([sys.executable, "-c", child_code, service.db.path,
-                            REFERENCE, key, plan_id], capture_output=True, text=True, timeout=30, check=True)
-                        replay = json.loads(child.stdout)
-                        require(replay["fill"] == result["fill"] and replay["status"] == "idempotent_replay"
-                                and replay["execution_authorized"] is False, "restart_duplicated_or_reapproved_fill")
-                        report["new_process_replay_verified"] = True
-                    if result["state"] == "filled":
-                        break
-                require(ledger.get_paper_order(key)["state"] == "filled", "diagnostic_order_not_fully_filled")
-            require(not ledger.snapshot()["positions"], "round_trip_left_inventory")
+        child = subprocess.run([sys.executable, "-c", child_code, service.db.path,
+            REFERENCE, key, plan_id], capture_output=True, text=True, timeout=30, check=True)
+        replay = json.loads(child.stdout)
+        require(replay["fill"] == expected_fill and replay["status"] == "idempotent_replay"
+                and replay["execution_authorized"] is False, "restart_duplicated_or_reapproved_fill")
+        report["new_process_replay_verified"] = True
         recovered = ledger.recover()
         state = recovered["snapshot"]
         require(recovered["passed"] is True and not state["positions"] and not state["open_orders"],

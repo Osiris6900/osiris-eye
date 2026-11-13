@@ -25,15 +25,19 @@ def runner(monkeypatch):
     return module
 
 
-def test_full_probe_preserves_operator_state_and_retains_original_source_bytes(runner, tmp_path, monkeypatch):
+@pytest.mark.parametrize("repeated_sequence", [False, True])
+def test_full_probe_preserves_operator_state_and_retains_original_source_bytes(runner, tmp_path, monkeypatch, repeated_sequence):
     raw = json.dumps({"sequence": 1, "asks": [["101", "1", 1], ["102", "1", 1]],
                       "bids": [["99", "1", 1], ["98", "1", 1]]}).encode()
+    sequences = iter([1, 1, 2, 3, 4] if repeated_sequence else range(1, 5))
 
     class Opener:
         def open(self, request, timeout):
             assert request.get_method() == "GET"
             assert request.full_url.startswith("https://api.exchange.coinbase.com/products/")
-            return io.BytesIO(raw)
+            data = json.loads(raw)
+            data["sequence"] = next(sequences)
+            return io.BytesIO(json.dumps(data).encode())
 
     monkeypatch.setattr(runner, "build_opener", lambda *args: Opener())
     operator = tmp_path / "operator.sqlite3"
@@ -48,7 +52,7 @@ def test_full_probe_preserves_operator_state_and_retains_original_source_bytes(r
     assert result["snapshot"]["cash"] == "9999.99956"
     assert result["snapshot"]["realized_pnl"] == "-0.00044"
     assert result["snapshot"]["positions"] == []
-    assert len(result["captures"]) == 2
+    assert len(result["captures"]) == (5 if repeated_sequence else 4)
     assert (directory / "response-1.json").read_bytes() == raw
     assert result["captures"][0]["body_sha256"] == hashlib.sha256(raw).hexdigest()
     assert operator.read_bytes() == b"existing operator state"

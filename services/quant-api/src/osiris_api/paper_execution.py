@@ -141,6 +141,23 @@ def _as_float(number: Decimal) -> float:
     return value
 
 
+def _risk_exposures_as_floats(side, qty, price, position, gross):
+    position_float, gross_float = _as_float(position), _as_float(gross)
+    if side == "SELL":
+        # The independent float gate multiplies the float quantity and price.
+        # Give a proven covered exit a consistent representation: converting
+        # the exact held notional separately can be one ULP smaller. The
+        # Decimal veto and reserved-share checks still enforce actual coverage;
+        # no rejected risk decision is overridden.
+        exact_notional = qty * price
+        float_notional = _as_float(qty) * _as_float(price)
+        if exact_notional <= position:
+            position_float = max(position_float, float_notional)
+        if exact_notional <= gross:
+            gross_float = max(gross_float, float_notional)
+    return position_float, gross_float
+
+
 def _canon_json(payload: dict[str, Any]) -> str:
     return json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
@@ -913,10 +930,11 @@ def _fill_risk_reason(
             conn, account, order["symbol"], price, position, gross, quantity, now,
         )
     try:
+        position_float, gross_float = _risk_exposures_as_floats(order["side"], quantity, price, position, gross)
         approved, reason, _evaluated = check_execution(
             side=order["side"], quantity=_as_float(quantity), price=_as_float(price),
-            current_position_notional=_as_float(position),
-            current_gross_exposure=_as_float(gross),
+            current_position_notional=position_float,
+            current_gross_exposure=gross_float,
             daily_pnl=_as_float(Decimal(account["realized_pnl"])),
             limits=_limits_from_row(account),
             kill_switch_active=bool(account["kill_switch"]),
@@ -1128,10 +1146,11 @@ def _submit_new_order(
     else:
         position_notional, gross = filled_notional, filled_gross
     try:
+        position_float, gross_float = _risk_exposures_as_floats(side, qty, px, position_notional, gross)
         approved, reason, limits_evaluated = check_execution(
             side=side, quantity=_as_float(qty), price=_as_float(px),
-            current_position_notional=_as_float(position_notional),
-            current_gross_exposure=_as_float(gross),
+            current_position_notional=position_float,
+            current_gross_exposure=gross_float,
             daily_pnl=_as_float(Decimal(account["realized_pnl"])),
             limits=_limits_from_row(account),
             kill_switch_active=effective_kill, market_data_fresh=fresh,
