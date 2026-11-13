@@ -63,6 +63,7 @@ admin_authentication_required`; authenticated role without the permission →
 | `GET /admin/network/status` | read_health | `osiris.admin_network_status.v1` |
 | `GET /admin/feeds/status` | read_health | `osiris.admin_feeds_status.v1` |
 | `GET /admin/paper/status` | read_research | `osiris.admin_paper_status.v1` |
+| `GET /admin/paper` | read_research | `osiris.admin_paper_trading.v1` |
 | `GET /admin/risk/status` | read_research | `osiris.admin_risk_status.v1` |
 | `GET /admin/alerts` | read_health | `osiris.admin_alert_list.v1` |
 | `POST /admin/alerts/{id}/ack` | ack_alert | `osiris.admin_alert.v1` |
@@ -132,6 +133,14 @@ above can `ack`; acknowledgements record role and timestamp.
   order ids. A missing registry or an unreadable local node stays null and is
   not replaced with zeros. The panel does not acknowledge alerts, flip the
   kill switch, revoke feeds, or place orders.
+- `GET /admin/paper` is a read-only paper trading book for roles with
+  `read_research`. It shows open paper positions, open and recorded paper
+  orders, marked exposure, the configured paper risk limits, and the ingestion
+  and paper-execution kill switches. A legacy ledger reports orders and limits
+  as `not_stored`. Marked exposure is present only when every holding has a
+  fresh mark and the risk snapshot agrees. Reconciliation failure hides
+  positions, orders, marks, and limit amounts. The route does not place orders
+  or change a kill switch or a risk limit. `live_trading_authorized` stays false.
 - `GET /admin/operations` is a read-only per-node and paper-trading view.
   Enrolled rows report enrollment status and the last enrollment time; software
   version is `not_recorded` because the identity registry does not store it.

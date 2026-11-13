@@ -1981,6 +1981,100 @@ def daily_loss_gate() -> dict[str, Any]:
     }
 
 
+_RISK_LIMIT_FIELDS = (
+    "max_order_notional", "max_position_notional", "max_daily_loss", "max_gross_exposure",
+)
+
+
+def read_risk_limits() -> dict[str, Any]:
+    """Read-only paper risk limits. Does not create or write the ledger.
+
+    Amounts are returned only when reconciliation passed, the account is
+    paper-only, and the stored kill switch still matches that snapshot.
+    """
+    blank = {
+        "status": "unavailable",
+        "reason": "account_unavailable",
+        "limits": None,
+        "kill_switch_active": None,
+        "live_execution": False,
+        "broker_order_submitted": False,
+    }
+    path = os.getenv("OSIRIS_PAPER_EXECUTION_DB", "")
+    if not path or path == ":memory:":
+        blank["reason"] = "not_configured"
+        return blank
+    if not Path(path).is_file():
+        blank["reason"] = "not_initialized"
+        return blank
+    try:
+        current = execution_status(read_only=True)
+    except (ValueError, ArithmeticError, sqlite3.Error, OSError):
+        return blank
+    account = current.get("account") if isinstance(current, dict) else None
+    report = current.get("reconciliation") if isinstance(current, dict) else None
+    if not isinstance(account, dict) or not isinstance(report, dict):
+        return blank
+    if (
+        account.get("live_execution") is not False
+        or account.get("broker_order_submitted") is not False
+        or account.get("mode") != "paper_only"
+    ):
+        return blank
+    if account.get("initialized") is not True:
+        blank["reason"] = "not_initialized"
+        return blank
+    if report.get("passed") is not True:
+        blank["reason"] = "reconciliation_unavailable"
+        return blank
+    if type(account.get("kill_switch_active")) is not bool:
+        return blank
+    connection = None
+    try:
+        connection = sqlite3.connect(
+            Path(path).resolve().as_uri() + "?mode=ro", uri=True, timeout=15,
+        )
+        connection.row_factory = sqlite3.Row
+        row = connection.execute(
+            """SELECT kill_switch, max_order_notional, max_position_notional,
+                      max_daily_loss, max_gross_exposure
+               FROM paper_exec_meta WHERE id=1"""
+        ).fetchone()
+    except (sqlite3.Error, OSError):
+        return blank
+    finally:
+        if connection is not None:
+            connection.close()
+    if row is None:
+        blank["reason"] = "not_initialized"
+        return blank
+    kill = row["kill_switch"]
+    if kill not in (0, 1) or bool(kill) is not account["kill_switch_active"]:
+        return blank
+    limits: dict[str, str] = {}
+    try:
+        for name in _RISK_LIMIT_FIELDS:
+            value = Decimal(row[name])
+            if not value.is_finite():
+                return blank
+            if name == "max_daily_loss":
+                if value < 0:
+                    return blank
+            elif value <= 0:
+                return blank
+            limits[name] = _canonical(value)
+    except (InvalidOperation, TypeError, KeyError, ArithmeticError):
+        return blank
+    return {
+        "status": "available",
+        "reason": None,
+        "limits": limits,
+        "kill_switch_active": bool(kill),
+        "live_execution": False,
+        "broker_order_submitted": False,
+    }
+
+
 def account_valuation(
     account: dict[str, Any], *, now: datetime | None = None,
     max_age_seconds: float = 300, max_future_skew_seconds: float = 60,

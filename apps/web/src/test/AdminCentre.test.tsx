@@ -119,6 +119,44 @@ const OPERATIONS = {
     live_trading_authorized: false,
   },
 };
+const TRADING = {
+  schema: 'osiris.admin_paper_trading.v1',
+  generated_at: '2026-11-08T12:00:00+00:00',
+  read_only: true, status: 'available', source_ledger: 'canonical_execution', mode: 'paper_only',
+  live_trading_authorized: false, live_execution: false, broker_order_submitted: false,
+  positions: [{ symbol: 'BTC-USD', quantity: '1', average_cost: '100' }],
+  position_count: 1, positions_truncated: false, positions_reason: null,
+  open_orders: [{
+    client_order_id: 'open-buy', symbol: 'BTC-USD', side: 'BUY', state: 'accepted',
+    quantity: '1', price: '50', leaves_quantity: '1',
+  }],
+  open_order_count: 1, open_orders_truncated: false, open_orders_reason: null,
+  recent_orders: [{
+    client_order_id: 'filled-buy', symbol: 'BTC-USD', side: 'BUY', state: 'filled', quantity: '1',
+  }],
+  recent_order_count: 1, recent_orders_truncated: false, recent_orders_reason: null,
+  recent_orders_order: 'client_order_id',
+  marked_exposure: {
+    status: 'mark_to_market', market_value: '110', exposure: '110',
+    exposure_basis: 'mark_to_market', cost_basis_gross: '100', marks_available: true,
+  },
+  kill_switch: {
+    ingestion_enabled: false, paper_execution_halted: true,
+    paper_execution_state: 'halted', live_trading_authorized: false,
+  },
+  risk_limits: {
+    status: 'available', reason: null, live_execution: false,
+    limits: {
+      max_order_notional: '5000', max_position_notional: '8000',
+      max_daily_loss: '1000', max_gross_exposure: '20000',
+    },
+  },
+  risk_gate: 'enforced',
+  risk_flags: [{
+    kind: 'paper_execution_halted', severity: 'critical',
+    message: 'Paper execution kill switch is active',
+  }],
+};
 const ALERTS = {
   schema: 'osiris.admin_alert_list.v1',
   active: [{ schema: 'osiris.admin_alert.v1', alert_id: 'ingestion_disabled:global',
@@ -136,6 +174,7 @@ function allOk(overrides: Record<string, MockReply> = {}) {
     '/admin/network/status': reply(200, NETWORK),
     '/admin/feeds/status': reply(200, FEEDS),
     '/admin/paper/status': reply(200, PAPER),
+    '/admin/paper': reply(200, TRADING),
     '/admin/risk/status': reply(200, RISK),
     '/admin/alerts': reply(200, ALERTS),
     ...overrides,
@@ -165,7 +204,7 @@ test('successful connect loads every section with the bearer token', async () =>
   render(<AdminCentre />);
   connect();
   expect(await screen.findByText('operator')).toBeInTheDocument();
-  expect(calls).toHaveLength(8);
+  expect(calls).toHaveLength(9);
   for (const call of calls) {
     expect(call.url).toContain('/admin/');
     expect((call.init?.headers as Record<string, string>).Authorization)
@@ -188,6 +227,7 @@ test('authentication failure is surfaced without leaking state', async () => {
     '/admin/network/status': reply(401, { detail: 'admin_authentication_required' }),
     '/admin/feeds/status': reply(401, { detail: 'admin_authentication_required' }),
     '/admin/paper/status': reply(401, { detail: 'admin_authentication_required' }),
+    '/admin/paper': reply(401, { detail: 'admin_authentication_required' }),
     '/admin/risk/status': reply(401, { detail: 'admin_authentication_required' }),
     '/admin/alerts': reply(401, { detail: 'admin_authentication_required' }),
   });
@@ -330,6 +370,7 @@ test('blank token, loading, errors, empty states and disconnect stay honest', as
     if (url.includes('/admin/monitoring')) return MONITORING;
     if (url.includes('/admin/operations')) return OPERATIONS;
     if (url.includes('/admin/paper/status')) return { ...PAPER, cash };
+    if (url.includes('/admin/paper')) return TRADING;
     if (url.includes('/admin/alerts')) return {
       active: [], acknowledged: [], durable: false,
       storage: 'vtk-operator-7c1d55e0', active_count: 0, acknowledged_count: 0,
@@ -677,4 +718,92 @@ test('operations surfaces loading and errors without rendering secrets', async (
   expect(await screen.findByRole('alert')).toHaveTextContent('http_500');
   expect(screen.queryByText(/vtk-should-never-render-99/)).not.toBeInTheDocument();
   expect(screen.queryByText('BTC-USD')).not.toBeInTheDocument();
+});
+
+test('paper trading book shows positions, orders, marked exposure and risk limits', async () => {
+  const calls = stubFetch(allOk());
+  render(<AdminCentre />);
+  connect();
+  await screen.findByText('operator');
+  fireEvent.click(screen.getByRole('button', { name: 'trading' }));
+  expect(await screen.findByText(/Paper only. This view does not place orders/)).toBeInTheDocument();
+  expect(screen.getByText('BTC-USD: 1 units · average cost 100')).toBeInTheDocument();
+  expect(screen.getByText('BUY BTC-USD 1 @ 50 · accepted · leaves 1')).toBeInTheDocument();
+  expect(screen.getByText('BUY BTC-USD 1 · filled')).toBeInTheDocument();
+  expect(screen.getByText(/ordered by client order id, not by time/)).toBeInTheDocument();
+  expect(screen.getByText('Marked exposure').parentElement).toHaveTextContent('110');
+  expect(screen.getByText('Max order notional').parentElement).toHaveTextContent('5000');
+  expect(screen.getByText('Max gross exposure').parentElement).toHaveTextContent('20000');
+  expect(screen.getByText('Paper execution halt').parentElement).toHaveTextContent('Halted');
+  expect(screen.getByText('Paper execution kill switch is active')).toBeInTheDocument();
+  expect(screen.getByText('Live trading authorized').parentElement).toHaveTextContent('false');
+  expect(screen.queryByRole('button', { name: 'Ack' })).not.toBeInTheDocument();
+  expect(calls.filter(call => call.url.includes('/admin/paper') && !call.url.includes('/admin/paper/status')).every(
+    call => call.init?.method === undefined
+      && (call.init?.headers as Record<string, string>).Authorization === 'Bearer vtk-operator-7c1d55e0',
+  )).toBe(true);
+});
+
+test('paper trading book denies an unauthorized section without showing the book', async () => {
+  stubFetch(allOk({
+    '/admin/paper': reply(403, { detail: 'admin_permission_denied', cash: '999999', symbol: 'BTC-USD' }),
+  }));
+  render(<AdminCentre />);
+  connect();
+  await screen.findByText('operator');
+  fireEvent.click(screen.getByRole('button', { name: 'trading' }));
+  expect(await screen.findByRole('note')).toHaveTextContent('Access denied for this role.');
+  expect(screen.queryByText('999999')).not.toBeInTheDocument();
+  expect(screen.queryByText('BTC-USD: 1 units · average cost 100')).not.toBeInTheDocument();
+  expect(screen.queryByText('Max order notional')).not.toBeInTheDocument();
+});
+
+test('paper trading book hides orders and marks when reconciliation failed', async () => {
+  stubFetch(allOk({
+    '/admin/paper': reply(200, {
+      ...TRADING,
+      status: 'reconciliation_unavailable',
+      positions: [{ symbol: 'BTC-USD', quantity: '9', average_cost: '999999' }],
+      open_orders: [{ client_order_id: 'secret-order', symbol: 'BTC-USD', side: 'BUY', state: 'accepted', quantity: '1', price: '10' }],
+      recent_orders: null,
+      marked_exposure: {
+        status: 'unavailable', market_value: '999999', exposure: '999999',
+        exposure_basis: 'unavailable', cost_basis_gross: null, marks_available: false,
+      },
+      risk_limits: { status: 'reconciliation_unavailable', reason: 'reconciliation_unavailable', limits: { max_order_notional: '999999' }, live_execution: false },
+    }),
+  }));
+  render(<AdminCentre />);
+  connect();
+  await screen.findByText('operator');
+  fireEvent.click(screen.getByRole('button', { name: 'trading' }));
+  expect(await screen.findByRole('note')).toHaveTextContent('reconciliation unavailable or failed');
+  expect(screen.queryByText('999999')).not.toBeInTheDocument();
+  expect(screen.queryByText(/secret-order/)).not.toBeInTheDocument();
+  expect(screen.queryByText('BTC-USD: 9 units · average cost 999999')).not.toBeInTheDocument();
+  expect(screen.getByText(/Risk limits are unavailable until reconciliation passes/)).toBeInTheDocument();
+});
+
+test('paper trading book surfaces loading and errors without rendering secrets', async () => {
+  const pending: Array<{ url: string; resolve: (value: unknown) => void }> = [];
+  vi.stubGlobal('fetch', (input: unknown) => new Promise(resolve => {
+    pending.push({ url: String(input), resolve });
+  }));
+  render(<AdminCentre />);
+  connect();
+  expect(await screen.findByText('Loading…')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'trading' }));
+  expect(screen.getByText('Loading…')).toBeInTheDocument();
+  expect(screen.queryByText('110')).not.toBeInTheDocument();
+  pending.splice(0).forEach(item => item.resolve({
+    status: item.url.includes('/admin/paper') && !item.url.includes('/admin/paper/status') ? 500 : 200,
+    ok: !(item.url.includes('/admin/paper') && !item.url.includes('/admin/paper/status')),
+    json: async () => item.url.includes('/admin/paper') && !item.url.includes('/admin/paper/status')
+      ? { detail: 'vtk-should-never-render-99', token: 'vtk-should-never-render-99' }
+      : item.url.includes('/admin/overview') ? OVERVIEW : TRADING,
+  }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('http_500');
+  expect(screen.queryByText(/vtk-should-never-render-99/)).not.toBeInTheDocument();
+  expect(screen.queryByText('110')).not.toBeInTheDocument();
+  expect(screen.queryByText('BTC-USD: 1 units · average cost 100')).not.toBeInTheDocument();
 });

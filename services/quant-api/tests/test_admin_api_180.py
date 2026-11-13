@@ -72,7 +72,7 @@ def test_missing_and_wrong_tokens_return_401(client):
 
 READ_HEALTH = ["/admin/overview", "/admin/network/status", "/admin/feeds/status",
                "/admin/alerts", "/admin/audit", "/admin/monitoring", "/admin/operations"]
-READ_RESEARCH = ["/admin/paper/status", "/admin/risk/status"]
+READ_RESEARCH = ["/admin/paper/status", "/admin/paper", "/admin/risk/status"]
 CONTROLS = [
     ("post", "/admin/alerts/ingestion_disabled:global/ack", {}),
     ("post", "/admin/network/kill-switch", {"enabled": True}),
@@ -733,3 +733,135 @@ def test_operations_reports_node_version_and_paper_loss_gate(client, monkeypatch
     database = sqlite3.connect(path)
     assert database.execute("SELECT COUNT(*) FROM p2p_nodes").fetchone()[0] == 1
     database.close()
+
+
+def test_paper_trading_route_rejects_unauthorized_callers_and_creates_nothing(client, monkeypatch, tmp_path):
+    missing = tmp_path / "absent" / "execution.sqlite3"
+    monkeypatch.setenv("OSIRIS_PAPER_EXECUTION_DB", str(missing))
+    anonymous = client.get("/admin/paper")
+    viewer = client.get("/admin/paper", headers=_headers("viewer"))
+    analyst = client.get("/admin/paper", headers=_headers("analyst"))
+    assert anonymous.status_code == 401
+    assert anonymous.json()["detail"] == "admin_authentication_required"
+    assert viewer.status_code == 403
+    assert viewer.json()["detail"] == "admin_permission_denied"
+    assert analyst.status_code == 200
+    body = analyst.json()
+    assert body["schema"] == "osiris.admin_paper_trading.v1"
+    assert body["read_only"] is True
+    assert body["status"] == "reconciliation_unavailable"
+    assert body["positions"] is None
+    assert body["open_orders"] is None
+    assert body["recent_orders"] is None
+    assert body["risk_limits"]["limits"] is None
+    assert body["marked_exposure"]["market_value"] is None
+    assert body["live_trading_authorized"] is False
+    assert body["live_execution"] is False
+    assert "BTC-USD" not in analyst.text
+    for secret in TOKENS.values():
+        assert secret not in anonymous.text
+        assert secret not in viewer.text
+        assert secret not in analyst.text
+    assert client.post("/admin/paper", headers=_headers("analyst")).status_code == 405
+    assert not missing.exists() and not missing.parent.exists()
+
+
+def test_paper_trading_route_reports_legacy_positions_without_stored_orders(client):
+    from osiris_api import durable_paper_ledger
+
+    durable_paper_ledger.initialize_account("10000")
+    durable_paper_ledger.synthetic_fill(
+        "fill-key-do-not-leak", "SYNTH-PERP", "BUY", "2", "100", fee="0"
+    )
+    denied = client.get("/admin/paper", headers=_headers("viewer"))
+    allowed = client.get("/admin/paper", headers=_headers("analyst"))
+    assert denied.status_code == 403
+    assert "9800" not in denied.text
+    assert "SYNTH-PERP" not in denied.text
+    assert allowed.status_code == 200
+    body = allowed.json()
+    assert body["status"] == "available"
+    assert body["source_ledger"] == "legacy_synthetic"
+    assert body["mode"] == "synthetic-paper-only"
+    assert body["positions"] == [{"symbol": "SYNTH-PERP", "quantity": "2", "average_cost": "100"}]
+    assert body["open_orders_reason"] == "not_stored"
+    assert body["recent_orders_reason"] == "not_stored"
+    assert body["marked_exposure"]["status"] == "unavailable_without_marks"
+    assert body["marked_exposure"]["cost_basis_gross"] == "200"
+    assert body["risk_limits"]["status"] == "not_stored"
+    assert body["kill_switch"]["paper_execution_state"] == "not_stored"
+    assert body["live_trading_authorized"] is False
+    assert "fill-key-do-not-leak" not in allowed.text
+
+
+def test_paper_trading_route_reports_orders_marks_limits_and_does_not_write(client, monkeypatch, tmp_path):
+    from datetime import datetime, timezone
+    from decimal import Decimal
+
+    from osiris_api.paper_execution import (
+        initialize_paper_account, mark_to_market, set_kill_switch, submit_paper_order,
+    )
+    from osiris_api.risk import RiskLimits
+
+    path = tmp_path / "paper-exec.sqlite3"
+    monkeypatch.setenv("OSIRIS_PAPER_EXECUTION_DB", str(path))
+    initialize_paper_account("1000", RiskLimits(
+        max_order_notional=5000, max_position_notional=8000,
+        max_daily_loss=1000, max_gross_exposure=20000,
+    ))
+    stamp = datetime.now(timezone.utc).isoformat()
+    submit_paper_order(
+        client_order_id="filled-buy", symbol="BTC-USD", side="BUY", quantity="1",
+        price="100", fee="0", observed_at=stamp, now=stamp,
+    )
+    submit_paper_order(
+        client_order_id="open-buy", symbol="BTC-USD", side="BUY", quantity="1",
+        price="50", fee="0", observed_at=stamp, now=stamp, working=True,
+    )
+    mark_to_market({"BTC-USD": "110"}, observed_at=stamp, now=stamp)
+    set_kill_switch(True)
+    before = path.read_bytes()
+    anonymous = client.get("/admin/paper")
+    viewer = client.get("/admin/paper", headers=_headers("viewer"))
+    analyst = client.get("/admin/paper", headers=_headers("analyst"))
+    assert client.post("/admin/paper", headers=_headers("analyst")).status_code == 405
+    assert path.read_bytes() == before
+    assert anonymous.status_code == 401
+    assert viewer.status_code == 403
+    assert "BTC-USD" not in viewer.text
+    assert "5000" not in viewer.text
+    assert "110" not in viewer.text
+    assert analyst.status_code == 200
+    body = analyst.json()
+    assert body["status"] == "available"
+    assert body["read_only"] is True
+    assert body["live_trading_authorized"] is False
+    assert body["live_execution"] is False
+    assert body["broker_order_submitted"] is False
+    assert body["positions"] == [{"symbol": "BTC-USD", "quantity": "1", "average_cost": "100"}]
+    assert body["open_order_count"] == 1
+    assert body["open_orders"][0]["client_order_id"] == "open-buy"
+    assert body["open_orders"][0]["state"] == "accepted"
+    assert body["open_orders"][0]["price"] == "50"
+    assert {row["state"] for row in body["recent_orders"]} == {"filled", "accepted"}
+    assert body["recent_orders_order"] == "client_order_id"
+    assert body["marked_exposure"]["status"] == "mark_to_market"
+    assert body["marked_exposure"]["market_value"] == "110"
+    assert body["marked_exposure"]["exposure"] == "110"
+    assert Decimal(body["marked_exposure"]["cost_basis_gross"]) == 100
+    assert body["kill_switch"]["paper_execution_state"] == "halted"
+    assert body["kill_switch"]["paper_execution_halted"] is True
+    assert body["kill_switch"]["ingestion_enabled"] is False
+    assert body["risk_limits"]["status"] == "available"
+    assert body["risk_limits"]["limits"] == {
+        "max_order_notional": "5000",
+        "max_position_notional": "8000",
+        "max_daily_loss": "1000",
+        "max_gross_exposure": "20000",
+    }
+    assert body["risk_limits"]["live_execution"] is False
+    assert body["risk_gate"] == "enforced"
+    assert any(flag["kind"] == "paper_execution_halted" for flag in body["risk_flags"])
+    for secret in TOKENS.values():
+        assert secret not in analyst.text
+    assert "risk_decision_id" not in analyst.text
