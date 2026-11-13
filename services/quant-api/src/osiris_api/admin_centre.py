@@ -299,6 +299,7 @@ FEEDS_SCHEMA = "osiris.admin_feeds_status.v1"
 PAPER_SCHEMA = "osiris.admin_paper_status.v1"
 RISK_SCHEMA = "osiris.admin_risk_status.v1"
 OVERVIEW_SCHEMA = "osiris.admin_overview.v1"
+MONITORING_SCHEMA = "osiris.admin_monitoring.v1"
 
 QUALITY_REVIEW_MAX_AGE_SECONDS = 30 * 24 * 60 * 60.0  # mirrors feed_admission
 OUTBOX_BACKLOG_ALERT_THRESHOLD = 100
@@ -316,6 +317,24 @@ _PEER_REASONS = frozenset({
     "registry_schema_absent",
     "registry_unreadable",
 })
+_NODE_REASONS = frozenset({
+    "not_configured",
+    "invalid_port",
+    "health_http_error",
+    "health_payload_too_large",
+    "health_unreachable_or_invalid",
+})
+_NODE_COUNTS = (
+    "uptime_seconds", "connected_peers", "bootstrap_peers_connected",
+    "bootstrap_peers_total", "relays_total", "relay_reservations",
+)
+_NODE_FLAGS = ("ready", "relay_configured", "relay_reservation_active")
+_PAPER_SOURCES = frozenset({"legacy_synthetic", "canonical_execution"})
+_PAPER_MODES = frozenset({"synthetic-paper-only", "paper_only"})
+_OPEN_ORDER_REASONS = frozenset({"not_stored", "account_unavailable"})
+_DECIMAL_TEXT = re.compile(r"^-?\d+(\.\d+)?$")
+_SYMBOL_TEXT = re.compile(r"^[A-Z0-9][A-Z0-9._-]{0,31}$")
+_MAX_NODE_COUNT = 1_000_000
 _UNIX_MIN = 946684800.0  # 2000-01-01 UTC
 _UNIX_MAX = 4102444800.0  # 2100-01-01 UTC
 _REQUIRED_NODE_COLUMNS = frozenset({
@@ -695,6 +714,214 @@ def paper_status(*, now: datetime | None = None) -> dict[str, Any]:
             initialized and ledger.get("pnl") and ledger["pnl"].get("unrealized") is not None
         ),
         "live_trading_authorized": False,
+    }
+
+
+def _peer_health_summary(raw: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Counts only. Node ids stay on the network snapshot, not this panel."""
+    view = _peer_health_view(raw)
+    return {
+        "status": view["status"],
+        "reason": view["reason"],
+        "observation": view["observation"],
+        "liveness": view["liveness"],
+        "peer_count": view["peer_count"],
+        "trusted_count": view["trusted_count"],
+        "public_untrusted_count": view["public_untrusted_count"],
+        "unclassified_count": view["unclassified_count"],
+        "omitted_count": view["omitted_count"],
+        "nodes_truncated": view["nodes_truncated"] is True and view["status"] == "enrolled_registry",
+    }
+
+
+def _node_status(local: Mapping[str, Any] | None, *, ingestion_enabled: bool) -> dict[str, Any]:
+    """One local loopback probe. Unknown fields, including PeerId, are dropped."""
+    unavailable = {
+        "status": "unavailable",
+        "reason": "not_configured",
+        "source": "loopback_local_node",
+        **{name: None for name in _NODE_FLAGS},
+        **{name: None for name in _NODE_COUNTS},
+        "scope": "one_local_node_not_network_total",
+        "authenticated_or_attested": False,
+        "ingestion_enabled": ingestion_enabled is True,
+    }
+    if not isinstance(local, Mapping) or local.get("status") != "observed":
+        reason = local.get("reason") if isinstance(local, Mapping) else "not_configured"
+        unavailable["reason"] = reason if reason in _NODE_REASONS else "health_unreachable_or_invalid"
+        return unavailable
+    numbers = {name: local.get(name) for name in _NODE_COUNTS}
+    flags = {name: local.get(name) for name in _NODE_FLAGS}
+    if any(type(value) is not int or not 0 <= value <= _MAX_NODE_COUNT for value in numbers.values()):
+        unavailable["reason"] = "health_unreachable_or_invalid"
+        return unavailable
+    if any(type(value) is not bool for value in flags.values()):
+        unavailable["reason"] = "health_unreachable_or_invalid"
+        return unavailable
+    if (
+        numbers["bootstrap_peers_connected"] > numbers["bootstrap_peers_total"]
+        or numbers["relay_reservations"] > numbers["relays_total"]
+        or numbers["bootstrap_peers_connected"] > numbers["connected_peers"]
+    ):
+        unavailable["reason"] = "health_unreachable_or_invalid"
+        return unavailable
+    return {
+        "status": "observed",
+        "reason": None,
+        "source": "loopback_local_node",
+        **flags,
+        **numbers,
+        "scope": "one_local_node_not_network_total",
+        "authenticated_or_attested": False,
+        "ingestion_enabled": ingestion_enabled is True,
+    }
+
+
+def _blank_paper(status: str, **overrides: Any) -> dict[str, Any]:
+    payload = {
+        "status": status,
+        "source_ledger": None,
+        "mode": None,
+        "initialized": None,
+        "cash": None,
+        "position_count": None,
+        "fill_count": None,
+        "open_order_count": None,
+        "open_orders_reason": None,
+        "realized_pnl": None,
+        "unrealized_pnl": None,
+        "equity": None,
+        "kill_switch_active": None,
+        "reconciliation_passed": None,
+        "live_trading_authorized": False,
+    }
+    payload.update(overrides)
+    payload["live_trading_authorized"] = False
+    return payload
+
+
+def _decimal_text(value: Any) -> str | None:
+    if isinstance(value, str) and len(value) <= 40 and _DECIMAL_TEXT.fullmatch(value):
+        return value
+    return None
+
+
+def _optional_decimal(value: Any) -> tuple[str | None, bool]:
+    if value is None:
+        return None, True
+    text = _decimal_text(value)
+    return (text, True) if text is not None else (None, False)
+
+
+def _position_count(positions: Any) -> int | None:
+    if not isinstance(positions, list):
+        return None
+    for row in positions:
+        if not isinstance(row, Mapping):
+            return None
+        symbol = row.get("symbol")
+        if not isinstance(symbol, str) or _SYMBOL_TEXT.fullmatch(symbol) is None:
+            return None
+    return len(positions)
+
+
+def _paper_operational_view(paper: Mapping[str, Any] | None, *, allowed: bool) -> dict[str, Any]:
+    """Read-only paper summary. Denied callers receive no balances or symbols."""
+    if not allowed:
+        return _blank_paper("permission_denied")
+    if not isinstance(paper, Mapping):
+        return _blank_paper("unavailable")
+    source = paper.get("source_ledger")
+    if source not in _PAPER_SOURCES:
+        return _blank_paper("unavailable")
+    mode_raw = paper.get("mode")
+    mode = mode_raw if mode_raw in _PAPER_MODES else None
+    halt = paper.get("kill_switch_active")
+    kill_switch = halt if type(halt) is bool else None
+    if source == "canonical_execution":
+        report = paper.get("reconciliation")
+        if not isinstance(report, Mapping) or report.get("passed") is not True:
+            return _blank_paper(
+                "reconciliation_unavailable",
+                source_ledger=source,
+                mode=mode,
+                initialized=paper.get("initialized") is True,
+                kill_switch_active=kill_switch,
+                reconciliation_passed=False,
+            )
+    if paper.get("initialized") is not True:
+        return _blank_paper(
+            "not_initialized",
+            source_ledger=source,
+            mode=mode,
+            initialized=False,
+            kill_switch_active=kill_switch,
+            reconciliation_passed=True if source == "canonical_execution" else None,
+        )
+    cash = _decimal_text(paper.get("cash"))
+    pnl = paper.get("pnl") if isinstance(paper.get("pnl"), Mapping) else {}
+    realized, realized_ok = _optional_decimal(pnl.get("realized"))
+    unrealized, unrealized_ok = _optional_decimal(pnl.get("unrealized"))
+    equity, equity_ok = _optional_decimal(pnl.get("equity"))
+    fill_count = paper.get("fill_count")
+    fill_ok = type(fill_count) is int and fill_count >= 0
+    if cash is None or not realized_ok or not unrealized_ok or not equity_ok or not fill_ok:
+        return _blank_paper("unavailable")
+    open_orders = paper.get("open_orders")
+    if isinstance(open_orders, list) and all(isinstance(row, Mapping) for row in open_orders):
+        open_order_count: int | None = len(open_orders)
+        open_orders_reason = None
+    elif open_orders is None:
+        open_order_count = None
+        reason = paper.get("open_orders_reason")
+        open_orders_reason = reason if reason in _OPEN_ORDER_REASONS else "unavailable"
+    else:
+        open_order_count = None
+        open_orders_reason = "unavailable"
+    return _blank_paper(
+        "available",
+        source_ledger=source,
+        mode=mode,
+        initialized=True,
+        cash=cash,
+        position_count=_position_count(paper.get("positions")),
+        fill_count=fill_count,
+        open_order_count=open_order_count,
+        open_orders_reason=open_orders_reason,
+        realized_pnl=realized,
+        unrealized_pnl=unrealized,
+        equity=equity,
+        kill_switch_active=kill_switch,
+        reconciliation_passed=True if source == "canonical_execution" else None,
+    )
+
+
+def monitoring_status(
+    network: Mapping[str, Any],
+    paper: Mapping[str, Any] | None,
+    *,
+    paper_allowed: bool,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Read-only peer, local-node and paper operational snapshot.
+
+    ``paper`` is ignored unless ``paper_allowed`` is true, so a health-only
+    caller cannot receive balances through this projection.
+    """
+    generated = network.get("generated_at") if isinstance(network, Mapping) else None
+    if not isinstance(generated, str) or _ISO_UTC_RE.fullmatch(generated) is None:
+        generated = _utcnow(now).isoformat()
+    peer = network.get("peer_health") if isinstance(network, Mapping) else None
+    local = network.get("local_live_node") if isinstance(network, Mapping) else None
+    ingestion = isinstance(network, Mapping) and network.get("ingestion_enabled") is True
+    return {
+        "schema": MONITORING_SCHEMA,
+        "generated_at": generated,
+        "read_only": True,
+        "live_trading_authorized": False,
+        "peer_health": _peer_health_summary(peer if isinstance(peer, Mapping) else None),
+        "node_status": _node_status(local if isinstance(local, Mapping) else None, ingestion_enabled=ingestion),
+        "paper": _paper_operational_view(paper if paper_allowed else None, allowed=paper_allowed),
     }
 
 

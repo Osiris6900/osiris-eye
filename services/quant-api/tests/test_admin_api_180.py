@@ -71,7 +71,7 @@ def test_missing_and_wrong_tokens_return_401(client):
 
 
 READ_HEALTH = ["/admin/overview", "/admin/network/status", "/admin/feeds/status",
-               "/admin/alerts", "/admin/audit"]
+               "/admin/alerts", "/admin/audit", "/admin/monitoring"]
 READ_RESEARCH = ["/admin/paper/status", "/admin/risk/status"]
 CONTROLS = [
     ("post", "/admin/alerts/ingestion_disabled:global/ack", {}),
@@ -551,3 +551,71 @@ def test_local_node_probe_unavailable_fails_closed_without_fabricating_peers(cli
     }
     assert body["peer_health"]["peer_count"] is None
     assert "private-host-detail" not in response.text
+
+
+def test_monitoring_splits_paper_balances_from_node_health(client, monkeypatch):
+    from osiris_api import durable_paper_ledger, p2p_local_health
+
+    durable_paper_ledger.initialize_account("10000")
+    durable_paper_ledger.synthetic_fill(
+        "fill-key-do-not-leak", "SYNTH-PERP", "BUY", "2", "100", fee="0"
+    )
+    monkeypatch.setenv("OSIRIS_P2P_LOCAL_HEALTH_PORT", "9090")
+    sample = {
+        "status": "alive", "peer_id": "sensitive-node-identity", "ready": True,
+        "uptime_seconds": 12, "connected_peers": 4,
+        "bootstrap_peers_connected": 1, "bootstrap_peers_total": 2,
+        "relay_configured": False, "relay_reservation_active": False,
+        "relays_total": 0, "relay_reservations": 0,
+        "private_key": "never-appear",
+    }
+    anonymous = client.get("/admin/monitoring")
+    assert anonymous.status_code == 401
+    with patch.object(p2p_local_health, "HTTPConnection") as connection:
+        http = connection.return_value
+        http.getresponse.return_value.status = 200
+        http.getresponse.return_value.read.return_value = json.dumps(sample).encode()
+        viewer = client.get("/admin/monitoring", headers=_headers("viewer"))
+        analyst = client.get("/admin/monitoring", headers=_headers("analyst"))
+    assert viewer.status_code == 200
+    body = viewer.json()
+    assert body["schema"] == "osiris.admin_monitoring.v1"
+    assert set(body) == {
+        "schema", "generated_at", "read_only", "live_trading_authorized",
+        "peer_health", "node_status", "paper",
+    }
+    assert body["read_only"] is True
+    assert body["live_trading_authorized"] is False
+    assert body["peer_health"]["status"] == "unavailable"
+    assert body["peer_health"]["peer_count"] is None
+    assert body["node_status"]["status"] == "observed"
+    assert body["node_status"]["connected_peers"] == 4
+    assert body["node_status"]["authenticated_or_attested"] is False
+    assert body["node_status"]["ingestion_enabled"] is False
+    assert body["paper"]["status"] == "permission_denied"
+    assert body["paper"]["cash"] is None
+    assert body["paper"]["position_count"] is None
+    assert "9800" not in viewer.text
+    assert "SYNTH-PERP" not in viewer.text
+    assert "fill-key-do-not-leak" not in viewer.text
+    assert "sensitive-node-identity" not in viewer.text
+    assert "never-appear" not in viewer.text
+    paper = analyst.json()["paper"]
+    assert paper["status"] == "available"
+    assert paper["cash"] == "9800"
+    assert paper["mode"] == "synthetic-paper-only"
+    assert paper["source_ledger"] == "legacy_synthetic"
+    assert paper["fill_count"] == 1
+    assert paper["position_count"] == 1
+    assert paper["open_order_count"] is None
+    assert paper["open_orders_reason"] == "not_stored"
+    assert paper["realized_pnl"] == "0"
+    assert paper["unrealized_pnl"] is None
+    assert paper["live_trading_authorized"] is False
+    assert "fill-key-do-not-leak" not in analyst.text
+    assert "sensitive-node-identity" not in analyst.text
+    assert client.post("/admin/monitoring", headers=_headers("analyst")).status_code == 405
+    entries = client.get("/admin/audit", headers=_headers("viewer")).json()["entries"]
+    triples = {(entry["role"], entry["action"], entry["decision"], entry["detail"]) for entry in entries}
+    assert ("viewer", "read_research", "deny", "monitoring_paper") in triples
+    assert ("analyst", "read_research", "allow", "monitoring_paper") in triples
