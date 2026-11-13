@@ -1858,6 +1858,82 @@ def execution_status(*, read_only: bool = False) -> dict[str, Any]:
             conn.close()
 
 
+def daily_loss_gate() -> dict[str, Any]:
+    """Read-only paper daily-loss gate. Does not create or write the ledger.
+
+    Amounts are returned only when reconciliation passed and the same realized
+    P&L is still on the account row. The comparison matches the execution
+    check: realized P&L at or below the negative limit is ``limit_reached``.
+    """
+    blank = {
+        "basis": "realized_pnl",
+        "state": "unavailable",
+        "reason": "account_unavailable",
+        "realized_pnl": None,
+        "limit": None,
+        "live_execution": False,
+    }
+    path = os.getenv("OSIRIS_PAPER_EXECUTION_DB", "")
+    if not path or path == ":memory:":
+        blank["reason"] = "not_configured"
+        return blank
+    if not Path(path).is_file():
+        blank["reason"] = "not_initialized"
+        return blank
+    try:
+        current = execution_status(read_only=True)
+    except (ValueError, ArithmeticError, sqlite3.Error, OSError):
+        return blank
+    account = current.get("account") if isinstance(current, dict) else None
+    report = current.get("reconciliation") if isinstance(current, dict) else None
+    if not isinstance(account, dict) or not isinstance(report, dict):
+        return blank
+    if account.get("live_execution") is not False or account.get("broker_order_submitted") is not False:
+        return blank
+    if account.get("initialized") is not True:
+        blank["reason"] = "not_initialized"
+        return blank
+    if report.get("passed") is not True:
+        blank["reason"] = "reconciliation_unavailable"
+        return blank
+    connection = None
+    try:
+        connection = sqlite3.connect(
+            Path(path).resolve().as_uri() + "?mode=ro", uri=True, timeout=15,
+        )
+        connection.row_factory = sqlite3.Row
+        row = connection.execute(
+            "SELECT realized_pnl, max_daily_loss FROM paper_exec_meta WHERE id=1"
+        ).fetchone()
+    except (sqlite3.Error, OSError):
+        return blank
+    finally:
+        if connection is not None:
+            connection.close()
+    if row is None:
+        blank["reason"] = "not_initialized"
+        return blank
+    try:
+        realized = Decimal(row["realized_pnl"])
+        limit = Decimal(row["max_daily_loss"])
+        recorded = Decimal(str(account["realized_pnl"]))
+    except (InvalidOperation, TypeError, KeyError, ArithmeticError):
+        return blank
+    if (
+        not realized.is_finite() or not limit.is_finite() or not recorded.is_finite()
+        or realized != recorded or limit < 0
+    ):
+        return blank
+    return {
+        "basis": "realized_pnl",
+        "state": "limit_reached" if realized <= -limit else "clear",
+        "reason": None,
+        "realized_pnl": _canonical(realized),
+        "limit": _canonical(limit),
+        "live_execution": False,
+    }
+
+
 def account_valuation(
     account: dict[str, Any], *, now: datetime | None = None,
     max_age_seconds: float = 300, max_future_skew_seconds: float = 60,
