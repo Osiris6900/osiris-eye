@@ -40,27 +40,15 @@ def market_replay(events: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def portfolio_optimizer(volatilities: list[float], max_weight: float = 1.0) -> dict[str, Any]:
-    if not volatilities or not 0 < max_weight <= 1:
+    from .portfolio_construction import MAX_ASSETS, capped_inverse_volatility_weights, finite_number
+
+    max_weight = finite_number(max_weight, "max_weight")
+    if not isinstance(volatilities, list) or not 1 <= len(volatilities) <= MAX_ASSETS or not 0 < max_weight <= 1:
         raise ValueError("volatilities required and max_weight must be in (0, 1]")
-    vols = [_finite(v, "volatility") for v in volatilities]
-    if any(v <= 0 for v in vols) or len(vols) * max_weight < 1 - 1e-12:
+    if len(volatilities) * max_weight < 1 - 1e-12:
         raise ValueError("volatilities must be positive and cap must permit full investment")
-    raw = [1 / v for v in vols]
-    weights = [0.0] * len(raw)
-    remaining = set(range(len(raw)))
-    budget = 1.0
-    while remaining:
-        denom = sum(raw[i] for i in remaining)
-        capped = [i for i in remaining if budget * raw[i] / denom > max_weight]
-        if not capped:
-            for i in remaining:
-                weights[i] = budget * raw[i] / denom
-            break
-        for i in capped:
-            weights[i] = max_weight
-            budget -= max_weight
-            remaining.remove(i)
-    return {"weights": weights, "weight_sum": sum(weights),
+    weights = capped_inverse_volatility_weights(volatilities, [max_weight] * len(volatilities))
+    return {"weights": weights, "weight_sum": math.fsum(weights),
             "method": "capped_inverse_volatility_baseline",
             "optimality_claim": False}
 

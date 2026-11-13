@@ -15,6 +15,14 @@ from typing import Any, Mapping
 PORT_ENV = "OSIRIS_P2P_LOCAL_HEALTH_PORT"
 MAX_BODY_BYTES = 4096
 MAX_COUNT = 1_000_000
+_VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.+-]{0,40}$")
+
+
+def software_version(value: Any) -> str | None:
+    """Accept a short software version. Drop everything else, including PeerId."""
+    if isinstance(value, str) and _VERSION_RE.fullmatch(value):
+        return value
+    return None
 
 
 def _unavailable(reason: str) -> dict[str, Any]:
@@ -75,6 +83,8 @@ def read_local_node_health(environ: Mapping[str, str] | None = None) -> dict[str
     ):
         return _unavailable("health_unreachable_or_invalid")
     # PeerId and every unrecognized field are deliberately omitted.
+    # Version is optional: a missing or unsafe value stays null and does not
+    # fail the rest of the probe.
     return {
         "status": "observed",
         "source": "loopback_local_node",
@@ -82,6 +92,7 @@ def read_local_node_health(environ: Mapping[str, str] | None = None) -> dict[str
         "relay_configured": relay_configured,
         "relay_reservation_active": relay_reservation_active,
         **numbers,
+        "version": software_version(value.get("version")),
         "scope": "one_local_node_not_network_total",
         "authenticated_or_attested": False,
     }

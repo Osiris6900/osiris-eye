@@ -71,7 +71,7 @@ def test_missing_and_wrong_tokens_return_401(client):
 
 
 READ_HEALTH = ["/admin/overview", "/admin/network/status", "/admin/feeds/status",
-               "/admin/alerts", "/admin/audit"]
+               "/admin/alerts", "/admin/audit", "/admin/monitoring", "/admin/operations"]
 READ_RESEARCH = ["/admin/paper/status", "/admin/risk/status"]
 CONTROLS = [
     ("post", "/admin/alerts/ingestion_disabled:global/ack", {}),
@@ -551,3 +551,185 @@ def test_local_node_probe_unavailable_fails_closed_without_fabricating_peers(cli
     }
     assert body["peer_health"]["peer_count"] is None
     assert "private-host-detail" not in response.text
+
+
+def test_monitoring_splits_paper_balances_from_node_health(client, monkeypatch):
+    from osiris_api import durable_paper_ledger, p2p_local_health
+
+    durable_paper_ledger.initialize_account("10000")
+    durable_paper_ledger.synthetic_fill(
+        "fill-key-do-not-leak", "SYNTH-PERP", "BUY", "2", "100", fee="0"
+    )
+    monkeypatch.setenv("OSIRIS_P2P_LOCAL_HEALTH_PORT", "9090")
+    sample = {
+        "status": "alive", "peer_id": "sensitive-node-identity", "ready": True,
+        "uptime_seconds": 12, "connected_peers": 4,
+        "bootstrap_peers_connected": 1, "bootstrap_peers_total": 2,
+        "relay_configured": False, "relay_reservation_active": False,
+        "relays_total": 0, "relay_reservations": 0,
+        "private_key": "never-appear",
+    }
+    anonymous = client.get("/admin/monitoring")
+    assert anonymous.status_code == 401
+    with patch.object(p2p_local_health, "HTTPConnection") as connection:
+        http = connection.return_value
+        http.getresponse.return_value.status = 200
+        http.getresponse.return_value.read.return_value = json.dumps(sample).encode()
+        viewer = client.get("/admin/monitoring", headers=_headers("viewer"))
+        analyst = client.get("/admin/monitoring", headers=_headers("analyst"))
+    assert viewer.status_code == 200
+    body = viewer.json()
+    assert body["schema"] == "osiris.admin_monitoring.v1"
+    assert set(body) == {
+        "schema", "generated_at", "read_only", "live_trading_authorized",
+        "peer_health", "node_status", "paper",
+    }
+    assert body["read_only"] is True
+    assert body["live_trading_authorized"] is False
+    assert body["peer_health"]["status"] == "unavailable"
+    assert body["peer_health"]["peer_count"] is None
+    assert body["node_status"]["status"] == "observed"
+    assert body["node_status"]["connected_peers"] == 4
+    assert body["node_status"]["authenticated_or_attested"] is False
+    assert body["node_status"]["ingestion_enabled"] is False
+    assert body["paper"]["status"] == "permission_denied"
+    assert body["paper"]["cash"] is None
+    assert body["paper"]["position_count"] is None
+    assert "9800" not in viewer.text
+    assert "SYNTH-PERP" not in viewer.text
+    assert "fill-key-do-not-leak" not in viewer.text
+    assert "sensitive-node-identity" not in viewer.text
+    assert "never-appear" not in viewer.text
+    paper = analyst.json()["paper"]
+    assert paper["status"] == "available"
+    assert paper["cash"] == "9800"
+    assert paper["mode"] == "synthetic-paper-only"
+    assert paper["source_ledger"] == "legacy_synthetic"
+    assert paper["fill_count"] == 1
+    assert paper["position_count"] == 1
+    assert paper["open_order_count"] is None
+    assert paper["open_orders_reason"] == "not_stored"
+    assert paper["realized_pnl"] == "0"
+    assert paper["unrealized_pnl"] is None
+    assert paper["live_trading_authorized"] is False
+    assert "fill-key-do-not-leak" not in analyst.text
+    assert "sensitive-node-identity" not in analyst.text
+    assert client.post("/admin/monitoring", headers=_headers("analyst")).status_code == 405
+    entries = client.get("/admin/audit", headers=_headers("viewer")).json()["entries"]
+    triples = {(entry["role"], entry["action"], entry["decision"], entry["detail"]) for entry in entries}
+    assert ("viewer", "read_research", "deny", "monitoring_paper") in triples
+    assert ("analyst", "read_research", "allow", "monitoring_paper") in triples
+
+
+def test_operations_reports_node_version_and_paper_loss_gate(client, monkeypatch, tmp_path):
+    import sqlite3
+    from datetime import datetime, timezone
+    from decimal import Decimal
+
+    from osiris_api.paper_execution import initialize_paper_account, set_kill_switch, submit_paper_order
+    from osiris_api.p2p_identity import P2PIdentityRegistry, generate_node_identity, sign_enrollment_challenge
+    from osiris_api.risk import RiskLimits
+
+    path = tmp_path / "nodes.sqlite3"
+    identity = generate_node_identity()
+    registry = P2PIdentityRegistry(str(path), {identity["public_key"]})
+    challenge = registry.create_challenge()
+    registry.enroll(
+        identity["public_key"],
+        sign_enrollment_challenge(
+            identity["private_key"], challenge["challenge_id"], challenge["nonce"], identity["node_id"],
+        ),
+        challenge["challenge_id"],
+    )
+    monkeypatch.setenv(admin_centre.IDENTITY_DB_ENV, str(path))
+    monkeypatch.setenv("OSIRIS_PAPER_EXECUTION_DB", str(tmp_path / "paper-exec.sqlite3"))
+    initialize_paper_account("1000", RiskLimits(max_daily_loss=10))
+    stamp = datetime.now(timezone.utc).isoformat()
+    submit_paper_order(
+        client_order_id="buy", symbol="BTC-USD", side="BUY", quantity="2", price="100",
+        fee="0", observed_at=stamp, now=stamp,
+    )
+    submit_paper_order(
+        client_order_id="sell", symbol="BTC-USD", side="SELL", quantity="1", price="80",
+        fee="0", observed_at=stamp, now=stamp,
+    )
+    set_kill_switch(True)
+    monkeypatch.setenv("OSIRIS_P2P_LOCAL_HEALTH_PORT", "9090")
+    sample = {
+        "status": "alive", "peer_id": "sensitive-node-identity", "ready": True,
+        "uptime_seconds": 4, "connected_peers": 1,
+        "bootstrap_peers_connected": 1, "bootstrap_peers_total": 1,
+        "relay_configured": False, "relay_reservation_active": False,
+        "relays_total": 0, "relay_reservations": 0,
+        "version": "0.1.0", "private_key": "never-appear",
+    }
+    from osiris_api import p2p_local_health
+    with patch.object(p2p_local_health, "HTTPConnection") as connection:
+        http = connection.return_value
+        http.getresponse.return_value.status = 200
+        http.getresponse.return_value.read.return_value = json.dumps(sample).encode()
+        anonymous = client.get("/admin/operations")
+        viewer = client.get("/admin/operations", headers=_headers("viewer"))
+        analyst = client.get("/admin/operations", headers=_headers("analyst"))
+    assert anonymous.status_code == 401
+    assert viewer.status_code == 200
+    body = viewer.json()
+    assert body["schema"] == "osiris.admin_operations.v1"
+    assert body["read_only"] is True
+    assert body["live_trading_authorized"] is False
+    assert set(body) == {
+        "schema", "generated_at", "read_only", "live_trading_authorized", "nodes", "paper_trading",
+    }
+    enrolled = body["nodes"]["nodes"]
+    assert body["nodes"]["status"] == "enrolled_registry"
+    assert body["nodes"]["enrolled_count"] == 1
+    assert enrolled[0]["node_id"] == identity["node_id"]
+    assert enrolled[0]["status"] == "enrolled"
+    assert enrolled[0]["trust_level"] == "trusted"
+    assert enrolled[0]["version"] is None
+    assert enrolled[0]["version_reason"] == "not_recorded"
+    assert enrolled[0]["last_seen_meaning"] == "enrollment_or_reenrollment_not_liveness"
+    assert enrolled[0]["liveness"] == "not_observed"
+    assert body["nodes"]["local"]["status"] == "ready"
+    assert body["nodes"]["local"]["version"] == "0.1.0"
+    assert body["nodes"]["local"]["version_reason"] == "reported"
+    assert body["nodes"]["local"]["authenticated_or_attested"] is False
+    assert body["paper_trading"]["status"] == "permission_denied"
+    assert body["paper_trading"]["open_positions"] is None
+    assert body["paper_trading"]["daily_loss_gate"]["realized_pnl"] is None
+    assert body["paper_trading"]["daily_loss_gate"]["limit"] is None
+    assert body["paper_trading"]["kill_switch"]["ingestion_state"] == "disabled"
+    assert body["paper_trading"]["kill_switch"]["paper_execution_state"] == "permission_denied"
+    assert "BTC-USD" not in viewer.text
+    assert "sensitive-node-identity" not in viewer.text
+    assert "never-appear" not in viewer.text
+    assert identity["public_key"] not in viewer.text
+    assert identity["private_key"] not in viewer.text
+    assert str(path) not in viewer.text
+    paper = analyst.json()["paper_trading"]
+    assert paper["status"] == "available"
+    assert paper["source_ledger"] == "canonical_execution"
+    assert paper["mode"] == "paper_only"
+    assert paper["live_trading_authorized"] is False
+    assert paper["kill_switch"]["paper_execution_state"] == "halted"
+    assert paper["kill_switch"]["paper_execution_halted"] is True
+    assert paper["kill_switch"]["live_trading_authorized"] is False
+    assert paper["open_position_count"] == 1
+    assert paper["open_positions"] == [
+        {"symbol": "BTC-USD", "quantity": "1", "average_cost": "100"},
+    ]
+    assert paper["daily_loss_gate"]["basis"] == "realized_pnl"
+    assert paper["daily_loss_gate"]["state"] == "limit_reached"
+    assert paper["daily_loss_gate"]["limit"] == "10"
+    assert paper["daily_loss_gate"]["live_execution"] is False
+    assert Decimal(paper["daily_loss_gate"]["realized_pnl"]) <= Decimal("-10")
+    assert "never-appear" not in analyst.text
+    assert "sensitive-node-identity" not in analyst.text
+    assert client.post("/admin/operations", headers=_headers("analyst")).status_code == 405
+    entries = client.get("/admin/audit", headers=_headers("viewer")).json()["entries"]
+    triples = {(entry["role"], entry["action"], entry["decision"], entry["detail"]) for entry in entries}
+    assert ("viewer", "read_research", "deny", "operations_paper") in triples
+    assert ("analyst", "read_research", "allow", "operations_paper") in triples
+    database = sqlite3.connect(path)
+    assert database.execute("SELECT COUNT(*) FROM p2p_nodes").fetchone()[0] == 1
+    database.close()

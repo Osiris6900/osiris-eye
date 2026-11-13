@@ -16,6 +16,8 @@ export type Section = { status: SectionStatus; data?: JsonObject };
 
 export const SECTION_PATHS = {
   overview: '/admin/overview',
+  monitoring: '/admin/monitoring',
+  operations: '/admin/operations',
   network: '/admin/network/status',
   feeds: '/admin/feeds/status',
   paper: '/admin/paper/status',
@@ -64,6 +66,16 @@ function countText(value: unknown): string {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? String(value) : 'Unavailable';
 }
 
+function boolText(value: unknown): string {
+  return typeof value === 'boolean' ? String(value) : 'Unavailable';
+}
+
+function moneyText(value: unknown): string {
+  return typeof value === 'string' && /^-?\d+(\.\d+)?$/.test(value) && value.length <= 40
+    ? value
+    : 'Unavailable';
+}
+
 function countOrUnavailable(outbox: JsonObject | undefined, key: string): string {
   if (!outbox || outbox.configured !== true || outbox.available !== true) return 'Unavailable';
   const value = outbox[key];
@@ -81,6 +93,30 @@ function rejectionReasons(outbox: JsonObject | undefined): Array<{ reason: strin
   });
 }
 
+const NODE_UNAVAILABLE_COPY: Record<string, string> = {
+  not_configured: 'Local node health is not configured. No live peer count is shown.',
+  invalid_port: 'Local node health port is invalid. No live peer count is shown.',
+  health_http_error: 'Local node health returned an error. No live peer count is shown.',
+  health_payload_too_large: 'Local node health payload was rejected. No live peer count is shown.',
+  health_unreachable_or_invalid: 'Local node health could not be read. No live peer count is shown.',
+};
+
+const PAPER_MODES: Record<string, string> = {
+  'synthetic-paper-only': 'synthetic paper only',
+  paper_only: 'paper only',
+};
+
+const PAPER_SOURCES: Record<string, string> = {
+  legacy_synthetic: 'Legacy synthetic account',
+  canonical_execution: 'Paper execution account',
+};
+
+const OPEN_ORDER_REASONS: Record<string, string> = {
+  not_stored: 'Open orders are not stored.',
+  account_unavailable: 'Open orders are unavailable.',
+  unavailable: 'Open orders are unavailable.',
+};
+
 const PEER_UNAVAILABLE_COPY: Record<string, string> = {
   not_configured: 'Identity registry is not configured. No peer list is shown.',
   registry_file_absent: 'Identity registry file is absent. No peer list is shown.',
@@ -92,6 +128,11 @@ const PEER_UNAVAILABLE_COPY: Record<string, string> = {
 function peerUnavailableCopy(health: JsonObject | undefined): string {
   const reason = typeof health?.reason === 'string' ? health.reason : 'unavailable_in_quant_api_process';
   return PEER_UNAVAILABLE_COPY[reason] ?? 'Peer registry unavailable. No peer list is shown.';
+}
+
+function nodeUnavailableCopy(node: JsonObject | undefined): string {
+  const reason = typeof node?.reason === 'string' ? node.reason : 'not_configured';
+  return NODE_UNAVAILABLE_COPY[reason] ?? 'Local node health could not be read. No live peer count is shown.';
 }
 
 const TRUST_LABELS: Record<string, string> = {
@@ -156,12 +197,211 @@ function SectionError({ detail }: { detail?: string }) {
   return <p role="alert" className="notice">Section unavailable: {detail || 'unknown error'}</p>;
 }
 
+function PeerHealthSummary({ health }: { health: JsonObject | undefined }) {
+  if (!health || health.status !== 'enrolled_registry') {
+    return <p className="muted">{peerUnavailableCopy(health)}</p>;
+  }
+  return <>
+    <p className="muted">Enrollment counts only. This is not a live session or health probe.</p>
+    <div className="settings">
+      <div className="setting"><span>Enrolled nodes</span><span>{registryCount(health, 'peer_count')}</span></div>
+      <div className="setting"><span>Trusted</span><span>{registryCount(health, 'trusted_count')}</span></div>
+      <div className="setting"><span>Public untrusted</span><span>{registryCount(health, 'public_untrusted_count')}</span></div>
+      <div className="setting"><span>Unclassified</span><span>{registryCount(health, 'unclassified_count')}</span></div>
+      <div className="setting"><span>Omitted</span><span>{registryCount(health, 'omitted_count')}</span></div>
+    </div>
+    {health.nodes_truncated === true && <p className="muted">The enrolled count includes nodes beyond the registry list limit.</p>}
+  </>;
+}
+
+function NodeStatusPanel({ node }: { node: JsonObject | undefined }) {
+  if (!node || node.status !== 'observed') {
+    return <p className="muted">{nodeUnavailableCopy(node)}</p>;
+  }
+  return <>
+    <p className="muted">One local loopback health response. This is not a network-wide peer count and not an authenticated attestation.</p>
+    <div className="settings">
+      <div className="setting"><span>Ready</span><span>{boolText(node.ready)}</span></div>
+      <div className="setting"><span>Ingestion enabled</span><span>{boolText(node.ingestion_enabled)}</span></div>
+      <div className="setting"><span>Connected peers (local node)</span><span>{countText(node.connected_peers)}</span></div>
+      <div className="setting"><span>Bootstrap peers connected</span><span>{countText(node.bootstrap_peers_connected)}</span></div>
+      <div className="setting"><span>Bootstrap peers configured</span><span>{countText(node.bootstrap_peers_total)}</span></div>
+      <div className="setting"><span>Relay configured</span><span>{boolText(node.relay_configured)}</span></div>
+      <div className="setting"><span>Relay reservations</span><span>{countText(node.relay_reservations)}</span></div>
+      <div className="setting"><span>Relays configured</span><span>{countText(node.relays_total)}</span></div>
+      <div className="setting"><span>Uptime seconds</span><span>{countText(node.uptime_seconds)}</span></div>
+    </div>
+  </>;
+}
+
+function PaperOperations({ paper }: { paper: JsonObject | null }) {
+  const status = typeof paper?.status === 'string' ? paper.status : 'unavailable';
+  if (status === 'permission_denied') return <Denied />;
+  if (status === 'not_initialized') {
+    return <p className="muted">Paper ledger not initialized. Cash, positions and P&amp;L are unavailable.</p>;
+  }
+  if (status === 'reconciliation_unavailable') {
+    return <p role="note">Paper account reconciliation unavailable or failed. Balances, positions and P&amp;L are unavailable.</p>;
+  }
+  if (status !== 'available' || !paper) {
+    return <p className="muted">Paper operations unavailable. Balances are not shown.</p>;
+  }
+  const source = PAPER_SOURCES[String(paper.source_ledger)] ?? 'Paper source unavailable';
+  const mode = PAPER_MODES[String(paper.mode)] ?? 'Unavailable';
+  const openReason = typeof paper.open_orders_reason === 'string'
+    ? OPEN_ORDER_REASONS[paper.open_orders_reason]
+    : undefined;
+  return <>
+    <p className="muted">{source}. Read-only paper operations. No live order can be placed here.</p>
+    <div className="settings">
+      <div className="setting"><span>Mode</span><span>{mode}</span></div>
+      <div className="setting"><span>Cash</span><span>{moneyText(paper.cash)}</span></div>
+      <div className="setting"><span>Positions</span><span>{countText(paper.position_count)}</span></div>
+      <div className="setting"><span>Paper fills</span><span>{countText(paper.fill_count)}</span></div>
+      <div className="setting"><span>Open orders</span><span>{countText(paper.open_order_count)}</span></div>
+      <div className="setting"><span>Realized P&amp;L</span><span>{moneyText(paper.realized_pnl)}</span></div>
+      <div className="setting"><span>Unrealized P&amp;L</span><span>{paper.unrealized_pnl == null ? 'Unavailable without marks' : moneyText(paper.unrealized_pnl)}</span></div>
+      <div className="setting"><span>Equity</span><span>{paper.equity == null ? 'Unavailable without marks' : moneyText(paper.equity)}</span></div>
+      <div className="setting"><span>Paper execution halt</span><span>{boolText(paper.kill_switch_active)}</span></div>
+      <div className="setting"><span>Live trading authorized</span><span>{paper.live_trading_authorized === false ? 'false' : 'Unavailable'}</span></div>
+    </div>
+    {openReason && <p className="muted">{openReason}</p>}
+  </>;
+}
+
+const VERSION_TEXT = /^[A-Za-z0-9][A-Za-z0-9.+-]{0,40}$/;
+const SYMBOL_TEXT = /^[A-Z0-9][A-Z0-9._-]{0,31}$/;
+
+const NODE_STATUS_LABELS: Record<string, string> = {
+  enrolled: 'enrolled',
+  ready: 'ready',
+  not_ready: 'not ready',
+  unavailable: 'unavailable',
+};
+
+const PAPER_HALT_LABELS: Record<string, string> = {
+  halted: 'Halted',
+  clear: 'Clear',
+  not_stored: 'Not stored on this paper ledger',
+  unavailable: 'Unavailable',
+  permission_denied: 'Access denied',
+};
+
+const DAILY_LOSS_LABELS: Record<string, string> = {
+  clear: 'Clear',
+  limit_reached: 'Limit reached',
+  not_stored: 'Not stored on this paper ledger',
+  not_initialized: 'Paper ledger not initialized',
+  reconciliation_unavailable: 'Unavailable until reconciliation passes',
+  permission_denied: 'Access denied',
+  unavailable: 'Unavailable',
+};
+
+function timeText(value: unknown): string {
+  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(value) ? value : 'Unavailable';
+}
+
+function versionText(value: unknown): string {
+  return typeof value === 'string' && VERSION_TEXT.test(value) ? value : 'Unavailable';
+}
+
+function enrolledCount(nodes: JsonObject | undefined): string {
+  if (!nodes || nodes.status !== 'enrolled_registry') return 'Unavailable';
+  const value = nodes.enrolled_count;
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? String(value) : 'Unavailable';
+}
+
+function openPositionRows(paper: JsonObject): Array<{ symbol: string; quantity: string; average: string }> {
+  if (!Array.isArray(paper.open_positions)) return [];
+  return paper.open_positions.flatMap(item => {
+    if (!item || typeof item !== 'object') return [];
+    const row = item as JsonObject;
+    if (typeof row.symbol !== 'string' || !SYMBOL_TEXT.test(row.symbol)) return [];
+    if (typeof row.quantity !== 'string' || typeof row.average_cost !== 'string') return [];
+    if (!/^-?\d+(\.\d+)?$/.test(row.quantity) || !/^-?\d+(\.\d+)?$/.test(row.average_cost)) return [];
+    if (row.quantity.length > 40 || row.average_cost.length > 40) return [];
+    return [{ symbol: row.symbol, quantity: row.quantity, average: row.average_cost }];
+  });
+}
+
+function OperationsNodes({ nodes }: { nodes: JsonObject | undefined }) {
+  if (!nodes || typeof nodes !== 'object') return <p className="muted">Node status unavailable.</p>;
+  const local = nodes.local && typeof nodes.local === 'object' ? nodes.local as JsonObject : undefined;
+  const enrolled = Array.isArray(nodes.nodes) ? nodes.nodes as JsonObject[] : null;
+  const shown = enrolled?.flatMap(node => {
+    const id = typeof node.node_id === 'string' && /^[0-9a-f]{64}$/.test(node.node_id) ? node.node_id : '';
+    const trust = typeof node.trust_level === 'string' ? TRUST_LABELS[node.trust_level] : undefined;
+    if (!id || !trust || node.status !== 'enrolled') return [];
+    return [{ id, trust, seen: timeText(node.last_seen_at), version: versionText(node.version) }];
+  }) ?? [];
+  return <>
+    <h3>Local node</h3>
+    {!local || local.status === 'unavailable'
+      ? <p className="muted">{nodeUnavailableCopy(local)}</p>
+      : <>
+        <p className="muted">Loopback health for this process. Last seen is the time of this read, not the node clock. This is not an attested network census.</p>
+        <div className="settings">
+          <div className="setting"><span>Status</span><span>{NODE_STATUS_LABELS[String(local.status)] ?? 'Unavailable'}</span></div>
+          <div className="setting"><span>Last seen</span><span>{timeText(local.last_seen_at)}</span></div>
+          <div className="setting"><span>Version</span><span>{versionText(local.version)}</span></div>
+        </div>
+      </>}
+    <h3>Enrolled nodes</h3>
+    {nodes.status !== 'enrolled_registry' ? <p className="muted">{peerUnavailableCopy(nodes)}</p> : <>
+      <p className="muted">Identity enrollment only. Last seen is the last enrollment or re-enrollment, not a live session. Software version is not recorded.</p>
+      <div className="settings">
+        <div className="setting"><span>Enrolled nodes</span><span>{enrolledCount(nodes)}</span></div>
+      </div>
+      {nodes.nodes_truncated === true && <p className="muted">Node list truncated. The enrolled count includes nodes that are not shown.</p>}
+      {enrolled === null && <p className="muted">Node list unavailable.</p>}
+      {shown.map(node => <p key={node.id} className="muted">{node.trust} · enrolled · {node.id} · last seen {node.seen} · version {node.version}</p>)}
+      {enrolled?.length === 0 && <p className="muted">No enrolled nodes.</p>}
+    </>}
+  </>;
+}
+
+function PaperTradingOperations({ paper }: { paper: JsonObject | null }) {
+  if (!paper) return <p className="muted">Paper trading status unavailable.</p>;
+  const kill = paper.kill_switch && typeof paper.kill_switch === 'object' ? paper.kill_switch as JsonObject : {};
+  const ingestion = kill.ingestion_enabled === true ? 'Enabled' : kill.ingestion_enabled === false ? 'Disabled' : 'Unavailable';
+  const status = typeof paper.status === 'string' ? paper.status : 'unavailable';
+  const gate = paper.daily_loss_gate && typeof paper.daily_loss_gate === 'object' ? paper.daily_loss_gate as JsonObject : {};
+  const halt = typeof kill.paper_execution_state === 'string' ? PAPER_HALT_LABELS[kill.paper_execution_state] : undefined;
+  const gateState = typeof gate.state === 'string' ? DAILY_LOSS_LABELS[gate.state] : undefined;
+  const positions = openPositionRows(paper);
+  return <>
+    <p className="muted">Paper only. This view does not place orders or change the kill switch.</p>
+    <div className="settings">
+      <div className="setting"><span>Ingestion</span><span>{ingestion}</span></div>
+      {status !== 'permission_denied' && <>
+        <div className="setting"><span>Paper execution halt</span><span>{halt ?? 'Unavailable'}</span></div>
+        <div className="setting"><span>Daily loss gate</span><span>{gateState ?? 'Unavailable'}</span></div>
+        <div className="setting"><span>Realized P&amp;L</span><span>{gate.realized_pnl == null ? 'Unavailable' : moneyText(gate.realized_pnl)}</span></div>
+        <div className="setting"><span>Daily loss limit</span><span>{gate.limit == null ? 'Unavailable' : moneyText(gate.limit)}</span></div>
+      </>}
+      <div className="setting"><span>Live trading authorized</span><span>{paper.live_trading_authorized === false ? 'false' : 'Unavailable'}</span></div>
+    </div>
+    {status === 'permission_denied' && <Denied />}
+    {status === 'not_initialized' && <p className="muted">Paper ledger not initialized. Open positions and the daily loss gate are unavailable.</p>}
+    {status === 'reconciliation_unavailable' && <p role="note">Paper account reconciliation unavailable or failed. Open positions and the daily loss gate are unavailable.</p>}
+    {status !== 'permission_denied' && status !== 'not_initialized' && status !== 'reconciliation_unavailable' && status !== 'available' &&
+      <p className="muted">Paper trading status unavailable. Positions are not shown.</p>}
+    {status === 'available' && <>
+      <h3>Open paper positions</h3>
+      {paper.positions_truncated === true && <p className="muted">Position list truncated. The count includes positions that are not shown.</p>}
+      {positions.map(row => <p key={row.symbol} className="muted">{row.symbol}: {row.quantity} units · average cost {row.average}</p>)}
+      {Array.isArray(paper.open_positions) && positions.length === 0 && <p className="muted">No open paper positions.</p>}
+      {!Array.isArray(paper.open_positions) && <p className="muted">Open paper positions unavailable.</p>}
+    </>}
+  </>;
+}
+
 export function AdminCentre({ apiBase = '/api' }: { apiBase?: string }) {
   const [tokenInput, setTokenInput] = useState('');
   const [token, setToken] = useState<string | null>(null);
   const [sections, setSections] = useState<Record<SectionKey, Section>>(() => ({
-    overview: { status: 'idle' }, network: { status: 'idle' }, feeds: { status: 'idle' },
-    paper: { status: 'idle' }, risk: { status: 'idle' }, alerts: { status: 'idle' },
+    overview: { status: 'idle' }, monitoring: { status: 'idle' }, operations: { status: 'idle' }, network: { status: 'idle' },
+    feeds: { status: 'idle' }, paper: { status: 'idle' }, risk: { status: 'idle' }, alerts: { status: 'idle' },
   }));
   const [view, setView] = useState<SectionKey>('overview');
   const [gateNotice, setGateNotice] = useState('');
@@ -199,12 +439,14 @@ export function AdminCentre({ apiBase = '/api' }: { apiBase?: string }) {
     requestId.current += 1;
     setToken(null);
     setSections({
-      overview: { status: 'idle' }, network: { status: 'idle' }, feeds: { status: 'idle' },
-      paper: { status: 'idle' }, risk: { status: 'idle' }, alerts: { status: 'idle' },
+      overview: { status: 'idle' }, monitoring: { status: 'idle' }, operations: { status: 'idle' }, network: { status: 'idle' },
+      feeds: { status: 'idle' }, paper: { status: 'idle' }, risk: { status: 'idle' }, alerts: { status: 'idle' },
     });
   };
 
   const overview = sections.overview.data;
+  const monitoring = sections.monitoring.data;
+  const operations = sections.operations.data;
   const network = sections.network.data;
   const feeds = sections.feeds.data;
   const paper = sections.paper.data;
@@ -292,6 +534,35 @@ export function AdminCentre({ apiBase = '/api' }: { apiBase?: string }) {
           <div className="setting"><span>Enrolled peers</span><span>{overview?.peer_health === 'enrolled_registry' && typeof overview?.enrolled_peer_count === 'number' ? String(overview.enrolled_peer_count) : 'Unavailable'}</span></div>
           <div className="setting"><span>Outbox pending</span><span>{overview?.outbox_pending == null ? 'Unavailable' : String(overview.outbox_pending)}</span></div>
         </div>)}
+      </section>}
+
+      {view === 'monitoring' && <section className="panel" aria-label="Monitoring">
+        {renderSection('monitoring', <>
+          <h3>Peer health</h3>
+          <PeerHealthSummary health={monitoring?.peer_health as JsonObject | undefined} />
+          <h3>Node status</h3>
+          <NodeStatusPanel node={monitoring?.node_status as JsonObject | undefined} />
+          <h3>Paper operations</h3>
+          <PaperOperations paper={
+            monitoring?.paper && typeof monitoring.paper === 'object'
+              ? monitoring.paper as JsonObject
+              : null
+          } />
+          <p className="notice">Read-only monitoring. This panel does not place orders, acknowledge alerts, or change node configuration.</p>
+        </>)}
+      </section>}
+
+      {view === 'operations' && <section className="panel" aria-label="Operations">
+        {renderSection('operations', <>
+          <OperationsNodes nodes={operations?.nodes as JsonObject | undefined} />
+          <h3>Paper trading</h3>
+          <PaperTradingOperations paper={
+            operations?.paper_trading && typeof operations.paper_trading === 'object'
+              ? operations.paper_trading as JsonObject
+              : null
+          } />
+          <p className="notice">Read-only paper operations. This view does not place orders, change ingestion, or change the paper halt.</p>
+        </>)}
       </section>}
 
       {view === 'network' && <section className="panel" aria-label="Network">

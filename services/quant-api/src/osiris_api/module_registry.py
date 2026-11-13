@@ -49,7 +49,7 @@ MODULES = [
 
     {"id": "global_data_connector_hub", "name": "Global Data Connector Hub", "status": "contract", "capabilities": ["licensed source contract audit", "adapter readiness; no vendor connection"]},
     {"id": "tick_market_replay", "name": "Tick-by-Tick Market Replay", "status": "foundation", "capabilities": ["timezone-aware deterministic event ordering"]},
-    {"id": "portfolio_construction_optimizer", "name": "Portfolio Construction & Optimizer", "status": "foundation", "capabilities": ["capped inverse-volatility allocation baseline"]},
+    {"id": "portfolio_construction_optimizer", "name": "Portfolio Construction & Optimizer", "status": "foundation", "capabilities": ["bounded capped inverse-volatility allocation baseline", "per-asset concentration caps and cash reserve", "authenticated scenario-loss preview"]},
     {"id": "paper_trading_oms", "name": "Paper Trading Order Management", "status": "simulation", "capabilities": ["simulated order lifecycle and partial-fill state"]},
     {"id": "factor_intelligence", "name": "Factor Intelligence Engine", "status": "foundation", "capabilities": ["historical single-factor exposure diagnostics"]},
     {"id": "advanced_derivatives_risk", "name": "Advanced Derivatives Risk Engine", "status": "foundation", "capabilities": ["aggregated position Greeks"]},

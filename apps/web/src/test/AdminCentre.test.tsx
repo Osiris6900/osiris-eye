@@ -64,6 +64,61 @@ const RISK = {
   exposure: 'unavailable_without_marks', risk_gate: 'enforced',
   live_trading_authorized: false,
 };
+const MONITORING = {
+  schema: 'osiris.admin_monitoring.v1', generated_at: '2026-11-08T12:00:00+00:00',
+  read_only: true, live_trading_authorized: false,
+  peer_health: {
+    status: 'unavailable', reason: 'registry_file_absent', peer_count: null,
+    trusted_count: null, public_untrusted_count: null, unclassified_count: null,
+    omitted_count: null, nodes_truncated: false,
+  },
+  node_status: {
+    status: 'unavailable', reason: 'not_configured', connected_peers: null,
+    ingestion_enabled: false, authenticated_or_attested: false,
+  },
+  paper: {
+    status: 'available', source_ledger: 'legacy_synthetic', mode: 'synthetic-paper-only',
+    initialized: true, cash: '9800', position_count: 1, fill_count: 1,
+    open_order_count: null, open_orders_reason: 'not_stored', realized_pnl: '0',
+    unrealized_pnl: null, equity: null, kill_switch_active: null,
+    live_trading_authorized: false,
+  },
+};
+const OPERATIONS = {
+  schema: 'osiris.admin_operations.v1', generated_at: '2026-11-08T12:00:00+00:00',
+  read_only: true, live_trading_authorized: false,
+  nodes: {
+    status: 'enrolled_registry', reason: null, enrolled_count: 1, nodes_truncated: false,
+    nodes: [{
+      source: 'identity_registry', node_id: 'ab'.repeat(32), status: 'enrolled',
+      trust_level: 'trusted', last_seen_at: '2026-11-08T12:00:00+00:00',
+      last_seen_meaning: 'enrollment_or_reenrollment_not_liveness',
+      version: null, version_reason: 'not_recorded', liveness: 'not_observed',
+    }],
+    local: {
+      source: 'loopback_local_node', status: 'ready', reason: null,
+      last_seen_at: '2026-11-08T12:00:00+00:00',
+      last_seen_meaning: 'admin_probe_time_not_node_clock',
+      version: '0.1.0', version_reason: 'reported', liveness: 'loopback_probe',
+      authenticated_or_attested: false,
+    },
+  },
+  paper_trading: {
+    status: 'available', source_ledger: 'canonical_execution', mode: 'paper_only',
+    kill_switch: {
+      ingestion_enabled: false, ingestion_state: 'disabled',
+      paper_execution_halted: true, paper_execution_state: 'halted',
+      live_trading_authorized: false,
+    },
+    open_positions: [{ symbol: 'BTC-USD', quantity: '1', average_cost: '100' }],
+    open_position_count: 1, positions_truncated: false, positions_reason: null,
+    daily_loss_gate: {
+      basis: 'realized_pnl', state: 'limit_reached', reason: null,
+      realized_pnl: '-20', limit: '10', live_execution: false,
+    },
+    live_trading_authorized: false,
+  },
+};
 const ALERTS = {
   schema: 'osiris.admin_alert_list.v1',
   active: [{ schema: 'osiris.admin_alert.v1', alert_id: 'ingestion_disabled:global',
@@ -76,6 +131,8 @@ const ALERTS = {
 function allOk(overrides: Record<string, MockReply> = {}) {
   return {
     '/admin/overview': reply(200, OVERVIEW),
+    '/admin/monitoring': reply(200, MONITORING),
+    '/admin/operations': reply(200, OPERATIONS),
     '/admin/network/status': reply(200, NETWORK),
     '/admin/feeds/status': reply(200, FEEDS),
     '/admin/paper/status': reply(200, PAPER),
@@ -108,7 +165,7 @@ test('successful connect loads every section with the bearer token', async () =>
   render(<AdminCentre />);
   connect();
   expect(await screen.findByText('operator')).toBeInTheDocument();
-  expect(calls).toHaveLength(6);
+  expect(calls).toHaveLength(8);
   for (const call of calls) {
     expect(call.url).toContain('/admin/');
     expect((call.init?.headers as Record<string, string>).Authorization)
@@ -126,6 +183,8 @@ test('successful connect loads every section with the bearer token', async () =>
 test('authentication failure is surfaced without leaking state', async () => {
   stubFetch({
     '/admin/overview': reply(401, { detail: 'admin_authentication_required' }),
+    '/admin/monitoring': reply(401, { detail: 'admin_authentication_required' }),
+    '/admin/operations': reply(401, { detail: 'admin_authentication_required' }),
     '/admin/network/status': reply(401, { detail: 'admin_authentication_required' }),
     '/admin/feeds/status': reply(401, { detail: 'admin_authentication_required' }),
     '/admin/paper/status': reply(401, { detail: 'admin_authentication_required' }),
@@ -268,6 +327,8 @@ test('blank token, loading, errors, empty states and disconnect stay honest', as
   const second = resolvers.splice(0);
   const bodyFor = (url: string, cash: string, role: string) => {
     if (url.includes('/admin/overview')) return { ...OVERVIEW, role };
+    if (url.includes('/admin/monitoring')) return MONITORING;
+    if (url.includes('/admin/operations')) return OPERATIONS;
     if (url.includes('/admin/paper/status')) return { ...PAPER, cash };
     if (url.includes('/admin/alerts')) return {
       active: [], acknowledged: [], durable: false,
@@ -302,6 +363,8 @@ test('blank token, loading, errors, empty states and disconnect stay honest', as
 test('backend and configuration errors do not render response secrets', async () => {
   stubFetch({
     '/admin/overview': reply(503, { detail: 'admin_not_configured', token: 'vtk-should-never-render-99' }),
+    '/admin/monitoring': reply(500, { detail: 'vtk-should-never-render-99' }),
+    '/admin/operations': reply(500, { detail: 'vtk-should-never-render-99' }),
     '/admin/network/status': reply(500, { detail: 'vtk-should-never-render-99' }),
     '/admin/feeds/status': reply(500, { detail: 'admin_response_redacted', leaked: 'vtk-should-never-render-99' }),
     '/admin/paper/status': reply(200, PAPER),
@@ -392,6 +455,116 @@ test('scrubForDisplay drops credential keys at any depth', () => {
 });
 
 
+test('monitoring panel shows peer health, node status and read-only paper operations', async () => {
+  const calls = stubFetch(allOk({
+    '/admin/monitoring': reply(200, {
+      ...MONITORING,
+      peer_health: {
+        status: 'enrolled_registry', peer_count: 2, trusted_count: 1,
+        public_untrusted_count: 1, unclassified_count: 0, omitted_count: 0,
+        nodes_truncated: false, public_key: 'should-not-render',
+      },
+      node_status: {
+        status: 'observed', ready: true, ingestion_enabled: false,
+        connected_peers: 4, bootstrap_peers_connected: 1, bootstrap_peers_total: 2,
+        relay_configured: false, relay_reservations: 0, relays_total: 0,
+        uptime_seconds: 12, authenticated_or_attested: false, peer_id: 'sensitive-node-identity',
+      },
+      paper: {
+        ...MONITORING.paper, open_order_count: 1, open_orders_reason: null,
+        client_order_id: 'order-secret',
+      },
+    }),
+  }));
+  render(<AdminCentre />);
+  connect();
+  await screen.findByText('operator');
+  fireEvent.click(screen.getByRole('button', { name: 'monitoring' }));
+  expect(await screen.findByText(/Enrollment counts only/)).toBeInTheDocument();
+  expect(screen.getByText('Enrolled nodes').parentElement).toHaveTextContent('2');
+  expect(screen.getByText('Trusted').parentElement).toHaveTextContent('1');
+  expect(screen.getByText(/not a network-wide peer count/)).toBeInTheDocument();
+  expect(screen.getByText('Connected peers (local node)').parentElement).toHaveTextContent('4');
+  expect(screen.getByText('Bootstrap peers configured').parentElement).toHaveTextContent('2');
+  expect(screen.getByText(/Legacy synthetic account/)).toBeInTheDocument();
+  expect(screen.getByText('Cash').parentElement).toHaveTextContent('9800');
+  expect(screen.getByText('Open orders').parentElement).toHaveTextContent('1');
+  expect(screen.getByText('Live trading authorized').parentElement).toHaveTextContent('false');
+  expect(screen.getByText(/Read-only monitoring. This panel does not place orders/)).toBeInTheDocument();
+  expect(screen.queryByText(/should-not-render/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/sensitive-node-identity/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/order-secret/)).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Ack' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Revoke' })).not.toBeInTheDocument();
+  expect(calls.filter(call => call.url.includes('/admin/monitoring')).every(
+    call => call.init?.method === undefined
+      && (call.init?.headers as Record<string, string>).Authorization === 'Bearer vtk-operator-7c1d55e0',
+  )).toBe(true);
+});
+
+test('monitoring keeps node health visible when paper is denied or unavailable', async () => {
+  stubFetch(allOk({
+    '/admin/monitoring': reply(200, {
+      ...MONITORING,
+      peer_health: {
+        status: 'enrolled_registry', peer_count: 3, trusted_count: 3,
+        public_untrusted_count: 0, unclassified_count: 0, omitted_count: 0,
+      },
+      node_status: { status: 'unavailable', reason: 'health_unreachable_or_invalid', connected_peers: 9 },
+      paper: { status: 'permission_denied', cash: '9800', source_ledger: 'legacy_synthetic' },
+    }),
+  }));
+  render(<AdminCentre />);
+  connect();
+  await screen.findByText('operator');
+  fireEvent.click(screen.getByRole('button', { name: 'monitoring' }));
+  expect(await screen.findByText(/Enrollment counts only/)).toBeInTheDocument();
+  expect(screen.getByText('Enrolled nodes').parentElement).toHaveTextContent('3');
+  expect(screen.getByText(/Local node health could not be read/)).toBeInTheDocument();
+  expect(screen.getByRole('note')).toHaveTextContent('Access denied for this role.');
+  expect(screen.queryByText('9800')).not.toBeInTheDocument();
+  expect(screen.queryByText(/^9$/)).not.toBeInTheDocument();
+});
+
+test('monitoring hides paper balances when reconciliation failed', async () => {
+  stubFetch(allOk({
+    '/admin/monitoring': reply(200, {
+      ...MONITORING,
+      paper: { status: 'reconciliation_unavailable', cash: '987654321', source_ledger: 'canonical_execution' },
+    }),
+  }));
+  render(<AdminCentre />);
+  connect();
+  await screen.findByText('operator');
+  fireEvent.click(screen.getByRole('button', { name: 'monitoring' }));
+  expect(await screen.findByRole('note')).toHaveTextContent('reconciliation unavailable or failed');
+  expect(screen.queryByText('987654321')).not.toBeInTheDocument();
+  expect(screen.queryByText('Cash')).not.toBeInTheDocument();
+});
+
+test('monitoring section surfaces loading and errors without rendering secrets', async () => {
+  const pending: Array<{ url: string; resolve: (value: unknown) => void }> = [];
+  vi.stubGlobal('fetch', (input: unknown) => new Promise(resolve => {
+    pending.push({ url: String(input), resolve });
+  }));
+  render(<AdminCentre />);
+  connect();
+  expect(await screen.findByText('Loading…')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'monitoring' }));
+  expect(screen.getByText('Loading…')).toBeInTheDocument();
+  expect(screen.queryByText('9800')).not.toBeInTheDocument();
+  pending.splice(0).forEach(item => item.resolve({
+    status: item.url.includes('/admin/monitoring') ? 500 : 200,
+    ok: !item.url.includes('/admin/monitoring'),
+    json: async () => item.url.includes('/admin/monitoring')
+      ? { detail: 'vtk-should-never-render-99', token: 'vtk-should-never-render-99' }
+      : item.url.includes('/admin/overview') ? OVERVIEW : MONITORING,
+  }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('http_500');
+  expect(screen.queryByText(/vtk-should-never-render-99/)).not.toBeInTheDocument();
+  expect(screen.queryByText('9800')).not.toBeInTheDocument();
+});
+
 test('SQLite alert history displays durability without enabling acknowledgement', async () => {
   stubFetch(allOk({
     '/admin/alerts': reply(200, {
@@ -408,4 +581,100 @@ test('SQLite alert history displays durability without enabling acknowledgement'
   expect(await screen.findByText(/kept in the local database across restarts/)).toBeInTheDocument();
   expect(screen.getByText(/cannot acknowledge alerts/)).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Ack' })).not.toBeInTheDocument();
+});
+
+test('operations view shows node status, paper halt, positions and the daily loss gate', async () => {
+  const calls = stubFetch(allOk());
+  render(<AdminCentre />);
+  connect();
+  await screen.findByText('operator');
+  fireEvent.click(screen.getByRole('button', { name: 'operations' }));
+  expect(await screen.findByText('0.1.0')).toBeInTheDocument();
+  expect(screen.getByText(/ready/)).toBeInTheDocument();
+  expect(screen.getByText(/last seen 2026-11-08T12:00:00\+00:00 · version Unavailable/)).toBeInTheDocument();
+  expect(screen.getByText('Halted')).toBeInTheDocument();
+  expect(screen.getByText('Limit reached')).toBeInTheDocument();
+  expect(screen.getByText('BTC-USD: 1 units · average cost 100')).toBeInTheDocument();
+  expect(screen.getByText('Disabled')).toBeInTheDocument();
+  expect(screen.getByText(/does not place orders, change ingestion, or change the paper halt/)).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /place|kill|revoke|ack/i })).not.toBeInTheDocument();
+  expect(calls.filter(call => call.url.includes('/admin/operations')).every(
+    call => call.init?.method == null || call.init.method === 'GET',
+  )).toBe(true);
+});
+
+test('operations keeps node status visible when paper trading is denied or empty', async () => {
+  stubFetch(allOk({
+    '/admin/operations': reply(200, {
+      ...OPERATIONS,
+      paper_trading: {
+        status: 'permission_denied',
+        kill_switch: { ingestion_enabled: true, ingestion_state: 'enabled', paper_execution_halted: null, paper_execution_state: 'permission_denied', live_trading_authorized: false },
+        open_positions: null, daily_loss_gate: { state: 'permission_denied', realized_pnl: null, limit: null, live_execution: false },
+        live_trading_authorized: false,
+      },
+    }),
+  }));
+  render(<AdminCentre />);
+  connect();
+  await screen.findByText('operator');
+  fireEvent.click(screen.getByRole('button', { name: 'operations' }));
+  expect(await screen.findByText('0.1.0')).toBeInTheDocument();
+  expect(screen.getByText('Enabled')).toBeInTheDocument();
+  expect(screen.getByText('Access denied for this role.')).toBeInTheDocument();
+  expect(screen.queryByText('BTC-USD: 1 units · average cost 100')).not.toBeInTheDocument();
+  expect(screen.queryByText('Limit reached')).not.toBeInTheDocument();
+  expect(screen.queryByText('-20')).not.toBeInTheDocument();
+});
+
+test('operations shows empty positions and a stored-gate gap without inventing numbers', async () => {
+  stubFetch(allOk({
+    '/admin/operations': reply(200, {
+      ...OPERATIONS,
+      nodes: {
+        ...OPERATIONS.nodes,
+        enrolled_count: 0,
+        nodes: [],
+        local: { ...OPERATIONS.nodes.local, status: 'unavailable', reason: 'not_configured', version: null, last_seen_at: null },
+      },
+      paper_trading: {
+        status: 'available',
+        kill_switch: { ingestion_enabled: false, ingestion_state: 'disabled', paper_execution_halted: null, paper_execution_state: 'not_stored', live_trading_authorized: false },
+        open_positions: [], open_position_count: 0, positions_truncated: false,
+        daily_loss_gate: { state: 'not_stored', realized_pnl: null, limit: null, live_execution: false },
+        live_trading_authorized: false,
+      },
+    }),
+  }));
+  render(<AdminCentre />);
+  connect();
+  await screen.findByText('operator');
+  fireEvent.click(screen.getByRole('button', { name: 'operations' }));
+  expect(await screen.findByText('No enrolled nodes.')).toBeInTheDocument();
+  expect(screen.getByText(/Local node health is not configured/)).toBeInTheDocument();
+  expect(screen.getByText('No open paper positions.')).toBeInTheDocument();
+  expect(screen.getAllByText('Not stored on this paper ledger').length).toBeGreaterThan(0);
+  expect(screen.queryByText('BTC-USD: 1 units · average cost 100')).not.toBeInTheDocument();
+});
+
+test('operations surfaces loading and errors without rendering secrets', async () => {
+  const pending: Array<{ url: string; resolve: (value: unknown) => void }> = [];
+  vi.stubGlobal('fetch', (input: unknown) => new Promise(resolve => {
+    pending.push({ url: String(input), resolve });
+  }));
+  render(<AdminCentre />);
+  connect();
+  expect(await screen.findByText('Loading…')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'operations' }));
+  expect(screen.getByText('Loading…')).toBeInTheDocument();
+  pending.splice(0).forEach(item => item.resolve({
+    status: item.url.includes('/admin/operations') ? 500 : 200,
+    ok: !item.url.includes('/admin/operations'),
+    json: async () => item.url.includes('/admin/operations')
+      ? { detail: 'vtk-should-never-render-99', token: 'vtk-should-never-render-99' }
+      : OVERVIEW,
+  }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('http_500');
+  expect(screen.queryByText(/vtk-should-never-render-99/)).not.toBeInTheDocument();
+  expect(screen.queryByText('BTC-USD')).not.toBeInTheDocument();
 });

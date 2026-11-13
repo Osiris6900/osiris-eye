@@ -95,8 +95,8 @@ export function LiveTradingSetup() {
   }
 
   return <section className="panel live-setup" aria-label="Live trading setup">
-    <div className="panel-head"><h2>Live trading setup</h2><span className="mini-tag">CONFIGURE LATER</span></div>
-    <p>Save your broker and risk preferences now, or leave them blank and return later.</p>
+    <div className="panel-head"><h2>Future live trading setup</h2><span className="mini-tag">CONFIGURE LATER</span></div>
+    <p>Optional future broker and risk preferences. This draft does not change the paper connection options above.</p>
     <p className="muted" id="live-setup-description">This draft stays on this browser. It does not connect an account or place orders.
       {' '}API keys and passwords must be configured securely when broker integration is available.</p>
     <form onSubmit={save} noValidate aria-describedby="live-setup-description">

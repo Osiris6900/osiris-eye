@@ -16,29 +16,41 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0 # Retained advisory inputs must resolve at their recorded commit.
       - name: Validate lockfile inputs
         run: |
           python scripts/check_dependency_inventory.py
           python -m unittest discover -s scripts -p 'test_check_dependency_inventory.py' -v
           python scripts/check_p2p_known_vulnerable_locks.py services/p2p-node/Cargo.lock
           python -m unittest discover -s scripts -p 'test_check_p2p_known_vulnerable_locks.py' -v
+      - name: Validate advisory coverage of all locked products offline
+        run: |
+          python scripts/test_scan_dependency_advisories.py
+          python scripts/scan_dependency_advisories.py --check docs/P2P_DEPENDENCY_ADVISORIES.json --fail-on-vulnerability
       - name: Generate complete locked dependency SBOM and source record
         env:
           OSIRIS_CANDIDATE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           python scripts/test_generate_dependency_sbom.py
+          python scripts/test_verify_dependency_sbom.py
           python scripts/generate_dependency_sbom.py --offline \
             --crate-cache docs/CRATE_LICENSE_PROVENANCE.json \
-            --output "$RUNNER_TEMP/dependency-sbom.json" \
-            --provenance-output "$RUNNER_TEMP/dependency-sbom-provenance.json"
+            --output "$RUNNER_TEMP/dependency-sbom/dependency-sbom.json" \
+            --provenance-output "$RUNNER_TEMP/dependency-sbom/dependency-sbom-provenance.json"
+          python scripts/verify_dependency_sbom.py \
+            --artifact-dir "$RUNNER_TEMP/dependency-sbom" \
+            --commit "$(git rev-parse HEAD)" --candidate-commit "$OSIRIS_CANDIDATE_HEAD" \
+            --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --report "$RUNNER_TEMP/dependency-sbom-verification.json"
       - name: Retain SBOM and source/input/output digests
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: dependency-sbom-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            ${{ runner.temp }}/dependency-sbom.json
-            ${{ runner.temp }}/dependency-sbom.json.sha256
-            ${{ runner.temp }}/dependency-sbom-provenance.json
+            ${{ runner.temp }}/dependency-sbom/dependency-sbom.json
+            ${{ runner.temp }}/dependency-sbom/dependency-sbom.json.sha256
+            ${{ runner.temp }}/dependency-sbom/dependency-sbom-provenance.json
           if-no-files-found: error
           retention-days: 14
 

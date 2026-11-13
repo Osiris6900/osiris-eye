@@ -10,6 +10,7 @@ import math
 import secrets
 import struct
 import time
+from contextlib import contextmanager
 
 from .database import canonical, identifier
 from .secrets import EncryptedSecrets
@@ -46,12 +47,30 @@ class IdentityService:
         )
         return now
 
+    @contextmanager
+    def _timed_transaction(self):
+        # A refused enrollment or MFA check still observes time. Keep its
+        # high-water mark while rolling back any partial identity operation,
+        # just as the depth service fences time on refused reads.
+        failure = None
+        with self.db.transaction() as conn:
+            now = self._now(conn)
+            conn.execute("SAVEPOINT identity_operation")
+            try:
+                yield conn, now
+            except BaseException as exc:
+                conn.execute("ROLLBACK TO identity_operation")
+                failure = exc
+            finally:
+                conn.execute("RELEASE identity_operation")
+        if failure is not None:
+            raise failure
+
     def enroll(self, actor: str) -> str:
         actor = identifier(actor)
         seed = base64.b32encode(secrets.token_bytes(20)).decode().rstrip("=")
         sealed = self.secrets.seal("totp:" + actor, seed)
-        with self.db.transaction() as conn:
-            now = self._now(conn)
+        with self._timed_transaction() as (conn, now):
             row = conn.execute(
                 "SELECT body FROM cp_documents WHERE collection='mfa' AND id=?", (actor,)
             ).fetchone()
@@ -81,8 +100,7 @@ class IdentityService:
         if not isinstance(code, str) or len(code) != 6 or not code.isascii() or not code.isdigit():
             code = "invalid"
         rejected = False
-        with self.db.transaction() as conn:
-            now = self._now(conn)
+        with self._timed_transaction() as (conn, now):
             row = conn.execute(
                 "SELECT version,body FROM cp_documents WHERE collection='mfa' AND id=?", (actor,)
             ).fetchone()
@@ -139,8 +157,7 @@ class IdentityService:
     def session(self, token: str, config_digest: str) -> dict:
         if not isinstance(token, str) or not 32 <= len(token) <= 128:
             raise ValueError("invalid_session")
-        with self.db.transaction() as conn:
-            now = self._now(conn)
+        with self._timed_transaction() as (conn, now):
             row = conn.execute(
                 "SELECT body FROM cp_documents WHERE collection='sessions' AND id=?",
                 (hashlib.sha256(token.encode()).hexdigest(),),

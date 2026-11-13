@@ -123,7 +123,7 @@ def test_partial_fill_then_completion_updates_cash_and_position(db):
     assert report["mismatches"] == []
     assert report["fields"][0]["expected"] == "0"
     assert report["fields"][0]["recorded"] == "0"
-    assert report["daily_loss_basis"] == "realized_pnl"
+    assert report["daily_loss_basis"] == "realized_plus_adverse_unrealized"
     assert report["live_execution"] is False
 
 

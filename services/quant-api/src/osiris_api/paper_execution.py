@@ -25,6 +25,8 @@ from .risk import RiskLimits, check_execution
 
 # There is no branch that submits a broker order. A true value still refuses.
 LIVE_EXECUTION_ENABLED = False
+# Realized P&L plus only negative unrealized P&L. Gains do not offset a loss.
+DAILY_LOSS_BASIS = "realized_plus_adverse_unrealized"
 
 # Paper-only lifecycle. "new" is transient and is never stored.
 ORDER_STATES = (
@@ -374,6 +376,62 @@ def _expected_unrealized(
     return total, unmarked
 
 
+def _open_positions(conn: sqlite3.Connection) -> dict[str, tuple[Decimal, Decimal]]:
+    return {
+        row["symbol"]: (Decimal(row["quantity"]), Decimal(row["average_cost"]))
+        for row in conn.execute(
+            "SELECT symbol, quantity, average_cost FROM paper_exec_positions"
+        )
+    }
+
+
+def _fresh_mark_prices(
+    conn: sqlite3.Connection, account: sqlite3.Row, now: object,
+) -> dict[str, Decimal]:
+    prices: dict[str, Decimal] = {}
+    for row in conn.execute("SELECT symbol, price, observed_at FROM paper_exec_marks"):
+        if _fresh(account, row["observed_at"], now):
+            prices[row["symbol"]] = Decimal(row["price"])
+    return prices
+
+
+def _adverse_daily_pnl(
+    conn: sqlite3.Connection, account: sqlite3.Row, *, symbol: str, price: Decimal, now: object,
+) -> tuple[Decimal | None, str | None]:
+    """Realized P&L plus adverse unrealized loss, and the gate reason if any.
+
+    Unrealized gains do not reduce a realized loss. The execution price is a
+    fresh observation for ``symbol``; a fresher stored mark is used when it is
+    lower. Any other holding without a fresh mark makes the loss unknown.
+    A known realized breach is reported even when marks are missing.
+    """
+    limit = Decimal(account["max_daily_loss"])
+    realized = Decimal(account["realized_pnl"])
+    positions = _open_positions(conn)
+    if not positions:
+        reason = "daily_loss_limit_reached" if realized <= -limit else None
+        return realized, reason
+    fresh = _fresh_mark_prices(conn, account, now)
+    marks: dict[str, Decimal] = {}
+    for held in positions:
+        if held == symbol:
+            observed = price
+            if held in fresh:
+                observed = min(observed, fresh[held])
+            marks[held] = observed
+        elif held in fresh:
+            marks[held] = fresh[held]
+    unrealized, unmarked = _expected_unrealized(positions, marks)
+    if unmarked:
+        if realized <= -limit:
+            return realized, "daily_loss_limit_reached"
+        return None, "unrealized_pnl_unavailable"
+    adverse = realized + (unrealized if unrealized < 0 else Decimal("0"))
+    if adverse <= -limit:
+        return adverse, "daily_loss_limit_reached"
+    return adverse, None
+
+
 def _order_breaks(conn: sqlite3.Connection) -> list[str]:
     breaks: list[str] = []
     filled_by_order: dict[str, Decimal] = {}
@@ -696,11 +754,14 @@ def _open_buy_exposure(conn: sqlite3.Connection, symbol: str) -> tuple[Decimal, 
     return symbol_notional, gross
 
 
-def execution_context(*, symbol: Any, price: Any, side: str = "BUY") -> dict[str, Any]:
+def execution_context(
+    *, symbol: Any, price: Any, side: str = "BUY", now: object = None,
+) -> dict[str, Any]:
     """Read authoritative paper risk inputs from one consistent ledger snapshot.
 
     This is proposal context, not an approval: submission and working fills
     independently recheck the persisted account inside their write transaction.
+    ``now`` is the decision clock used to decide whether stored marks are fresh.
     """
     normalized = _normalize_symbol(symbol)
     px = _number(price, positive=True)
@@ -718,11 +779,16 @@ def execution_context(*, symbol: Any, price: Any, side: str = "BUY") -> dict[str
                 position += pending_position
                 gross += pending_gross
             limits = _limits_from_row(account)
+            adverse, _loss_reason = _adverse_daily_pnl(
+                conn, account, symbol=normalized, price=px, now=now,
+            )
             return {
                 "current_position_notional": _canonical(position),
                 "current_gross_exposure": _canonical(gross),
-                "daily_pnl": account["realized_pnl"],
-                "daily_loss_basis": "realized_pnl",
+                "daily_pnl": account["realized_pnl"] if adverse is None else _canonical(adverse),
+                "adverse_daily_pnl": None if adverse is None else _canonical(adverse),
+                "daily_loss_ready": adverse is not None,
+                "daily_loss_basis": DAILY_LOSS_BASIS,
                 "cash": account["cash"],
                 "kill_switch_active": bool(account["kill_switch"]),
                 "limits": {
@@ -744,7 +810,7 @@ def execution_context(*, symbol: Any, price: Any, side: str = "BUY") -> dict[str
 
 def _fill_risk_reason(
     conn: sqlite3.Connection, account: sqlite3.Row, order: sqlite3.Row,
-    quantity: Decimal, price: Decimal,
+    quantity: Decimal, price: Decimal, now: object,
 ) -> str | None:
     """An accepted order is not a permanent exemption from current risk limits."""
     position, gross = _book(conn, order["symbol"], price)
@@ -768,18 +834,21 @@ def _fill_risk_reason(
         return "risk_service_unavailable"
     if not approved:
         return reason
-    return _decimal_risk_reason(account, order["side"], quantity, price, position, gross)
+    return _decimal_risk_reason(
+        conn, account, order["side"], order["symbol"], quantity, price, position, gross, now,
+    )
 
 
 def _decimal_risk_reason(
-    account: sqlite3.Row, side: str, qty: Decimal, price: Decimal,
-    position: Decimal, gross: Decimal,
+    conn: sqlite3.Connection, account: sqlite3.Row, side: str, symbol: str,
+    qty: Decimal, price: Decimal, position: Decimal, gross: Decimal, now: object,
 ) -> str | None:
     """Veto float approvals against exact ledger amounts at risk boundaries.
 
     Repeating average costs and realized P&L cannot round-trip through float.
     They must remain usable risk inputs without letting float rounding approve
-    an amount just beyond a persisted limit.
+    an amount just beyond a persisted limit. Adverse unrealized loss is part
+    of that exact check. A missing mark on another holding fails closed.
     """
     notional = qty * price
     if notional > Decimal(account["max_order_notional"]):
@@ -787,8 +856,11 @@ def _decimal_risk_reason(
     if side == "BUY":
         if position + notional > Decimal(account["max_position_notional"]):
             return "max_position_notional_exceeded"
-        if Decimal(account["realized_pnl"]) <= -Decimal(account["max_daily_loss"]):
-            return "daily_loss_limit_reached"
+        _adverse, loss_reason = _adverse_daily_pnl(
+            conn, account, symbol=symbol, price=price, now=now,
+        )
+        if loss_reason is not None:
+            return loss_reason
         if gross + notional > Decimal(account["max_gross_exposure"]):
             return "exposure_budget_exceeded"
     elif notional > position or notional > gross:
@@ -966,7 +1038,9 @@ def _submit_new_order(
     except Exception:
         approved, reason, limits_evaluated = False, "risk_service_unavailable", False
     if approved:
-        exact_reason = _decimal_risk_reason(account, side, qty, px, position_notional, gross)
+        exact_reason = _decimal_risk_reason(
+            conn, account, side, symbol, qty, px, position_notional, gross, now,
+        )
         if exact_reason is not None:
             approved, reason = False, exact_reason
     realized_delta = Decimal("0")
@@ -1261,7 +1335,7 @@ def apply_paper_fill(
                 if order["state"] not in OPEN_ORDER_STATES:
                     problem = "invalid_order_transition"
                 if problem is None:
-                    problem = _fill_risk_reason(conn, account, order, fill_qty, fill_px)
+                    problem = _fill_risk_reason(conn, account, order, fill_qty, fill_px, now)
                 if problem is not None:
                     event = (
                         "invalid_order_transition"
@@ -1565,7 +1639,7 @@ def _build_reconciliation_report(conn: sqlite3.Connection, account: sqlite3.Row)
         "positions": position_rows,
         "warnings": [f"unmarked:{symbol}" for symbol in unmarked],
         "open_orders": open_orders,
-        "daily_loss_basis": "realized_pnl",
+        "daily_loss_basis": DAILY_LOSS_BASIS,
         "live_execution": False,
         "broker_order_submitted": False,
         "mode": "paper_only",
@@ -1588,7 +1662,7 @@ def reconciliation_report(*, record_mismatch: bool = False) -> dict[str, Any]:
                         "field": "account", "expected": "initialized", "recorded": None,
                     }],
                     "fields": [], "positions": [], "warnings": [], "open_orders": [],
-                    "daily_loss_basis": "realized_pnl",
+                    "daily_loss_basis": DAILY_LOSS_BASIS,
                     "live_execution": False, "broker_order_submitted": False, "mode": "paper_only",
                 }
             try:
@@ -1601,7 +1675,7 @@ def reconciliation_report(*, record_mismatch: bool = False) -> dict[str, Any]:
                         "field": "audit", "expected": "intact", "recorded": "corrupt",
                     }],
                     "fields": [], "positions": [], "warnings": [], "open_orders": [],
-                    "daily_loss_basis": "realized_pnl",
+                    "daily_loss_basis": DAILY_LOSS_BASIS,
                     "live_execution": False, "broker_order_submitted": False, "mode": "paper_only",
                 }
             report = _build_reconciliation_report(conn, account)
@@ -1773,7 +1847,7 @@ def execution_status(*, read_only: bool = False) -> dict[str, Any]:
                     "initialized": account is not None,
                     "passed": False, "breaks": [error],
                     "fields": [], "positions": [], "warnings": [], "open_orders": [],
-                    "mismatches": [], "daily_loss_basis": "realized_pnl",
+                    "mismatches": [], "daily_loss_basis": DAILY_LOSS_BASIS,
                     "live_execution": False, "broker_order_submitted": False,
                     "mode": "paper_only",
                 }
@@ -1782,6 +1856,82 @@ def execution_status(*, read_only: bool = False) -> dict[str, Any]:
             return {"account": _snapshot(conn), "reconciliation": report}
         finally:
             conn.close()
+
+
+def daily_loss_gate() -> dict[str, Any]:
+    """Read-only paper daily-loss gate. Does not create or write the ledger.
+
+    Amounts are returned only when reconciliation passed and the same realized
+    P&L is still on the account row. The comparison matches the execution
+    check: realized P&L at or below the negative limit is ``limit_reached``.
+    """
+    blank = {
+        "basis": "realized_pnl",
+        "state": "unavailable",
+        "reason": "account_unavailable",
+        "realized_pnl": None,
+        "limit": None,
+        "live_execution": False,
+    }
+    path = os.getenv("OSIRIS_PAPER_EXECUTION_DB", "")
+    if not path or path == ":memory:":
+        blank["reason"] = "not_configured"
+        return blank
+    if not Path(path).is_file():
+        blank["reason"] = "not_initialized"
+        return blank
+    try:
+        current = execution_status(read_only=True)
+    except (ValueError, ArithmeticError, sqlite3.Error, OSError):
+        return blank
+    account = current.get("account") if isinstance(current, dict) else None
+    report = current.get("reconciliation") if isinstance(current, dict) else None
+    if not isinstance(account, dict) or not isinstance(report, dict):
+        return blank
+    if account.get("live_execution") is not False or account.get("broker_order_submitted") is not False:
+        return blank
+    if account.get("initialized") is not True:
+        blank["reason"] = "not_initialized"
+        return blank
+    if report.get("passed") is not True:
+        blank["reason"] = "reconciliation_unavailable"
+        return blank
+    connection = None
+    try:
+        connection = sqlite3.connect(
+            Path(path).resolve().as_uri() + "?mode=ro", uri=True, timeout=15,
+        )
+        connection.row_factory = sqlite3.Row
+        row = connection.execute(
+            "SELECT realized_pnl, max_daily_loss FROM paper_exec_meta WHERE id=1"
+        ).fetchone()
+    except (sqlite3.Error, OSError):
+        return blank
+    finally:
+        if connection is not None:
+            connection.close()
+    if row is None:
+        blank["reason"] = "not_initialized"
+        return blank
+    try:
+        realized = Decimal(row["realized_pnl"])
+        limit = Decimal(row["max_daily_loss"])
+        recorded = Decimal(str(account["realized_pnl"]))
+    except (InvalidOperation, TypeError, KeyError, ArithmeticError):
+        return blank
+    if (
+        not realized.is_finite() or not limit.is_finite() or not recorded.is_finite()
+        or realized != recorded or limit < 0
+    ):
+        return blank
+    return {
+        "basis": "realized_pnl",
+        "state": "limit_reached" if realized <= -limit else "clear",
+        "reason": None,
+        "realized_pnl": _canonical(realized),
+        "limit": _canonical(limit),
+        "live_execution": False,
+    }
 
 
 def account_valuation(
