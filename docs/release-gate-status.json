@@ -520,14 +520,52 @@
         "apps/web/src/AdminCentre.tsx",
         "services/quant-api/src/osiris_api/admin_centre.py",
         "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md",
-        "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json"
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json",
+        "https://github.com/Osiris6900/osiris-eye/pull/308",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42679237031"
       ],
       "evidence_commits": [
         "0a610db74cac5381ebbb4abe358286a80a6e6298",
-        "5176eae8843a1e5144ac903f37843fe9bb46cdd9"
+        "5176eae8843a1e5144ac903f37843fe9bb46cdd9",
+        "3975e8561318a8bb9c360b01aff2d0c2b941861e"
       ],
-      "open_prs": [],
-      "blocker": "Authenticated canonical account/risk/feed/network/source views, actual Rust receipt metrics, role/MFA boundaries and Chromium navigation are implemented. Genuine source connections, sustained authenticated-node monitoring/alerts and independent operational acceptance remain pending."
+      "open_prs": [
+        308
+      ],
+      "blocker": "Authenticated canonical account/risk/feed/network/source views, actual Rust receipt metrics, role/MFA boundaries and Chromium navigation are implemented. Genuine source connections, sustained authenticated-node monitoring/alerts and independent operational acceptance remain pending.",
+      "contributions": [
+        {
+          "pr": 308,
+          "class": "scaffolding",
+          "tracker_items_on_pr": "none",
+          "related_rows": [
+            "T17",
+            "T18"
+          ],
+          "github_state": "closed-unmerged",
+          "stacked_on": 284,
+          "merge_note": "stacked on #284, merge #284 first; scaffolding only",
+          "head": "3975e8561318a8bb9c360b01aff2d0c2b941861e",
+          "ci": [
+            {
+              "run": 42679237031,
+              "name": "CI",
+              "conclusion": "success"
+            },
+            {
+              "run": 42679237305,
+              "name": "Dependency Security Audit",
+              "conclusion": "success"
+            },
+            {
+              "run": 42679237321,
+              "name": "Quant API CI",
+              "conclusion": "success"
+            }
+          ],
+          "satisfies_tracker": false
+        }
+      ]
     },
     {
       "id": "T18",
@@ -544,14 +582,19 @@
         "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md",
         "https://github.com/Osiris6900/osiris-eye/pull/307",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42685744834",
-        "docs/evidence/deploy-recovery.schema.json"
+        "docs/evidence/deploy-recovery.schema.json",
+        "https://github.com/Osiris6900/osiris-eye/pull/308",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42679237031"
       ],
       "evidence_commits": [
         "0a610db74cac5381ebbb4abe358286a80a6e6298",
         "efc40cd1040d33042586e190e834f33cdd1237cb",
-        "187f0c16a2afdb3a37bbe3950d841816d8fe5115"
+        "187f0c16a2afdb3a37bbe3950d841816d8fe5115",
+        "3975e8561318a8bb9c360b01aff2d0c2b941861e"
       ],
-      "open_prs": [],
+      "open_prs": [
+        308
+      ],
       "blocker": "Actual temporary SQLite backup/restore/continuation, cross-runner integrity intake, authority fencing and rollout/rollback checks are implemented. Approved independent-host service DR with measured RTO/RPO, accepted custody/storage and operator signoff remain pending. #307 is scaffolding only (dry-run 42685744834 on merge 187f0c16). It does not implement this row. Next evidence: a real staging recovery drill artifact conforming to docs/evidence/deploy-recovery.schema.json.",
       "contributions": [
         {
@@ -601,6 +644,37 @@
             "no retained recovery drill",
             "live execution stays disabled"
           ]
+        },
+        {
+          "pr": 308,
+          "class": "scaffolding",
+          "tracker_items_on_pr": "none",
+          "related_rows": [
+            "T17",
+            "T18"
+          ],
+          "github_state": "closed-unmerged",
+          "stacked_on": 284,
+          "merge_note": "stacked on #284, merge #284 first; scaffolding only",
+          "head": "3975e8561318a8bb9c360b01aff2d0c2b941861e",
+          "ci": [
+            {
+              "run": 42679237031,
+              "name": "CI",
+              "conclusion": "success"
+            },
+            {
+              "run": 42679237305,
+              "name": "Dependency Security Audit",
+              "conclusion": "success"
+            },
+            {
+              "run": 42679237321,
+              "name": "Quant API CI",
+              "conclusion": "success"
+            }
+          ],
+          "satisfies_tracker": false
         }
       ]
     },

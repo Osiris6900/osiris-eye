@@ -14,6 +14,7 @@ Base of this note: `main`. The checkbox inventory is [PR #275](https://github.co
 8. **#268** (#179) only if #277 is not merged. Same new test file. #277 has merged, so this row is optional.
 9. **#278** (#180) has merged. Read-only fills and outbox status; `peer_count` stays null.
 10. **#284** (#180) has merged after #278. The read-only enrolled-identity registry passed CI and dependency audit on its PR head. This is enrollment inventory, not live peer telemetry; T17 stays Partial.
+11. **#308** (#180) immediately after #284. Stacked on #284, merge #284 first; scaffolding only. Tracker items on the PR are none. #284 has merged. The pull request is closed without a merge. Head `3975e8561318a8bb9c360b01aff2d0c2b941861e` has green CI [42679237031](https://github.com/Osiris6900/osiris-eye/actions/runs/42679237031), audit [42679237305](https://github.com/Osiris6900/osiris-eye/actions/runs/42679237305), and Quant API CI [42679237321](https://github.com/Osiris6900/osiris-eye/actions/runs/42679237321). That is not acceptance evidence. T17 and T18 stay Partial. Rebase onto main before any merge.
 11. **#271** (#180) follows #284. Verify its health projection against the current `admin_centre` permissions before merging.
 12. **#272** (#181). Staging config check. Not a restore drill.
 13. **#270** (#177) after a review against the existing receipt path.
