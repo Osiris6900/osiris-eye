@@ -31,7 +31,7 @@ from typing import Any, Iterable, Mapping
 from urllib.parse import quote
 
 from . import authorized_feeds
-from .p2p_local_health import read_local_node_health
+from .p2p_local_health import read_local_node_health, software_version
 from .admin_alert_store import (
     ALERT_DB_ENV, AlertStoreError, acknowledge_stored_alert,
     record_raised_alerts, resolve_alert_db_path, unavailable_alert_history,
@@ -300,6 +300,7 @@ PAPER_SCHEMA = "osiris.admin_paper_status.v1"
 RISK_SCHEMA = "osiris.admin_risk_status.v1"
 OVERVIEW_SCHEMA = "osiris.admin_overview.v1"
 MONITORING_SCHEMA = "osiris.admin_monitoring.v1"
+OPERATIONS_SCHEMA = "osiris.admin_operations.v1"
 
 QUALITY_REVIEW_MAX_AGE_SECONDS = 30 * 24 * 60 * 60.0  # mirrors feed_admission
 OUTBOX_BACKLOG_ALERT_THRESHOLD = 100
@@ -308,6 +309,7 @@ IDENTITY_DB_ENV = "OSIRIS_P2P_DB_PATH"
 # Same default as P2PIdentityRegistry. A missing file is never created here.
 DEFAULT_IDENTITY_DB_PATH = "./data/osiris-p2p.sqlite3"
 PEER_NODE_LIST_LIMIT = 50
+OPEN_POSITION_LIMIT = 50
 _NODE_ID_RE = re.compile(r"^[0-9a-f]{64}$")
 _ISO_UTC_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?\+00:00$")
 _TRUST_LEVELS = frozenset({"trusted", "public_untrusted"})
@@ -922,6 +924,303 @@ def monitoring_status(
         "peer_health": _peer_health_summary(peer if isinstance(peer, Mapping) else None),
         "node_status": _node_status(local if isinstance(local, Mapping) else None, ingestion_enabled=ingestion),
         "paper": _paper_operational_view(paper if paper_allowed else None, allowed=paper_allowed),
+    }
+
+
+def _canonical_money(number: Decimal) -> str | None:
+    if not number.is_finite():
+        return None
+    text = format(number, "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    text = text or "0"
+    if len(text) > 40 or _DECIMAL_TEXT.fullmatch(text) is None:
+        return None
+    return text
+
+
+def _operations_local(local: Mapping[str, Any] | None, generated: str) -> dict[str, Any]:
+    """One local loopback node. PeerId is never copied into status or version."""
+    status = _node_status(local, ingestion_enabled=False)
+    if status["status"] != "observed" or not isinstance(local, Mapping):
+        reason = status.get("reason")
+        return {
+            "source": "loopback_local_node",
+            "status": "unavailable",
+            "reason": reason if reason in _NODE_REASONS else "health_unreachable_or_invalid",
+            "last_seen_at": None,
+            "last_seen_meaning": None,
+            "version": None,
+            "version_reason": "not_reported",
+            "liveness": "not_observed",
+            "authenticated_or_attested": False,
+        }
+    version = software_version(local.get("version"))
+    return {
+        "source": "loopback_local_node",
+        "status": "ready" if status["ready"] is True else "not_ready",
+        "reason": None,
+        "last_seen_at": generated,
+        "last_seen_meaning": "admin_probe_time_not_node_clock",
+        "version": version,
+        "version_reason": "reported" if version else "not_reported",
+        "liveness": "loopback_probe",
+        "authenticated_or_attested": False,
+    }
+
+
+def _operations_nodes(network: Mapping[str, Any] | None, generated: str) -> dict[str, Any]:
+    peer = _peer_health_view(
+        network.get("peer_health") if isinstance(network, Mapping) else None
+    )
+    local_raw = network.get("local_live_node") if isinstance(network, Mapping) else None
+    enrolled: list[dict[str, Any]] = []
+    if peer["status"] == "enrolled_registry":
+        for item in peer["nodes"]:
+            enrolled.append({
+                "source": "identity_registry",
+                "node_id": item["node_id"],
+                "status": "enrolled",
+                "trust_level": item["trust_level"],
+                "last_seen_at": item["last_enrollment_observed_at"],
+                "last_seen_meaning": "enrollment_or_reenrollment_not_liveness",
+                "version": None,
+                "version_reason": "not_recorded",
+                "liveness": "not_observed",
+            })
+    return {
+        "status": peer["status"],
+        "reason": peer["reason"],
+        "enrolled_count": peer["peer_count"] if peer["status"] == "enrolled_registry" else None,
+        "nodes_truncated": peer["nodes_truncated"] is True and peer["status"] == "enrolled_registry",
+        "nodes": enrolled,
+        "local": _operations_local(local_raw if isinstance(local_raw, Mapping) else None, generated),
+    }
+
+
+def _kill_switch_view(ingestion_enabled: bool, paper_state: str, halted: bool | None) -> dict[str, Any]:
+    return {
+        "ingestion_enabled": ingestion_enabled is True,
+        "ingestion_state": "enabled" if ingestion_enabled is True else "disabled",
+        "paper_execution_halted": halted,
+        "paper_execution_state": paper_state,
+        "live_trading_authorized": False,
+    }
+
+
+def _daily_loss_view(state: str, *, reason: str | None = None) -> dict[str, Any]:
+    return {
+        "basis": None,
+        "state": state,
+        "reason": state if reason is None else reason,
+        "realized_pnl": None,
+        "limit": None,
+        "live_execution": False,
+    }
+
+
+def _accept_daily_loss(raw: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Keep a paper daily-loss gate only when its amounts recompute the same state."""
+    rejected = _daily_loss_view("unavailable", reason="account_unavailable")
+    if not isinstance(raw, Mapping) or raw.get("live_execution") is not False:
+        return rejected
+    if raw.get("basis") != "realized_pnl" or raw.get("state") not in {"clear", "limit_reached"}:
+        return rejected
+    realized_text = _decimal_text(raw.get("realized_pnl"))
+    limit_text = _decimal_text(raw.get("limit"))
+    if realized_text is None or limit_text is None:
+        return rejected
+    try:
+        realized = Decimal(realized_text)
+        limit = Decimal(limit_text)
+    except InvalidOperation:
+        return rejected
+    if limit < 0 or not realized.is_finite() or not limit.is_finite():
+        return rejected
+    expected = "limit_reached" if realized <= -limit else "clear"
+    if raw.get("state") != expected:
+        return rejected
+    realized_out = _canonical_money(realized)
+    limit_out = _canonical_money(limit)
+    if realized_out is None or limit_out is None:
+        return rejected
+    return {
+        "basis": "realized_pnl",
+        "state": expected,
+        "reason": None,
+        "realized_pnl": realized_out,
+        "limit": limit_out,
+        "live_execution": False,
+    }
+
+
+def _load_daily_loss_gate() -> dict[str, Any] | None:
+    try:
+        from .paper_execution import daily_loss_gate
+
+        gate = daily_loss_gate()
+    except (ValueError, ArithmeticError, sqlite3.Error, OSError, ImportError):
+        return None
+    return gate if isinstance(gate, Mapping) else None
+
+
+def _open_position_rows(positions: Any) -> tuple[list[dict[str, str]] | None, int | None, bool]:
+    if not isinstance(positions, list):
+        return None, None, False
+    rows: list[dict[str, str]] = []
+    for item in positions:
+        if not isinstance(item, Mapping):
+            return None, None, False
+        symbol = item.get("symbol")
+        quantity = _decimal_text(item.get("quantity"))
+        average = _decimal_text(item.get("average_cost"))
+        if not isinstance(symbol, str) or _SYMBOL_TEXT.fullmatch(symbol) is None:
+            return None, None, False
+        if quantity is None or average is None:
+            return None, None, False
+        try:
+            qty = Decimal(quantity)
+            cost = Decimal(average)
+        except InvalidOperation:
+            return None, None, False
+        if not qty.is_finite() or not cost.is_finite() or cost < 0:
+            return None, None, False
+        if qty == 0:
+            continue
+        shown_qty = _canonical_money(qty)
+        shown_cost = _canonical_money(cost)
+        if shown_qty is None or shown_cost is None:
+            return None, None, False
+        rows.append({"symbol": symbol, "quantity": shown_qty, "average_cost": shown_cost})
+    truncated = len(rows) > OPEN_POSITION_LIMIT
+    return rows[:OPEN_POSITION_LIMIT], len(rows), truncated
+
+
+def _paper_trading_view(paper: Mapping[str, Any] | None, *, ingestion_enabled: bool) -> dict[str, Any]:
+    """Paper-only kill switch, open positions and daily-loss gate.
+
+    Balances, order ids and marks are left on the paper status route.
+    """
+    denied_numbers = {
+        "source_ledger": None,
+        "mode": None,
+        "open_positions": None,
+        "open_position_count": None,
+        "positions_truncated": False,
+        "live_trading_authorized": False,
+    }
+    if not isinstance(paper, Mapping):
+        return {
+            "status": "unavailable",
+            **denied_numbers,
+            "kill_switch": _kill_switch_view(ingestion_enabled, "unavailable", None),
+            "positions_reason": "unavailable",
+            "daily_loss_gate": _daily_loss_view("unavailable"),
+        }
+    source = paper.get("source_ledger")
+    if source not in _PAPER_SOURCES:
+        return {
+            "status": "unavailable",
+            **denied_numbers,
+            "kill_switch": _kill_switch_view(ingestion_enabled, "unavailable", None),
+            "positions_reason": "unavailable",
+            "daily_loss_gate": _daily_loss_view("unavailable"),
+        }
+    mode_raw = paper.get("mode")
+    mode = mode_raw if mode_raw in _PAPER_MODES else None
+    if source == "canonical_execution":
+        report = paper.get("reconciliation")
+        if not isinstance(report, Mapping) or report.get("passed") is not True:
+            return {
+                "status": "reconciliation_unavailable",
+                "source_ledger": source,
+                "mode": mode,
+                "kill_switch": _kill_switch_view(ingestion_enabled, "unavailable", None),
+                "open_positions": None,
+                "open_position_count": None,
+                "positions_truncated": False,
+                "positions_reason": "reconciliation_unavailable",
+                "daily_loss_gate": _daily_loss_view("reconciliation_unavailable"),
+                "live_trading_authorized": False,
+            }
+    if paper.get("initialized") is not True:
+        return {
+            "status": "not_initialized",
+            "source_ledger": source,
+            "mode": mode,
+            "kill_switch": _kill_switch_view(ingestion_enabled, "unavailable", None),
+            "open_positions": None,
+            "open_position_count": None,
+            "positions_truncated": False,
+            "positions_reason": "not_initialized",
+            "daily_loss_gate": _daily_loss_view("not_initialized"),
+            "live_trading_authorized": False,
+        }
+    if source == "legacy_synthetic":
+        paper_state, halted = "not_stored", None
+        gate = _daily_loss_view("not_stored")
+    else:
+        halt = paper.get("kill_switch_active")
+        if halt is True:
+            paper_state, halted = "halted", True
+        elif halt is False:
+            paper_state, halted = "clear", False
+        else:
+            paper_state, halted = "unavailable", None
+        gate = _accept_daily_loss(_load_daily_loss_gate())
+    positions, count, truncated = _open_position_rows(paper.get("positions"))
+    return {
+        "status": "available",
+        "source_ledger": source,
+        "mode": mode,
+        "kill_switch": _kill_switch_view(ingestion_enabled, paper_state, halted),
+        "open_positions": positions,
+        "open_position_count": count,
+        "positions_truncated": truncated,
+        "positions_reason": None if positions is not None else "unavailable",
+        "daily_loss_gate": gate,
+        "live_trading_authorized": False,
+    }
+
+
+def operations_status(
+    network: Mapping[str, Any],
+    paper: Mapping[str, Any] | None,
+    *,
+    paper_allowed: bool,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Per-node status and a paper-only operational summary.
+
+    ``paper`` is ignored unless ``paper_allowed`` is true. The daily-loss gate
+    is read only for an allowed, reconciled paper execution account.
+    """
+    generated = network.get("generated_at") if isinstance(network, Mapping) else None
+    if not isinstance(generated, str) or _ISO_UTC_RE.fullmatch(generated) is None:
+        generated = _utcnow(now).isoformat()
+    ingestion = isinstance(network, Mapping) and network.get("ingestion_enabled") is True
+    if paper_allowed:
+        trading = _paper_trading_view(paper, ingestion_enabled=ingestion)
+    else:
+        trading = {
+            "status": "permission_denied",
+            "source_ledger": None,
+            "mode": None,
+            "kill_switch": _kill_switch_view(ingestion, "permission_denied", None),
+            "open_positions": None,
+            "open_position_count": None,
+            "positions_truncated": False,
+            "positions_reason": "permission_denied",
+            "daily_loss_gate": _daily_loss_view("permission_denied"),
+            "live_trading_authorized": False,
+        }
+    return {
+        "schema": OPERATIONS_SCHEMA,
+        "generated_at": generated,
+        "read_only": True,
+        "live_trading_authorized": False,
+        "nodes": _operations_nodes(network if isinstance(network, Mapping) else None, generated),
+        "paper_trading": trading,
     }
 
 

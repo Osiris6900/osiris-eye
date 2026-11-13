@@ -59,6 +59,7 @@ admin_authentication_required`; authenticated role without the permission →
 |---|---|---|
 | `GET /admin/overview` | read_health | `osiris.admin_overview.v1` |
 | `GET /admin/monitoring` | read_health; paper block also requires read_research | `osiris.admin_monitoring.v1` |
+| `GET /admin/operations` | read_health; paper block also requires read_research | `osiris.admin_operations.v1` |
 | `GET /admin/network/status` | read_health | `osiris.admin_network_status.v1` |
 | `GET /admin/feeds/status` | read_health | `osiris.admin_feeds_status.v1` |
 | `GET /admin/paper/status` | read_research | `osiris.admin_paper_status.v1` |
@@ -131,6 +132,18 @@ above can `ack`; acknowledgements record role and timestamp.
   order ids. A missing registry or an unreadable local node stays null and is
   not replaced with zeros. The panel does not acknowledge alerts, flip the
   kill switch, revoke feeds, or place orders.
+- `GET /admin/operations` is a read-only per-node and paper-trading view.
+  Enrolled rows report enrollment status and the last enrollment time; software
+  version is `not_recorded` because the identity registry does not store it.
+  The local loopback row reports ready or not ready, the time of this read,
+  and a version only when `/health` already includes a short version string.
+  PeerId and public keys are omitted. The paper block requires `read_research`
+  and otherwise stays `permission_denied` with no symbols, positions, or loss
+  amounts. When allowed, it shows the ingestion flag, the paper execution halt,
+  open paper positions, and the daily-loss gate (`realized_pnl` against
+  `max_daily_loss`, paper only). A legacy ledger reports that gate as
+  `not_stored`. Reconciliation failure hides positions and amounts. The route
+  does not place orders or change either kill switch.
 - The React dashboard is read-only: it does not call kill-switch, feed revoke,
   or alert ack. Those POST routes remain server-side and RBAC-gated.
 - Unrealized P&L is `null` without external marks (`marks_available: false`).
