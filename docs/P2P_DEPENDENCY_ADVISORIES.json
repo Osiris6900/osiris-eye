@@ -13,7 +13,7 @@
       "status": "scanned"
     },
     "crates.io": {
-      "packages": 451,
+      "packages": 452,
       "status": "scanned"
     },
     "npm": {
@@ -97,17 +97,23 @@
   "query": {
     "batch_size": 100,
     "batches": 7,
-    "queried_at": "2026-11-11T21:14:02Z",
+    "queried_at": "2026-11-13T11:15:07Z",
     "querybatch_url": "https://api.osv.dev/v1/querybatch",
     "service": "OSV",
     "vulnerability_url_template": "https://api.osv.dev/v1/vulns/{id}"
   },
   "schema": "osiris.dependency-advisory-report.v1",
   "source": {
-    "commit": "d479d2e5ac2215faf55c61332fa80a3c5ae39b2b",
+    "commit": "2b685c2bc8689422724f1d9eb52ceef660ebb8a7",
     "inputs": {
       "apps/web/package-lock.json": {
         "sha256": "fc7b7c0a8bc7216c037feea96eeae9003d32a059d2f34a538de8313136f21c49"
+      },
+      "crates/native-feed/Cargo.lock": {
+        "sha256": "a3245172f873236cbe927b02085f8c02c1b07a6a1d66166c54e8370524eec938"
+      },
+      "crates/risk-kernel/Cargo.lock": {
+        "sha256": "4323ac3971f58ff86b58615597d6fb3522b0adcd9d34368bf434d7fe4d065f0c"
       },
       "services/p2p-node/Cargo.lock": {
         "sha256": "29ae2856e7576c3e8474ad55478992166d73ddf586e17f7c7622af200287e07c"
@@ -125,7 +131,7 @@
     "advisory_groups": 1,
     "affected_packages": 1,
     "maintenance_only_groups": 1,
-    "queried_packages": 607,
+    "queried_packages": 608,
     "raw_advisory_matches": 1,
     "vulnerability_groups": 0
   }

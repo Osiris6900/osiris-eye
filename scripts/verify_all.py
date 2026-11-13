@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -34,6 +35,9 @@ CHECKS = [
 # default strict release profile, vendor rights or independent-host acceptance.
 ENGINEERING_CHECKS = [
     ("release-inventory", ["python", "scripts/check_release_gate_status.py"], None),
+    ("dependency-advisories", ["python", "scripts/scan_dependency_advisories.py", "--check", "docs/P2P_DEPENDENCY_ADVISORIES.json", "--fail-on-vulnerability"], None),
+    ("python-lock", ["python", "scripts/check_python_lock.py"], None),
+    ("license-provenance", ["python", "scripts/check_license_provenance.py"], None),
     ("supply-chain-sbom", ["python", "scripts/generate_dependency_sbom.py", "--offline", "--crate-cache", "docs/CRATE_LICENSE_PROVENANCE.json", "--output", "@artifacts@/dependency-sbom.json", "--provenance-output", "@artifacts@/dependency-sbom-provenance.json"], None),
     ("p2p-workflows", ["python", "scripts/check_p2p_workflows.py"], None),
     ("rust-risk", ["cargo", "test", "--locked", "--manifest-path", "crates/risk-kernel/Cargo.toml"], None),
@@ -41,7 +45,7 @@ ENGINEERING_CHECKS = [
     ("rust-native", ["cargo", "test", "--locked", "--manifest-path", "crates/native-feed/Cargo.toml"], None),
     ("native-build", ["cargo", "build", "--locked", "--manifest-path", "crates/native-feed/Cargo.toml"], None),
     ("p2p-build", ["cargo", "build", "--locked", "--manifest-path", "services/p2p-node/Cargo.toml", "--bins"], None),
-    ("python-tests", ["python", "-m", "pytest", "-q", "services/quant-api/tests", "tests/test_ultra_fast_feed.py"], None),
+    ("python-tests", ["python", "-m", "pytest", "-q", "services/quant-api/tests", "tests/test_ultra_fast_feed.py", "--junitxml", "@artifacts@/python-tests.xml"], None),
     ("native-process", ["python", "scripts/test_native_feed_process.py"], None),
     ("peer-receipts", ["python", "scripts/test_p2p_delivery_receipts.py"], None),
     ("receipt-paper", ["python", "scripts/run_receipt_paper_acceptance.py", "--output", "@artifacts@/receipt-paper/receipt-paper.json"], None),
@@ -76,7 +80,7 @@ WORKSTREAM_CHECKS = {
 # These checks exercise implementations; inventory acceptance is a separate
 # historical record and must never be inferred from a green local check.
 RELEASE_GATE_CHECKS = {
-    "T01": ["release-inventory", "p2p-workflows", "supply-chain-sbom"],
+    "T01": ["release-inventory", "dependency-advisories", "python-lock", "license-provenance", "p2p-workflows", "supply-chain-sbom"],
     "T02": ["p2p-workflows"], "T03": ["rust-p2p", "peer-receipts"],
     "T04": ["rust-p2p", "peer-receipts"], "T05": ["rust-p2p"],
     "T06": ["security-intake"], "T07": ["python-tests", "vendor-intake"],
@@ -106,6 +110,32 @@ def run_check(name, command, cwd, timeout, extra_env=None):
     return {"name": name, "status": "passed" if result.returncode == 0 else "failed",
             "exit_code": result.returncode,
             "output_tail": (result.stdout + "\n" + result.stderr)[-4000:]}
+
+
+def require_complete_pytest(result, report_path):
+    """Exit zero alone can hide skipped integration tests. Require actual cases."""
+    if result["status"] != "passed":
+        return result
+    try:
+        raw = report_path.read_bytes()
+        root = ET.fromstring(raw)
+        if root.tag not in {"testsuites", "testsuite"}:
+            raise ValueError("unexpected JUnit report root")
+        cases = list(root.iter("testcase"))
+        if not cases:
+            raise ValueError("JUnit report contains no tests")
+        skipped = sum(case.find("skipped") is not None for case in cases)
+        failures = sum(case.find("failure") is not None or case.find("error") is not None
+                       for case in cases)
+        result = {**result, "test_evidence": {
+            "path": str(report_path), "sha256": hashlib.sha256(raw).hexdigest(),
+            "test_cases": len(cases), "skipped": skipped, "failures": failures,
+        }}
+        if skipped or failures:
+            raise ValueError(f"incomplete Python test evidence: {skipped} skipped, {failures} failed")
+    except (OSError, ValueError, ET.ParseError) as error:
+        return {**result, "status": "failed", "reason": str(error)}
+    return result
 
 
 def source_snapshot():
@@ -202,13 +232,18 @@ def main():
         environment = None
         if args.profile == "engineering":
             command = [part.replace("@artifacts@", str(artifacts)).replace("@commit@", before["git_head"]) for part in command]
+            if command[0] == "python":
+                command[0] = sys.executable
             environment = {
                 "OSIRIS_TEST_PYTHON": sys.executable,
                 "OSIRIS_P2P_TEST_BINARY": str(ROOT / "services/p2p-node/target/debug/osiris-p2p-node"),
                 "OSIRIS_NATIVE_TEST_BINARY": str(ROOT / "crates/native-feed/target/debug/osiris-native-feed"),
                 "OSIRIS_BROWSER_ARTIFACTS": str(artifacts / "browser"),
             }
-        results.append(run_check(name, command, cwd, args.timeout, environment))
+        result = run_check(name, command, cwd, args.timeout, environment)
+        if args.profile == "engineering" and name == "python-tests":
+            result = require_complete_pytest(result, artifacts / "python-tests.xml")
+        results.append(result)
     report = build_report(results) if before is None else engineering_report(results, before, source_snapshot())
     if artifacts:
         report["artifact_directory"] = str(artifacts)

@@ -18,6 +18,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import subprocess
 import time
 import tomllib
 from typing import Any, Callable
@@ -33,6 +34,28 @@ MAINTENANCE_SCHEMA = "osiris.osv-maintenance-only.v1"
 API_BASE = "https://api.osv.dev/v1"
 USER_AGENT = "osiris-eye-dependency-advisory-scan (https://github.com/Osiris6900/osiris-eye)"
 COMMIT_RE = re.compile(r"[0-9a-f]{40}\Z")
+ADDITIONAL_CARGO_LOCKS = ("crates/native-feed/Cargo.lock", "crates/risk-kernel/Cargo.lock")
+
+
+def cargo_lock_inputs(root: Path) -> dict[str, Path]:
+    return {name: root / name for name in ADDITIONAL_CARGO_LOCKS}
+
+
+def input_files(cargo_lock, npm_lock, pyproject, python_lock, additional_cargo_locks):
+    files = {
+        "services/p2p-node/Cargo.lock": cargo_lock,
+        "apps/web/package-lock.json": npm_lock,
+        "services/quant-api/pyproject.toml": pyproject,
+    }
+    if python_lock is not None:
+        files[LOCK_RELATIVE_PATH] = python_lock
+    for relative, path in (additional_cargo_locks or {}).items():
+        if (not isinstance(relative, str) or not relative.strip()
+                or Path(relative).is_absolute() or ".." in Path(relative).parts
+                or relative in files or relative == LOCK_RELATIVE_PATH):
+            raise ValueError("invalid additional Cargo lock identity")
+        files[relative] = path
+    return files
 
 
 def sha256_file(path: Path) -> str:
@@ -43,8 +66,17 @@ def locked_packages(
     cargo_lock: Path,
     npm_lock: Path,
     python_lock: Path | None = None,
+    additional_cargo_locks: dict[str, Path] | None = None,
 ) -> list[dict[str, str]]:
-    _, crates = cargo_packages(cargo_lock)
+    by_crate = {}
+    for lock in [cargo_lock, *(additional_cargo_locks or {}).values()]:
+        _, records = cargo_packages(lock)
+        for record in records:
+            key = record["name"], record["version"]
+            if key in by_crate and by_crate[key]["checksum"] != record["checksum"]:
+                raise ValueError(f"conflicting Cargo checksum for {key[0]}@{key[1]}")
+            by_crate[key] = record
+    crates = list(by_crate.values())
     _, locked_npm = npm_packages(npm_lock)
     packages = [
         {"ecosystem": "crates.io", "name": package["name"], "version": package["version"]}
@@ -58,7 +90,8 @@ def locked_packages(
             {"ecosystem": "PyPI", "name": entry.normalized_name, "version": entry.version}
             for entry in parse_hashed_lock(python_lock)
         ]
-    return sorted(packages, key=lambda p: (p["ecosystem"], p["name"], p["version"]))
+    unique = {(p["ecosystem"], p["name"], p["version"]): p for p in packages}
+    return [unique[key] for key in sorted(unique)]
 
 
 def load_maintenance_only(path: Path) -> dict[str, dict[str, str]]:
@@ -122,19 +155,32 @@ class OsvClient:
             if not isinstance(results, list) or len(results) != len(batch):
                 raise ValueError("OSV querybatch returned a missing or misaligned result list")
             for package, result in zip(batch, results):
-                if not isinstance(result, dict):
-                    raise ValueError("OSV querybatch returned a non-object result")
-                vulnerabilities = result.get("vulns", [])
-                if not isinstance(vulnerabilities, list):
-                    raise ValueError("OSV querybatch returned invalid vulnerabilities")
-                seen = set()
-                for vulnerability in vulnerabilities:
-                    advisory_id = vulnerability.get("id") if isinstance(vulnerability, dict) else None
-                    if not isinstance(advisory_id, str) or not advisory_id:
-                        raise ValueError("OSV querybatch returned a vulnerability without an ID")
-                    if advisory_id not in seen:
-                        matches.append((package, advisory_id))
-                        seen.add(advisory_id)
+                seen, tokens = set(), set()
+                while True:
+                    if not isinstance(result, dict):
+                        raise ValueError("OSV querybatch returned a non-object result")
+                    vulnerabilities = result.get("vulns", [])
+                    if not isinstance(vulnerabilities, list):
+                        raise ValueError("OSV querybatch returned invalid vulnerabilities")
+                    for vulnerability in vulnerabilities:
+                        advisory_id = vulnerability.get("id") if isinstance(vulnerability, dict) else None
+                        if not isinstance(advisory_id, str) or not advisory_id:
+                            raise ValueError("OSV querybatch returned a vulnerability without an ID")
+                        if advisory_id not in seen:
+                            matches.append((package, advisory_id))
+                            seen.add(advisory_id)
+                    token = result.get("next_page_token", "")
+                    if not isinstance(token, str):
+                        raise ValueError("OSV returned an invalid page token")
+                    if not token:
+                        break
+                    if token in tokens or len(tokens) >= 100:
+                        raise ValueError("OSV pagination repeated or exceeded its bound")
+                    tokens.add(token)
+                    result = self._json(f"{API_BASE}/query", {
+                        "package": {"ecosystem": package["ecosystem"], "name": package["name"]},
+                        "version": package["version"], "page_token": token,
+                    })
         return matches
 
     def vulnerability(self, advisory_id: str) -> dict:
@@ -238,10 +284,13 @@ def build_report(
     queried_at: str | None = None,
     batch_size: int = 100,
     python_lock: Path | None = None,
+    additional_cargo_locks: dict[str, Path] | None = None,
 ) -> dict:
     if not COMMIT_RE.fullmatch(source_commit):
         raise ValueError("source commit must be a full lowercase 40-character Git SHA")
-    packages = locked_packages(cargo_lock, npm_lock, python_lock)
+    files = input_files(cargo_lock, npm_lock, pyproject, python_lock, additional_cargo_locks)
+    inputs = {name: {"sha256": sha256_file(path)} for name, path in files.items()}
+    packages = locked_packages(cargo_lock, npm_lock, python_lock, additional_cargo_locks)
     matches = client.querybatch(packages, batch_size)
     record_ids = sorted({advisory_id for _, advisory_id in matches})
     records = {advisory_id: client.vulnerability(advisory_id) for advisory_id in record_ids}
@@ -251,11 +300,6 @@ def build_report(
     for package in packages:
         counts[package["ecosystem"]] += 1
     python_project = tomllib.loads(pyproject.read_text()).get("project", {})
-    inputs = {
-        "apps/web/package-lock.json": {"sha256": sha256_file(npm_lock)},
-        "services/p2p-node/Cargo.lock": {"sha256": sha256_file(cargo_lock)},
-        "services/quant-api/pyproject.toml": {"sha256": sha256_file(pyproject)},
-    }
     if python_lock is not None:
         python_coverage = {
             "status": "scanned",
@@ -263,7 +307,6 @@ def build_report(
             "lock": LOCK_RELATIVE_PATH,
             "declared_requirements": python_project.get("dependencies", []),
         }
-        inputs[LOCK_RELATIVE_PATH] = {"sha256": sha256_file(python_lock)}
         python_limitation = (
             "The Python scan covers only the exact pins in the hashed deployment lock; "
             "development and CI environments installed from pyproject ranges are outside its scope."
@@ -276,6 +319,8 @@ def build_report(
             "reason": "pyproject.toml contains version ranges, not a supported resolved and hashed deployment lock; Python packages were not queried.",
         }
         python_limitation = "Python deployment dependencies remain unresolved and were not scanned."
+    if inputs != {name: {"sha256": sha256_file(path)} for name, path in files.items()}:
+        raise ValueError("dependency inputs changed during advisory scan")
     return {
         "schema": SCHEMA,
         "source": {
@@ -320,6 +365,7 @@ def validate_report(
     npm_lock: Path,
     pyproject: Path,
     python_lock: Path | None = None,
+    additional_cargo_locks: dict[str, Path] | None = None,
 ) -> None:
     if not isinstance(report, dict) or report.get("schema") != SCHEMA:
         raise ValueError("checked-in advisory report has an unsupported schema")
@@ -329,22 +375,19 @@ def validate_report(
     if not isinstance(source.get("commit"), str) or not COMMIT_RE.fullmatch(source["commit"]):
         raise ValueError("advisory report source commit must be a full lowercase Git SHA")
 
-    packages = locked_packages(cargo_lock, npm_lock, python_lock)
+    packages = locked_packages(cargo_lock, npm_lock, python_lock, additional_cargo_locks)
     package_keys = {(p["ecosystem"], p["name"], p["version"]) for p in packages}
     expected_counts = defaultdict(int)
     for package in packages:
         expected_counts[package["ecosystem"]] += 1
-    expected_hashes = {
-        "apps/web/package-lock.json": sha256_file(npm_lock),
-        "services/p2p-node/Cargo.lock": sha256_file(cargo_lock),
-        "services/quant-api/pyproject.toml": sha256_file(pyproject),
-    }
-    if python_lock is not None:
-        expected_hashes[LOCK_RELATIVE_PATH] = sha256_file(python_lock)
+    files = input_files(cargo_lock, npm_lock, pyproject, python_lock, additional_cargo_locks)
+    expected_hashes = {name: sha256_file(path) for name, path in files.items()}
     inputs = source.get("inputs", {})
     for path, digest in expected_hashes.items():
         if inputs.get(path, {}).get("sha256") != digest:
             raise ValueError(f"advisory report is stale for {path}; regenerate it")
+    if set(inputs) != set(files):
+        raise ValueError("advisory report input inventory does not match required locks")
 
     coverage = report.get("coverage", {})
     for ecosystem in ("crates.io", "npm"):
@@ -439,8 +482,9 @@ def validate_report(
 def main() -> None:
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source-commit", required=True, help="full Git SHA whose lock inputs are being scanned")
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--source-commit", help="full Git SHA whose lock inputs are being scanned")
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--check", type=Path, help="validate a retained report offline; never query OSV")
     parser.add_argument("--batch-size", type=int, default=100)
     parser.add_argument(
         "--maintenance-only",
@@ -455,29 +499,56 @@ def main() -> None:
     )
     parser.add_argument("--fail-on-vulnerability", action="store_true")
     args = parser.parse_args()
+    if args.check and (args.output or args.source_commit):
+        parser.error("--check cannot be combined with --output or --source-commit")
+    if not args.check and (not args.output or not args.source_commit):
+        parser.error("scanning requires --source-commit and --output")
     if not args.python_lock.is_file():
         raise SystemExit(
             f"missing {args.python_lock}; regenerate it with scripts/resolve_python_lock.py "
             "so the Python deployment environment can be scanned"
         )
     try:
-        report = build_report(
-            root / "services/p2p-node/Cargo.lock",
-            root / "apps/web/package-lock.json",
-            root / "services/quant-api/pyproject.toml",
-            load_maintenance_only(args.maintenance_only),
-            args.source_commit,
-            OsvClient(),
-            batch_size=args.batch_size,
-            python_lock=args.python_lock,
-        )
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
-    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
+        extra_locks = cargo_lock_inputs(root)
+        files = input_files(root / "services/p2p-node/Cargo.lock", root / "apps/web/package-lock.json",
+                            root / "services/quant-api/pyproject.toml", args.python_lock, extra_locks)
+        source_commit = args.source_commit
+        if args.check:
+            report = json.loads(args.check.read_text())
+            source_commit = report.get("source", {}).get("commit")
+        if not isinstance(source_commit, str) or not COMMIT_RE.fullmatch(source_commit):
+            raise ValueError("source commit must be a full lowercase 40-character Git SHA")
+        committed_inputs = {}
+        for relative, path in files.items():
+            committed = subprocess.check_output(["git", "show", f"{source_commit}:{relative}"],
+                                                cwd=root, stderr=subprocess.PIPE, timeout=10)
+            committed_inputs[relative] = {"sha256": hashlib.sha256(committed).hexdigest()}
+            if committed_inputs[relative]["sha256"] != sha256_file(path):
+                raise ValueError(f"source commit does not match dependency input: {relative}")
+        if not args.check:
+            report = build_report(
+                root / "services/p2p-node/Cargo.lock",
+                root / "apps/web/package-lock.json",
+                root / "services/quant-api/pyproject.toml",
+                load_maintenance_only(args.maintenance_only),
+                args.source_commit,
+                OsvClient(),
+                batch_size=args.batch_size,
+                python_lock=args.python_lock,
+                additional_cargo_locks=extra_locks,
+            )
+        validate_report(report, root / "services/p2p-node/Cargo.lock", root / "apps/web/package-lock.json",
+                        root / "services/quant-api/pyproject.toml", args.python_lock, extra_locks)
+        if report["source"]["inputs"] != committed_inputs:
+            raise ValueError("source commit does not match scanned dependency inputs")
+        if not args.check:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
         raise SystemExit(str(error)) from error
     summary = report["summary"]
     print(
-        f"Wrote {args.output}: {summary['queried_packages']} packages, "
+        f"{'Verified ' + str(args.check) if args.check else 'Wrote ' + str(args.output)}: {summary['queried_packages']} packages, "
         f"{summary['vulnerability_groups']} vulnerability groups, "
         f"{summary['maintenance_only_groups']} maintenance-only groups; "
         f"PyPI {report['coverage']['PyPI']['status']} ({report['coverage']['PyPI']['packages']} packages)"

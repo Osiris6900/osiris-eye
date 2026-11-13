@@ -7,7 +7,7 @@
     "pinned_action_uses": 122,
     "workflow_files": 19,
     "advisory_inputs_match_worktree": true,
-    "advisory_source_commit": "d479d2e5ac2215faf55c61332fa80a3c5ae39b2b",
+    "advisory_source_commit": "2b685c2bc8689422724f1d9eb52ceef660ebb8a7",
     "sbom_marks_python_unresolved": false,
     "python_lock_schema": "osiris.python-deployment-lock.v1",
     "cargo_versions": {
@@ -35,7 +35,8 @@
         "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md",
         "docs/workstreams/SBOM_ALL_RUST_ROOTS.md",
         "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json",
-        "docs/release/VERIFIED_ARTIFACTS_2026_11_13.json"
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_13.json",
+        "docs/workstreams/NON_BROKER_EXECUTION_2026_11_13.md"
       ],
       "evidence_commits": [
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9",
