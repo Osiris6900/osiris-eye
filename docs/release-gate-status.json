@@ -843,7 +843,11 @@
         "https://github.com/Osiris6900/osiris-eye/actions/runs/43493102241",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/43493100925",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/43493101800",
-        "https://github.com/Osiris6900/osiris-eye/actions/runs/43494481576"
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/43494481576",
+        "https://github.com/Osiris6900/osiris-eye/pull/442",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/43501436283",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/43501436218",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/43501436401"
       ],
       "evidence_commits": [
         "305ceb1d4d4c6f3d649cb58ee2c82eedb3818644",
@@ -854,7 +858,9 @@
         "deed94692cd92096d84d8657e3d12034691d8466",
         "3a126f9a04e384229ade0313675c20ab90b44b49",
         "906d53942a8ce682ecb6e7d0267b41016709a289",
-        "71b3d4de0a85edd28bd1a6ec0f5457af58c14558"
+        "71b3d4de0a85edd28bd1a6ec0f5457af58c14558",
+        "f7ca859c576e2d5403e6c1c5f569aea6e01a5733",
+        "78818b92618e9e230f4a9fa4c7e42fe3be9fd553"
       ],
       "open_prs": [],
       "contributions": [
@@ -961,9 +967,61 @@
               ]
             }
           ]
+        },
+        {
+          "pr": 442,
+          "class": "scaffolding",
+          "status": "merged",
+          "satisfies_tracker": false,
+          "head": "f7ca859c576e2d5403e6c1c5f569aea6e01a5733",
+          "merge_commit": "78818b92618e9e230f4a9fa4c7e42fe3be9fd553",
+          "merged_at": "2026-11-13T20:34:30Z",
+          "after": 439,
+          "scope": "Buy exposure uses a fresh higher mark. Live execution stays disabled.",
+          "ci": [
+            {
+              "run": 43501436283,
+              "name": "CI",
+              "conclusion": "success",
+              "commit": "f7ca859c576e2d5403e6c1c5f569aea6e01a5733",
+              "jobs": [
+                "python",
+                "rust",
+                "web"
+              ]
+            },
+            {
+              "run": 43501436218,
+              "name": "Dependency Security Audit",
+              "conclusion": "success",
+              "commit": "f7ca859c576e2d5403e6c1c5f569aea6e01a5733",
+              "jobs": [
+                "rust-audit",
+                "python-audit",
+                "npm-audit",
+                "dependency-inventory"
+              ]
+            },
+            {
+              "run": 43501436401,
+              "name": "Quant API CI",
+              "conclusion": "success",
+              "commit": "f7ca859c576e2d5403e6c1c5f569aea6e01a5733"
+            }
+          ],
+          "known_environmental_failures": [
+            {
+              "test": "services/quant-api/tests/test_control_plane_coordination.py::test_review_and_actual_restricted_worker",
+              "cause": "The isolated worker uses python -I. The test fails when osiris_api is not installed on that interpreter and passes after a normal install. Head CI passed."
+            },
+            {
+              "test": "services/quant-api/tests/test_verified_receipt_rust_bridge.py::test_rust_verifier_persists_to_python_ledger",
+              "cause": "Local Cargo 1.83 cannot parse edition2024. Head CI rust succeeded on a newer toolchain."
+            }
+          ]
         }
       ],
-      "blocker": "#305 merged as scaffolding at deed94692cd92096d84d8657e3d12034691d8466 (opened at fe90bae1778b7e30a17a5e991c9a585a71718b60, head cb83b019ab5a897938623d052458c6b6d6f706a5). It follows #277 and does not close T14. Quant API CI 42683473725 and dependency audit 42683473791 passed on that merge commit; main CI 42683473981 on that merge was cancelled and could not be re-run. CI 42748111800 on 3a126f9a04e384229ade0313675c20ab90b44b49 is the substitute run for cancelled main CI 42683473981. paper_execution.py is unchanged since #305's merge on that commit. No broker-sandbox match. The daily-loss gate includes adverse unrealized loss and fails closed when another holding has no fresh mark. Unrealized gains do not offset realized losses. Live execution stays disabled. #439 merged as scaffolding at 71b3d4de0a85edd28bd1a6ec0f5457af58c14558 (head 906d53942a8ce682ecb6e7d0267b41016709a289). Head CI 43493100907 passed python, rust, and web. Audit 43493101800 passed rust-audit. Quant API CI 43493102241 and 179 evidence contract 43493100925 passed. Merge CI 43494481576 passed python, rust, and web. That closes the earlier gap where unrealized loss was not an input to the daily-loss gate. T14 stays Partial because there is no broker-sandbox match."
+      "blocker": "#305 merged as scaffolding at deed94692cd92096d84d8657e3d12034691d8466 (opened at fe90bae1778b7e30a17a5e991c9a585a71718b60, head cb83b019ab5a897938623d052458c6b6d6f706a5). It follows #277 and does not close T14. Quant API CI 42683473725 and dependency audit 42683473791 passed on that merge commit; main CI 42683473981 on that merge was cancelled and could not be re-run. CI 42748111800 on 3a126f9a04e384229ade0313675c20ab90b44b49 is the substitute run for cancelled main CI 42683473981. paper_execution.py is unchanged since #305's merge on that commit. No broker-sandbox match. The daily-loss gate includes adverse unrealized loss and fails closed when another holding has no fresh mark. Unrealized gains do not offset realized losses. Live execution stays disabled. #439 merged as scaffolding at 71b3d4de0a85edd28bd1a6ec0f5457af58c14558 (head 906d53942a8ce682ecb6e7d0267b41016709a289). Head CI 43493100907 passed python, rust, and web. Audit 43493101800 passed rust-audit. Quant API CI 43493102241 and 179 evidence contract 43493100925 passed. Merge CI 43494481576 passed python, rust, and web. That closes the earlier gap where unrealized loss was not an input to the daily-loss gate. T14 stays Partial because there is no broker-sandbox match. #442 merged as scaffolding at 78818b92618e9e230f4a9fa4c7e42fe3be9fd553 (head f7ca859c576e2d5403e6c1c5f569aea6e01a5733). Head CI 43501436283 passed python, rust, and web. Audit 43501436218 passed rust-audit. Quant API CI 43501436401 passed. Buys project exposure at a fresh higher mark. T14 stays Partial because there is no broker-sandbox match."
     },
     {
       "id": "T15",
