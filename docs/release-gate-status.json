@@ -308,15 +308,42 @@
         "services/quant-api/tests/test_durable_paper_ledger.py",
         "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md",
         "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json",
-        "docs/release/VERIFIED_ARTIFACTS_2026_11_13.json"
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_13.json",
+        "https://github.com/Osiris6900/osiris-eye/pull/305",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42683473725",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42683473791"
       ],
       "evidence_commits": [
         "305ceb1d4d4c6f3d649cb58ee2c82eedb3818644",
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9",
-        "43157b1bad5a93c8bc441a21a04b8572a9e736f5"
+        "43157b1bad5a93c8bc441a21a04b8572a9e736f5",
+        "fe90bae1778b7e30a17a5e991c9a585a71718b60",
+        "cb83b019ab5a897938623d052458c6b6d6f706a5",
+        "deed94692cd92096d84d8657e3d12034691d8466"
       ],
       "open_prs": [],
-      "blocker": "The integration candidate implements opt-in Alpaca paper transport, persisted intent/ack binding, monotonic fill reconciliation and canonical internal paper OMS. Authorized actual broker-paper captures, operational reconciliation and broader FIX-session acceptance remain pending; no live broker routing is enabled."
+      "contributions": [
+        {
+          "pr": 305,
+          "class": "scaffolding",
+          "status": "merged",
+          "opened_head": "fe90bae1778b7e30a17a5e991c9a585a71718b60",
+          "head": "cb83b019ab5a897938623d052458c6b6d6f706a5",
+          "merge_commit": "deed94692cd92096d84d8657e3d12034691d8466",
+          "merged_at": "2026-11-09T19:27:08Z",
+          "ci": [
+            {"run": 42683473725, "name": "Quant API CI", "conclusion": "success", "commit": "deed94692cd92096d84d8657e3d12034691d8466"},
+            {"run": 42683473791, "name": "Dependency Security Audit", "conclusion": "success", "commit": "deed94692cd92096d84d8657e3d12034691d8466"},
+            {"run": 42683473981, "name": "CI", "conclusion": "cancelled", "commit": "deed94692cd92096d84d8657e3d12034691d8466"}
+          ],
+          "gaps": [
+            "no broker-sandbox match",
+            "unrealized loss is not an input to the daily-loss gate",
+            "live execution stays disabled"
+          ]
+        }
+      ],
+      "blocker": "#305 merged as scaffolding at deed94692cd92096d84d8657e3d12034691d8466 (opened at fe90bae1778b7e30a17a5e991c9a585a71718b60, head cb83b019ab5a897938623d052458c6b6d6f706a5). It follows #277 and does not close T14. Quant API CI 42683473725 and dependency audit 42683473791 passed on that merge commit; main CI 42683473981 was cancelled. No broker-sandbox match. The daily-loss gate uses realized P&L only. Live execution stays disabled."
     },
     {
       "id": "T15",
