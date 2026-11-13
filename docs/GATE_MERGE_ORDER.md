@@ -4,22 +4,23 @@ Base of this note: `main`. The checkbox inventory is [PR #275](https://github.co
 
 ## Merge order
 
-1. **#276** (#171). Hickory/Yamux lock floor. `Cargo.lock` is unchanged. T01 stays Partial. **#281** is stacked on #276 and only edits `docs/workstreams/ISSUE-171.md`. **#286** is independent of those and teaches the SBOM to read the hashed Python lock. It does not clear paste.
-2. **#279** (#255, #176). Rejection-log throttle lines. Land before a new soak. T04 stays Remaining.
-3. **#280** (#176) after #279. Its git base is #279's branch. Reconnect backoff only. **#283** is stacked on #280 and only caps dials per reconnect tick.
-4. **#277** (#179) has merged. Kill switch, stale data, and an internal paper reconcile. No broker order.
-5. **#305** (#179, T14) follows #277. It merged as scaffolding at `deed94692cd92096d84d8657e3d12034691d8466` (opened at `fe90bae1778b7e30a17a5e991c9a585a71718b60`, head `cb83b019ab5a897938623d052458c6b6d6f706a5`). Quant API CI 42683473725 and dependency audit 42683473791 passed; main CI 42683473981 was cancelled. T14 stays Partial: no broker-sandbox match, unrealized loss is not an input to the daily-loss gate, and live execution stays disabled.
-6. **#268** (#179) only if #277 is not merged. Same new test file. #277 has merged, so this row is optional.
-7. **#278** (#180) has merged. Read-only fills and outbox status; `peer_count` stays null.
-8. **#284** (#180) has merged after #278. The read-only enrolled-identity registry passed CI and dependency audit on its PR head. This is enrollment inventory, not live peer telemetry; T17 stays Partial.
-9. **#271** (#180) follows #284. Verify its health projection against the current `admin_centre` permissions before merging.
-10. **#272** (#181). Staging config check. Not a restore drill.
-11. **#270** (#177) after a review against the existing receipt path.
-12. **#273** (#178). Out-of-sample eligibility function. T12 stays Partial.
-13. **#264** (#178). Offline feed validator. T09 stays Remaining.
-14. **Hold #274** (#182) until host binding uses `measurement_class`.
-15. **#265** (#179) last. Read it beside `durable_paper_ledger.py` and #277 so two paper books are not merged blindly.
-16. **#269** (#176, #255) optional. Equivalent host-classification cases already run in CI.
+1. **#306** (#171, T01) is the lock prerequisite and has merged at `26fd658f9f49463fca36e8a0eedc0344881b046a` (head `c764b0e68b18b7c9f66b7539e9616493f9aafb2d`). It bumps rusqlite to 0.41.1 and libsqlite3-sys to 0.39.1. [Dependency Security Audit 42679453468](https://github.com/Osiris6900/osiris-eye/actions/runs/42679453468) passed on that commit, including rust-audit. [CI 42679453672](https://github.com/Osiris6900/osiris-eye/actions/runs/42679453672) was cancelled, so T01 is not Implemented. paste 1.0.15 remains. Every other open release-gate PR rebases onto main after this merge and does not carry a second copy of the lock change.
+2. **#276** (#171). Hickory/Yamux lock floor. `Cargo.lock` is unchanged. T01 stays Partial. **#281** is stacked on #276 and only edits `docs/workstreams/ISSUE-171.md`. **#286** is independent of those and teaches the SBOM to read the hashed Python lock. It does not clear paste.
+3. **#279** (#255, #176). Rejection-log throttle lines. Land before a new soak. T04 stays Remaining.
+4. **#280** (#176) after #279. Its git base is #279's branch. Reconnect backoff only. **#283** is stacked on #280 and only caps dials per reconnect tick.
+5. **#277** (#179) has merged. Kill switch, stale data, and an internal paper reconcile. No broker order.
+6. **#305** (#179, T14) follows #277. It merged as scaffolding at `deed94692cd92096d84d8657e3d12034691d8466` (opened at `fe90bae1778b7e30a17a5e991c9a585a71718b60`, head `cb83b019ab5a897938623d052458c6b6d6f706a5`). Quant API CI 42683473725 and dependency audit 42683473791 passed; main CI 42683473981 was cancelled. T14 stays Partial: no broker-sandbox match, unrealized loss is not an input to the daily-loss gate, and live execution stays disabled.
+7. **#268** (#179) only if #277 is not merged. Same new test file. #277 has merged, so this row is optional.
+8. **#278** (#180) has merged. Read-only fills and outbox status; `peer_count` stays null.
+9. **#284** (#180) has merged after #278. The read-only enrolled-identity registry passed CI and dependency audit on its PR head. This is enrollment inventory, not live peer telemetry; T17 stays Partial.
+10. **#271** (#180) follows #284. Verify its health projection against the current `admin_centre` permissions before merging.
+11. **#272** (#181). Staging config check. Not a restore drill.
+12. **#270** (#177) after a review against the existing receipt path.
+13. **#273** (#178). Out-of-sample eligibility function. T12 stays Partial.
+14. **#264** (#178). Offline feed validator. T09 stays Remaining.
+15. **Hold #274** (#182) until host binding uses `measurement_class`.
+16. **#265** (#179) last. Read it beside `durable_paper_ledger.py` and #277 so two paper books are not merged blindly.
+17. **#269** (#176, #255) optional. Equivalent host-classification cases already run in CI.
 
 ## Next evidence
 

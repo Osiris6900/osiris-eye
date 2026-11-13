@@ -36,14 +36,38 @@
         "docs/workstreams/SBOM_ALL_RUST_ROOTS.md",
         "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json",
         "docs/release/VERIFIED_ARTIFACTS_2026_11_13.json",
-        "docs/workstreams/NON_BROKER_EXECUTION_2026_11_13.md"
+        "docs/workstreams/NON_BROKER_EXECUTION_2026_11_13.md",
+        "https://github.com/Osiris6900/osiris-eye/pull/306",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42679453468"
       ],
       "evidence_commits": [
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9",
-        "43157b1bad5a93c8bc441a21a04b8572a9e736f5"
+        "43157b1bad5a93c8bc441a21a04b8572a9e736f5",
+        "c764b0e68b18b7c9f66b7539e9616493f9aafb2d",
+        "26fd658f9f49463fca36e8a0eedc0344881b046a"
       ],
       "open_prs": [],
-      "blocker": "The hashed Python deployment lock, resolved Python SBOM components and license/provenance checker are implemented and exercised in dependency-security CI. The paste 1.0.15 maintenance advisory remains; accepted final-candidate audit/SBOM/provenance artifacts and a reviewed maintenance disposition are still required."
+      "contributions": [
+        {
+          "pr": 306,
+          "gate": "T01",
+          "module_issue": 171,
+          "class": "dependency-remediation",
+          "status": "merged",
+          "requested_status": "PR open, not yet Implemented",
+          "head": "c764b0e68b18b7c9f66b7539e9616493f9aafb2d",
+          "merge_commit": "26fd658f9f49463fca36e8a0eedc0344881b046a",
+          "merged_at": "2026-11-09T19:02:06Z",
+          "lock": {"rusqlite": "0.41.1", "libsqlite3-sys": "0.39.1"},
+          "ci": [
+            {"run": 42679453468, "name": "Dependency Security Audit", "conclusion": "success", "commit": "26fd658f9f49463fca36e8a0eedc0344881b046a", "jobs": ["python-audit", "rust-audit", "npm-audit", "dependency-inventory"]},
+            {"run": 42679453672, "name": "CI", "conclusion": "cancelled", "commit": "26fd658f9f49463fca36e8a0eedc0344881b046a"}
+          ],
+          "merge_order": "prerequisite; other open release-gate PRs rebase onto main after it",
+          "does_not_implement": "T01"
+        }
+      ],
+      "blocker": "#306 merged at 26fd658f9f49463fca36e8a0eedc0344881b046a (head c764b0e68b18b7c9f66b7539e9616493f9aafb2d), upgrading rusqlite to 0.41.1 and libsqlite3-sys to 0.39.1. Dependency Security Audit 42679453468 passed on that commit, including rust-audit. Main CI 42679453672 was cancelled. T01 stays Partial: paste 1.0.15 (RUSTSEC-2024-0436) remains. Open release-gate PRs must rebase onto main so they pick up this lock. Do not duplicate the upgrade."
     },
     {
       "id": "T02",
