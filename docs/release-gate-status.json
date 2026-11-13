@@ -1194,7 +1194,8 @@
         "https://github.com/Osiris6900/osiris-eye/actions/runs/43416302724",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/43416302544",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/43416302491",
-        "docs/workstreams/NON_BROKER_EXECUTION_2026_11_13.md"
+        "docs/workstreams/NON_BROKER_EXECUTION_2026_11_13.md",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42679453468"
       ],
       "evidence_commits": [
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9",
@@ -1203,10 +1204,11 @@
         "efc40cd1040d33042586e190e834f33cdd1237cb",
         "187f0c16a2afdb3a37bbe3950d841816d8fe5115",
         "666a3e5599363f6347e671664b8135aeab0d38e6",
-        "9f9e27a3cf286cb3bb95cf33b5a245ec2b413118"
+        "9f9e27a3cf286cb3bb95cf33b5a245ec2b413118",
+        "26fd658f9f49463fca36e8a0eedc0344881b046a"
       ],
       "open_prs": [],
-      "blocker": "Short historical one-tailnet capacity evidence remains limited to the recorded topology. Source-bound local Rust E2EE receipt -> kernel-pinned Python durable ledger -> current risk -> canonical paper order/fill -> P&L -> forced process loss/new-process recovery is now implemented. Sustained independent-host capacity/failover, broader DR and final-candidate operational acceptance remain pending. #307 is scaffolding only (dry-run 42685744834 on merge 187f0c16). It does not implement this row. Next evidence: a real staging recovery drill artifact conforming to docs/evidence/deploy-recovery.schema.json. #436 is supporting evidence for engineering verification and the #182 contract. Head CI 43416302724 and 182 evidence-contract run 43416302491 passed. It does not accept independent-host capacity, failover, or recovery. Status stays Partial.",
+      "blocker": "Short historical one-tailnet capacity evidence remains limited to the recorded topology. Source-bound local Rust E2EE receipt -> kernel-pinned Python durable ledger -> current risk -> canonical paper order/fill -> P&L -> forced process loss/new-process recovery is now implemented. Sustained independent-host capacity/failover, broader DR and final-candidate operational acceptance remain pending. #307 is scaffolding only (dry-run 42685744834 on merge 187f0c16). It does not implement this row. Next evidence: a real staging recovery drill artifact conforming to docs/evidence/deploy-recovery.schema.json. #436 is supporting evidence for engineering verification and the #182 contract. Head CI 43416302724 and 182 evidence-contract run 43416302491 passed. It does not accept independent-host capacity, failover, or recovery. Status stays Partial. Dependency Security Audit 42679453468 passed on 26fd658f9f49463fca36e8a0eedc0344881b046a, including rust-audit. Main CI 42679453672 was cancelled. This is supporting CI evidence and does not accept T19.",
       "contributions": [
         {
           "pr": 307,
@@ -1309,6 +1311,28 @@
             }
           ],
           "gate": "T19"
+        },
+        {
+          "pr": 306,
+          "class": "supporting-ci",
+          "status": "merged",
+          "satisfies_tracker": false,
+          "merge_commit": "26fd658f9f49463fca36e8a0eedc0344881b046a",
+          "ci": [
+            {
+              "run": 42679453468,
+              "name": "Dependency Security Audit",
+              "conclusion": "success",
+              "commit": "26fd658f9f49463fca36e8a0eedc0344881b046a",
+              "jobs": [
+                "python-audit",
+                "rust-audit",
+                "npm-audit",
+                "dependency-inventory"
+              ]
+            }
+          ],
+          "note": "Green audit on the SQLite lock merge. Main CI 42679453672 was cancelled. Does not accept T19."
         }
       ]
     },
