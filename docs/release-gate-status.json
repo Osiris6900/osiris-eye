@@ -836,7 +836,8 @@
         "docs/release/VERIFIED_ARTIFACTS_2026_11_13.json",
         "https://github.com/Osiris6900/osiris-eye/pull/305",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42683473725",
-        "https://github.com/Osiris6900/osiris-eye/actions/runs/42683473791"
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42683473791",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42748111800"
       ],
       "evidence_commits": [
         "305ceb1d4d4c6f3d649cb58ee2c82eedb3818644",
@@ -844,7 +845,8 @@
         "43157b1bad5a93c8bc441a21a04b8572a9e736f5",
         "fe90bae1778b7e30a17a5e991c9a585a71718b60",
         "cb83b019ab5a897938623d052458c6b6d6f706a5",
-        "deed94692cd92096d84d8657e3d12034691d8466"
+        "deed94692cd92096d84d8657e3d12034691d8466",
+        "3a126f9a04e384229ade0313675c20ab90b44b49"
       ],
       "open_prs": [],
       "contributions": [
@@ -874,6 +876,18 @@
               "name": "CI",
               "conclusion": "cancelled",
               "commit": "deed94692cd92096d84d8657e3d12034691d8466"
+            },
+            {
+              "run": 42748111800,
+              "name": "CI",
+              "conclusion": "success",
+              "commit": "3a126f9a04e384229ade0313675c20ab90b44b49",
+              "jobs": [
+                "python",
+                "rust",
+                "web"
+              ],
+              "covers": "same paper_execution.py blob as deed94692cd92096d84d8657e3d12034691d8466"
             }
           ],
           "gaps": [
@@ -883,7 +897,7 @@
           ]
         }
       ],
-      "blocker": "#305 merged as scaffolding at deed94692cd92096d84d8657e3d12034691d8466 (opened at fe90bae1778b7e30a17a5e991c9a585a71718b60, head cb83b019ab5a897938623d052458c6b6d6f706a5). It follows #277 and does not close T14. Quant API CI 42683473725 and dependency audit 42683473791 passed on that merge commit; main CI 42683473981 was cancelled. No broker-sandbox match. The daily-loss gate uses realized P&L only. Live execution stays disabled."
+      "blocker": "#305 merged as scaffolding at deed94692cd92096d84d8657e3d12034691d8466 (opened at fe90bae1778b7e30a17a5e991c9a585a71718b60, head cb83b019ab5a897938623d052458c6b6d6f706a5). It follows #277 and does not close T14. Quant API CI 42683473725 and dependency audit 42683473791 passed on that merge commit; main CI 42683473981 on that merge was cancelled and could not be re-run. CI 42748111800 passed on 3a126f9a04e384229ade0313675c20ab90b44b49, which still contains the same paper_execution.py. No broker-sandbox match. The daily-loss gate uses realized P&L only. Live execution stays disabled."
     },
     {
       "id": "T15",
@@ -1012,17 +1026,22 @@
         "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md",
         "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json",
         "https://github.com/Osiris6900/osiris-eye/pull/308",
-        "https://github.com/Osiris6900/osiris-eye/actions/runs/42679237031"
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42679237031",
+        "https://github.com/Osiris6900/osiris-eye/pull/438",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/43486289288",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/43486289381"
       ],
       "evidence_commits": [
         "0a610db74cac5381ebbb4abe358286a80a6e6298",
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9",
-        "3975e8561318a8bb9c360b01aff2d0c2b941861e"
+        "3975e8561318a8bb9c360b01aff2d0c2b941861e",
+        "22c829c4795668fbcac486283dcbe2e5c041cc2b"
       ],
       "open_prs": [
-        308
+        308,
+        438
       ],
-      "blocker": "Authenticated canonical account/risk/feed/network/source views, actual Rust receipt metrics, role/MFA boundaries and Chromium navigation are implemented. Genuine source connections, sustained authenticated-node monitoring/alerts and independent operational acceptance remain pending.",
+      "blocker": "Authenticated canonical account/risk/feed/network/source views, actual Rust receipt metrics, role/MFA boundaries and Chromium navigation are implemented. Genuine source connections, sustained authenticated-node monitoring/alerts and independent operational acceptance remain pending. #438 is open scaffolding at 22c829c4795668fbcac486283dcbe2e5c041cc2b. CI 43486289288, audit 43486289381, and Quant API CI 43486289127 passed. It is not merged, so T17 stays Partial.",
       "contributions": [
         {
           "pr": 308,
@@ -1054,6 +1073,56 @@
             }
           ],
           "satisfies_tracker": false
+        },
+        {
+          "pr": 438,
+          "class": "scaffolding",
+          "github_state": "open",
+          "head": "22c829c4795668fbcac486283dcbe2e5c041cc2b",
+          "satisfies_tracker": false,
+          "after": [
+            278,
+            284,
+            271
+          ],
+          "ci": [
+            {
+              "run": 43486289288,
+              "name": "CI",
+              "conclusion": "success",
+              "jobs": [
+                "python",
+                "web",
+                "rust"
+              ]
+            },
+            {
+              "run": 43486289381,
+              "name": "Dependency Security Audit",
+              "conclusion": "success",
+              "jobs": [
+                "rust-audit",
+                "python-audit",
+                "npm-audit",
+                "dependency-inventory"
+              ]
+            },
+            {
+              "run": 43486289127,
+              "name": "Quant API CI",
+              "conclusion": "success"
+            },
+            {
+              "run": 43486289393,
+              "name": "179 evidence contract tests",
+              "conclusion": "success"
+            },
+            {
+              "run": 43486289124,
+              "name": "182 evidence contract tests",
+              "conclusion": "success"
+            }
+          ]
         }
       ]
     },
