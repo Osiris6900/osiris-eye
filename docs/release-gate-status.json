@@ -897,7 +897,7 @@
           ]
         }
       ],
-      "blocker": "#305 merged as scaffolding at deed94692cd92096d84d8657e3d12034691d8466 (opened at fe90bae1778b7e30a17a5e991c9a585a71718b60, head cb83b019ab5a897938623d052458c6b6d6f706a5). It follows #277 and does not close T14. Quant API CI 42683473725 and dependency audit 42683473791 passed on that merge commit; main CI 42683473981 on that merge was cancelled and could not be re-run. CI 42748111800 passed on 3a126f9a04e384229ade0313675c20ab90b44b49, which still contains the same paper_execution.py. No broker-sandbox match. The daily-loss gate uses realized P&L only. Live execution stays disabled."
+      "blocker": "#305 merged as scaffolding at deed94692cd92096d84d8657e3d12034691d8466 (opened at fe90bae1778b7e30a17a5e991c9a585a71718b60, head cb83b019ab5a897938623d052458c6b6d6f706a5). It follows #277 and does not close T14. Quant API CI 42683473725 and dependency audit 42683473791 passed on that merge commit; main CI 42683473981 on that merge was cancelled and could not be re-run. CI 42748111800 on 3a126f9a04e384229ade0313675c20ab90b44b49 is the substitute run for cancelled main CI 42683473981. paper_execution.py is unchanged since #305's merge on that commit. No broker-sandbox match. The daily-loss gate uses realized P&L only. Live execution stays disabled."
     },
     {
       "id": "T15",
@@ -1029,19 +1029,22 @@
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42679237031",
         "https://github.com/Osiris6900/osiris-eye/pull/438",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/43486289288",
-        "https://github.com/Osiris6900/osiris-eye/actions/runs/43486289381"
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/43486289381",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/43486289127",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/43486289393",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/43486289124"
       ],
       "evidence_commits": [
         "0a610db74cac5381ebbb4abe358286a80a6e6298",
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9",
         "3975e8561318a8bb9c360b01aff2d0c2b941861e",
-        "22c829c4795668fbcac486283dcbe2e5c041cc2b"
+        "22c829c4795668fbcac486283dcbe2e5c041cc2b",
+        "b57ff6bea6795cdb7d374721e2b99eec4a30862a"
       ],
       "open_prs": [
-        308,
-        438
+        308
       ],
-      "blocker": "Authenticated canonical account/risk/feed/network/source views, actual Rust receipt metrics, role/MFA boundaries and Chromium navigation are implemented. Genuine source connections, sustained authenticated-node monitoring/alerts and independent operational acceptance remain pending. #438 is open scaffolding at 22c829c4795668fbcac486283dcbe2e5c041cc2b. CI 43486289288, audit 43486289381, and Quant API CI 43486289127 passed. It is not merged, so T17 stays Partial.",
+      "blocker": "Authenticated canonical account/risk/feed/network/source views, actual Rust receipt metrics, role/MFA boundaries and Chromium navigation are implemented. Genuine source connections, sustained authenticated-node monitoring/alerts and independent operational acceptance remain pending. #438 merged as scaffolding at b57ff6bea6795cdb7d374721e2b99eec4a30862a (head 22c829c4795668fbcac486283dcbe2e5c041cc2b). CI 43486289288, Quant API CI 43486289127, audit 43486289381, 179 contract 43486289393, and 182 contract 43486289124 passed. The pull request says this is not accepted operations evidence, so T17 stays Partial.",
       "contributions": [
         {
           "pr": 308,
@@ -1077,7 +1080,7 @@
         {
           "pr": 438,
           "class": "scaffolding",
-          "github_state": "open",
+          "github_state": "merged",
           "head": "22c829c4795668fbcac486283dcbe2e5c041cc2b",
           "satisfies_tracker": false,
           "after": [
@@ -1122,7 +1125,10 @@
               "name": "182 evidence contract tests",
               "conclusion": "success"
             }
-          ]
+          ],
+          "merge_commit": "b57ff6bea6795cdb7d374721e2b99eec4a30862a",
+          "merged_at": "2026-11-13T18:59:07Z",
+          "not_accepted_operations_evidence": true
         }
       ]
     },
