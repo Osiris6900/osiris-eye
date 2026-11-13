@@ -36,14 +36,178 @@
         "docs/workstreams/SBOM_ALL_RUST_ROOTS.md",
         "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json",
         "docs/release/VERIFIED_ARTIFACTS_2026_11_13.json",
-        "docs/workstreams/NON_BROKER_EXECUTION_2026_11_13.md"
+        "docs/workstreams/NON_BROKER_EXECUTION_2026_11_13.md",
+        "https://github.com/Osiris6900/osiris-eye/pull/306",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42679453468",
+        "https://github.com/Osiris6900/osiris-eye/pull/302",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42677260186",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42677259943",
+        "https://github.com/Osiris6900/osiris-eye/pull/436",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/43416302724",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/43416302544",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/43416302491"
       ],
       "evidence_commits": [
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9",
-        "43157b1bad5a93c8bc441a21a04b8572a9e736f5"
+        "43157b1bad5a93c8bc441a21a04b8572a9e736f5",
+        "c764b0e68b18b7c9f66b7539e9616493f9aafb2d",
+        "26fd658f9f49463fca36e8a0eedc0344881b046a",
+        "d47d14d0c9b429fbc5c6a7d9c8df6fc75bec961c",
+        "8ef21a84846a0e525978d6589b458caf3afc75e4",
+        "666a3e5599363f6347e671664b8135aeab0d38e6",
+        "9f9e27a3cf286cb3bb95cf33b5a245ec2b413118"
       ],
       "open_prs": [],
-      "blocker": "The hashed Python deployment lock, resolved Python SBOM components and license/provenance checker are implemented and exercised in dependency-security CI. The paste 1.0.15 maintenance advisory remains; accepted final-candidate audit/SBOM/provenance artifacts and a reviewed maintenance disposition are still required."
+      "contributions": [
+        {
+          "pr": 306,
+          "gate": "T01",
+          "module_issue": 171,
+          "class": "dependency-remediation",
+          "status": "merged",
+          "requested_status": "PR open, not yet Implemented",
+          "head": "c764b0e68b18b7c9f66b7539e9616493f9aafb2d",
+          "merge_commit": "26fd658f9f49463fca36e8a0eedc0344881b046a",
+          "merged_at": "2026-11-09T19:02:06Z",
+          "lock": {
+            "rusqlite": "0.41.1",
+            "libsqlite3-sys": "0.39.1"
+          },
+          "ci": [
+            {
+              "run": 42679453468,
+              "name": "Dependency Security Audit",
+              "conclusion": "success",
+              "commit": "26fd658f9f49463fca36e8a0eedc0344881b046a",
+              "jobs": [
+                "python-audit",
+                "rust-audit",
+                "npm-audit",
+                "dependency-inventory"
+              ]
+            },
+            {
+              "run": 42679453672,
+              "name": "CI",
+              "conclusion": "cancelled",
+              "commit": "26fd658f9f49463fca36e8a0eedc0344881b046a"
+            }
+          ],
+          "merge_order": "lock change superseded by #302 and by the lock already on main; do not merge another copy",
+          "does_not_implement": "T01",
+          "lock_superseded_by": 302,
+          "unique_delta": "fetch-depth: 0 in .github/workflows/release-gate-inventory.yml"
+        },
+        {
+          "pr": 302,
+          "gate": "T01",
+          "module_issue": 171,
+          "class": "dependency-remediation",
+          "status": "merged",
+          "head": "d47d14d0c9b429fbc5c6a7d9c8df6fc75bec961c",
+          "merge_commit": "8ef21a84846a0e525978d6589b458caf3afc75e4",
+          "merged_at": "2026-11-09T18:59:41Z",
+          "lock": {
+            "rusqlite": "0.41.1",
+            "libsqlite3-sys": "0.39.1"
+          },
+          "ratchet_floor": "libsqlite3-sys >= 0.39.0",
+          "advisory_json": "docs/P2P_DEPENDENCY_ADVISORIES.json",
+          "advisory_source_commit_at_merge": "2501a07441c7a3e124a7494f2384903c85f5b6ca",
+          "advisory_source_commit_current_tree": "2b685c2bc8689422724f1d9eb52ceef660ebb8a7",
+          "facts_refreshed": false,
+          "facts_note": "cargo_versions and advisory_source_commit already match the current worktree; #302's source commit was replaced by later advisory refreshes",
+          "ci": [
+            {
+              "run": 42677260186,
+              "name": "CI",
+              "conclusion": "success",
+              "commit": "d47d14d0c9b429fbc5c6a7d9c8df6fc75bec961c"
+            },
+            {
+              "run": 42677259943,
+              "name": "Dependency Security Audit",
+              "conclusion": "success",
+              "commit": "d47d14d0c9b429fbc5c6a7d9c8df6fc75bec961c",
+              "jobs": [
+                "rust-audit",
+                "dependency-inventory",
+                "npm-audit",
+                "python-audit"
+              ]
+            },
+            {
+              "run": 42679053936,
+              "name": "CI",
+              "conclusion": "success",
+              "commit": "8ef21a84846a0e525978d6589b458caf3afc75e4"
+            },
+            {
+              "run": 42679054240,
+              "name": "Dependency Security Audit",
+              "conclusion": "success",
+              "commit": "8ef21a84846a0e525978d6589b458caf3afc75e4"
+            }
+          ],
+          "does_not_implement": "T01",
+          "merge_order": "merged; dropped from the pending order. #306's lock change is the same fix and is superseded"
+        },
+        {
+          "pr": 436,
+          "class": "supporting-evidence",
+          "status": "merged",
+          "satisfies_tracker": false,
+          "head": "666a3e5599363f6347e671664b8135aeab0d38e6",
+          "merge_commit": "9f9e27a3cf286cb3bb95cf33b5a245ec2b413118",
+          "merged_at": "2026-11-13T18:34:37Z",
+          "touches": [
+            "T01",
+            "T19"
+          ],
+          "scope": "Advisory scan covers all locked dependency roots. Engineering verification rejects skipped tests. #182 evidence-contract CI passed.",
+          "reconciled_with": "docs/workstreams/NON_BROKER_EXECUTION_2026_11_13.md",
+          "does_not_promote": "17 previously unaccepted gates stay open; counts remain 3 evidenced / 14 partial / 3 remaining",
+          "ci": [
+            {
+              "run": 43416302724,
+              "name": "CI",
+              "conclusion": "success"
+            },
+            {
+              "run": 43416302829,
+              "name": "New platform modules unit tests",
+              "conclusion": "success"
+            },
+            {
+              "run": 43416302491,
+              "name": "182 evidence contract tests",
+              "conclusion": "success"
+            },
+            {
+              "run": 43416302626,
+              "name": "Immutable GitHub Actions pin ratchet",
+              "conclusion": "success"
+            },
+            {
+              "run": 43416302762,
+              "name": "179 evidence contract tests",
+              "conclusion": "success"
+            },
+            {
+              "run": 43416302532,
+              "name": "Release gate inventory",
+              "conclusion": "success"
+            },
+            {
+              "run": 43416302544,
+              "name": "Dependency Security Audit",
+              "conclusion": "success"
+            }
+          ],
+          "gate": "T01"
+        }
+      ],
+      "blocker": "RUSTSEC-2026-0459 is cleared: rusqlite 0.41.1 and libsqlite3-sys 0.39.1 are the only copies, and the lock ratchet floor is libsqlite3-sys >= 0.39.0. #302 merged at 8ef21a84846a0e525978d6589b458caf3afc75e4 (head d47d14d0c9b429fbc5c6a7d9c8df6fc75bec961c). CI 42677260186 and Dependency Security Audit 42677259943 passed on that head, including rust-audit. #306's lock bump is the same fix and is superseded; its only unique merged change is fetch-depth 0. T01 stays Partial because paste 1.0.15 (RUSTSEC-2024-0436) remains. The SBOM generator no longer marks Python resolution unresolved, and Dependency Security Audit already runs scripts/check_license_provenance.py. Accepted final-candidate audit, SBOM, and provenance artifacts, plus a reviewed paste disposition, are still required. facts.cargo_versions and facts.advisory_source_commit still match the worktree (source 2b685c2bc8689422724f1d9eb52ceef660ebb8a7). #302's advisory file recorded source 2501a07441c7a3e124a7494f2384903c85f5b6ca; later refreshes replaced that file. #436 merged at 9f9e27a3cf286cb3bb95cf33b5a245ec2b413118 (head 666a3e5599363f6347e671664b8135aeab0d38e6). Dependency Security Audit 43416302544 passed. The retained scan covers all locked roots and still leaves paste 1.0.15. Final-candidate audit, SBOM, and provenance acceptance remain open. Status stays Partial."
     },
     {
       "id": "T02",
@@ -80,14 +244,110 @@
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42430580795",
         "docs/P2P_REMOTE_ACCEPTANCE_2026_11_07.json",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42724204891",
-        "https://github.com/Osiris6900/osiris-eye/actions/runs/42720301712"
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42720301712",
+        "https://github.com/Osiris6900/osiris-eye/pull/310",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42680025127",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42680025148"
       ],
       "evidence_commits": [
         "154a65111d92cbd344ad2cc1b49a80ed8f53cd28",
-        "8a531b37869655d683e3af2b610404965f6376a6"
+        "8a531b37869655d683e3af2b610404965f6376a6",
+        "c91b2c1c7d633229914234502925010e93bdd341",
+        "a49b5ca6318088d6f7b885c5bf568999e0e3788f"
       ],
       "open_prs": [],
-      "blocker": "3-host E2EE run 42724204891 passed with retained artifact three-e2ee-evidence-42724204891-1 (14-day retention); 2-host run 42720301712 passed. Binary SHA-256 contents must be reviewed inside retained artifact before external certification."
+      "blocker": "3-host E2EE run 42724204891 passed with retained artifact three-e2ee-evidence-42724204891-1 (14-day retention); 2-host run 42720301712 passed. Binary SHA-256 contents must be reviewed inside retained artifact before external certification. #310 merged as scaffolding at a49b5ca6318088d6f7b885c5bf568999e0e3788f. Head c91b2c1 CI 42680025127 and audit 42680025148 passed. Runs 42424830531, 42424833409, and 42430583187 predate current main. Later main commits do have successful recipient-only runs, including three-host 42724204891 at 8a531b37 and two-host 42717480948 at edae0ba3. Current tip 9f9e27a has no recipient-only run. Status unchanged.",
+      "contributions": [
+        {
+          "pr": 310,
+          "class": "scaffolding",
+          "github_state": "merged",
+          "requested_as": "open",
+          "opened_head": "b74a8247f3f7894cb70f26bbeaa6b9d813bf53d7",
+          "head": "c91b2c1c7d633229914234502925010e93bdd341",
+          "merge_commit": "a49b5ca6318088d6f7b885c5bf568999e0e3788f",
+          "merged_at": "2026-11-09T21:36:05Z",
+          "ci": [
+            {
+              "run": 42678563362,
+              "name": "CI",
+              "conclusion": "success",
+              "commit": "b74a8247f3f7894cb70f26bbeaa6b9d813bf53d7"
+            },
+            {
+              "run": 42678563348,
+              "name": "Dependency Security Audit",
+              "conclusion": "success",
+              "commit": "b74a8247f3f7894cb70f26bbeaa6b9d813bf53d7"
+            },
+            {
+              "run": 42680025127,
+              "name": "CI",
+              "conclusion": "success",
+              "commit": "c91b2c1c7d633229914234502925010e93bdd341"
+            },
+            {
+              "run": 42680025148,
+              "name": "Dependency Security Audit",
+              "conclusion": "success",
+              "commit": "c91b2c1c7d633229914234502925010e93bdd341"
+            },
+            {
+              "run": 42680024750,
+              "name": "Quant API CI",
+              "conclusion": "success",
+              "commit": "c91b2c1c7d633229914234502925010e93bdd341"
+            },
+            {
+              "run": 42704043885,
+              "name": "CI",
+              "conclusion": "cancelled",
+              "commit": "a49b5ca6318088d6f7b885c5bf568999e0e3788f"
+            },
+            {
+              "run": 42704043998,
+              "name": "Dependency Security Audit",
+              "conclusion": "success",
+              "commit": "a49b5ca6318088d6f7b885c5bf568999e0e3788f"
+            }
+          ],
+          "recipient_only": {
+            "older_than_current_main": [
+              {
+                "run": 42424830531,
+                "commit": "154a65111d92cbd344ad2cc1b49a80ed8f53cd28",
+                "kind": "two-host"
+              },
+              {
+                "run": 42424833409,
+                "commit": "154a65111d92cbd344ad2cc1b49a80ed8f53cd28",
+                "kind": "three-host"
+              },
+              {
+                "run": 42430583187,
+                "commit": "bd56475fc3b171982eba17a8cc6ef8b806b3934c",
+                "kind": "three-host"
+              }
+            ],
+            "successful_on_earlier_main": [
+              {
+                "run": 42724204891,
+                "commit": "8a531b37869655d683e3af2b610404965f6376a6",
+                "kind": "three-host recipient-only"
+              },
+              {
+                "run": 42717480948,
+                "commit": "edae0ba330b3e8f4af88ed9cd00031d368f3eb5c",
+                "kind": "two-host recipient E2EE"
+              }
+            ],
+            "current_main": "9f9e27a3cf286cb3bb95cf33b5a245ec2b413118",
+            "current_tip_has_recipient_only_run": false
+          },
+          "satisfies_tracker": false,
+          "gate": "T03"
+        }
+      ]
     },
     {
       "id": "T04",
@@ -105,14 +365,64 @@
         "https://github.com/Osiris6900/osiris-eye/pull/259",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42724240212",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42740964830",
-        "capacity-report-42740964830-1 (downloaded ZIP SHA-256: 229553051305aabbc28c44af50bb58c4f6dfe9ec746ff3f2f85178333661d239)"
+        "capacity-report-42740964830-1 (downloaded ZIP SHA-256: 229553051305aabbc28c44af50bb58c4f6dfe9ec746ff3f2f85178333661d239)",
+        "https://github.com/Osiris6900/osiris-eye/pull/280",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42677901050",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42677901276"
       ],
       "evidence_commits": [
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9",
-        "d9bb0a959faf5d9c7c97bd6502a143f9df9123d0"
+        "d9bb0a959faf5d9c7c97bd6502a143f9df9123d0",
+        "d42e422edaa928e907f519de055a766e8e7e14ce"
       ],
       "open_prs": [],
-      "blocker": "Operator-dispatched GitHub Actions run 42740964830 (main d9bb0a959faf5d9c7c97bd6502a143f9df9123d0) succeeded on three runner jobs. Retained artifact capacity-report-42740964830-1 (ZIP SHA-256 229553051305aabbc28c44af50bb58c4f6dfe9ec746ff3f2f85178333661d239) contains 10/50/100 peer sweeps: 200/200 delivered, zero lost in each, binary SHA-256 and self-reported distinct boot fingerprints. Scope is one private tailnet, recipient-bootstrap star, 35-49 seconds per sweep; workload paused during bootstrap outage. Raw host fingerprint independence is not independently attested, and sustained multi-host NAT, relay, open-mesh and production outage recovery are unproven. Partial evidence only; acceptance remains false."
+      "blocker": "Operator-dispatched GitHub Actions run 42740964830 (main d9bb0a959faf5d9c7c97bd6502a143f9df9123d0) succeeded on three runner jobs. Retained artifact capacity-report-42740964830-1 (ZIP SHA-256 229553051305aabbc28c44af50bb58c4f6dfe9ec746ff3f2f85178333661d239) contains 10/50/100 peer sweeps: 200/200 delivered, zero lost in each, binary SHA-256 and self-reported distinct boot fingerprints. Scope is one private tailnet, recipient-bootstrap star, 35-49 seconds per sweep; workload paused during bootstrap outage. Raw host fingerprint independence is not independently attested, and sustained multi-host NAT, relay, open-mesh and production outage recovery are unproven. Partial evidence only; acceptance remains false. #280 merged at d42e422edaa928e907f519de055a766e8e7e14ce as local reconnect-tick backoff only. CI 42677901050 and Dependency Security Audit 42677901276 passed on that commit. #176 and #255 stay open because this is not multi-host evidence. Status stays Partial.",
+      "contributions": [
+        {
+          "pr": 280,
+          "module_issues": [
+            176,
+            255
+          ],
+          "class": "local-reconnect-backoff",
+          "status": "merged",
+          "scope": "local reconnect-tick backoff only",
+          "merge_commit": "d42e422edaa928e907f519de055a766e8e7e14ce",
+          "merged_at": "2026-11-09T18:52:14Z",
+          "head": "b47ee6ce4bf4ae836b952356680366b838e14893",
+          "ci": [
+            {
+              "run": 42677901050,
+              "name": "CI",
+              "conclusion": "success",
+              "commit": "d42e422edaa928e907f519de055a766e8e7e14ce",
+              "jobs": [
+                "python",
+                "web",
+                "rust"
+              ]
+            },
+            {
+              "run": 42677901276,
+              "name": "Dependency Security Audit",
+              "conclusion": "success",
+              "commit": "d42e422edaa928e907f519de055a766e8e7e14ce",
+              "jobs": [
+                "dependency-inventory",
+                "rust-audit",
+                "npm-audit",
+                "python-audit"
+              ]
+            }
+          ],
+          "satisfies_tracker": false,
+          "issues_remain_open": [
+            176,
+            255
+          ],
+          "reason": "no multi-host evidence"
+        }
+      ]
     },
     {
       "id": "T05",
@@ -125,13 +435,68 @@
       "acceptance_satisfied": true,
       "evidence": [
         "docs/P2P_PUBLIC_NODE_DEPLOYMENT.md",
-        "https://github.com/Osiris6900/osiris-eye/actions/runs/42724204891"
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42724204891",
+        "https://github.com/Osiris6900/osiris-eye/pull/307",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42685744834",
+        "docs/evidence/deploy-recovery.schema.json"
       ],
       "evidence_commits": [
-        "8a531b37869655d683e3af2b610404965f6376a6"
+        "8a531b37869655d683e3af2b610404965f6376a6",
+        "efc40cd1040d33042586e190e834f33cdd1237cb",
+        "187f0c16a2afdb3a37bbe3950d841816d8fe5115"
       ],
       "open_prs": [],
-      "blocker": "Ghost-mode relay design is adopted; Host C non-recipient observer passed in run 42724204891. This does not prove long-lived relay uptime, public-node deployment, or incident recovery."
+      "blocker": "Ghost-mode relay design is adopted; Host C non-recipient observer passed in run 42724204891. This does not prove long-lived relay uptime, public-node deployment, or incident recovery. #307 is scaffolding only (dry-run 42685744834 on merge 187f0c16). It does not implement this row. Next evidence: a real staging recovery drill artifact conforming to docs/evidence/deploy-recovery.schema.json.",
+      "contributions": [
+        {
+          "pr": 307,
+          "class": "scaffolding",
+          "evidence_shape_only": true,
+          "status": "merged",
+          "head": "efc40cd1040d33042586e190e834f33cdd1237cb",
+          "merge_commit": "187f0c16a2afdb3a37bbe3950d841816d8fe5115",
+          "merged_at": "2026-11-09T19:41:18Z",
+          "ci": [
+            {
+              "run": 42685745608,
+              "name": "CI",
+              "conclusion": "success",
+              "commit": "187f0c16a2afdb3a37bbe3950d841816d8fe5115"
+            },
+            {
+              "run": 42685745207,
+              "name": "Dependency Security Audit",
+              "conclusion": "success",
+              "commit": "187f0c16a2afdb3a37bbe3950d841816d8fe5115"
+            },
+            {
+              "run": 42685744834,
+              "name": "Deployment recovery dry run",
+              "conclusion": "success",
+              "commit": "187f0c16a2afdb3a37bbe3950d841816d8fe5115"
+            },
+            {
+              "run": 42679946619,
+              "name": "CI",
+              "conclusion": "success",
+              "commit": "efc40cd1040d33042586e190e834f33cdd1237cb"
+            },
+            {
+              "run": 42679946957,
+              "name": "Deployment recovery dry run",
+              "conclusion": "success",
+              "commit": "efc40cd1040d33042586e190e834f33cdd1237cb"
+            }
+          ],
+          "satisfies_tracker": false,
+          "next_evidence": "A real staging recovery drill artifact conforming to docs/evidence/deploy-recovery.schema.json",
+          "gaps": [
+            "drill_status is not_run",
+            "no retained recovery drill",
+            "live execution stays disabled"
+          ]
+        }
+      ]
     },
     {
       "id": "T06",
@@ -144,11 +509,108 @@
       "acceptance_satisfied": false,
       "evidence": [
         "scripts/check_master_integration.py",
-        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md"
+        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md",
+        "https://github.com/Osiris6900/osiris-eye/pull/310",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42680025127",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42680025148"
       ],
-      "evidence_commits": [],
+      "evidence_commits": [
+        "c91b2c1c7d633229914234502925010e93bdd341",
+        "a49b5ca6318088d6f7b885c5bf568999e0e3788f"
+      ],
       "open_prs": [],
-      "blocker": "Independent crypto/operational-security intake and validation are implemented. No independently signed reviewer report, verified reviewer identity, remediation/retest and approval decision has been supplied; source tests cannot commission or approve that review."
+      "blocker": "Independent crypto/operational-security intake and validation are implemented. No independently signed reviewer report, verified reviewer identity, remediation/retest and approval decision has been supplied; source tests cannot commission or approve that review. #310 is merged scaffolding for fail-closed crypto tests and recipient-hash retention. It is not an independent review. Head CI 42680025127 and audit 42680025148 passed. Status stays Remaining.",
+      "contributions": [
+        {
+          "pr": 310,
+          "class": "scaffolding",
+          "github_state": "merged",
+          "requested_as": "open",
+          "opened_head": "b74a8247f3f7894cb70f26bbeaa6b9d813bf53d7",
+          "head": "c91b2c1c7d633229914234502925010e93bdd341",
+          "merge_commit": "a49b5ca6318088d6f7b885c5bf568999e0e3788f",
+          "merged_at": "2026-11-09T21:36:05Z",
+          "ci": [
+            {
+              "run": 42678563362,
+              "name": "CI",
+              "conclusion": "success",
+              "commit": "b74a8247f3f7894cb70f26bbeaa6b9d813bf53d7"
+            },
+            {
+              "run": 42678563348,
+              "name": "Dependency Security Audit",
+              "conclusion": "success",
+              "commit": "b74a8247f3f7894cb70f26bbeaa6b9d813bf53d7"
+            },
+            {
+              "run": 42680025127,
+              "name": "CI",
+              "conclusion": "success",
+              "commit": "c91b2c1c7d633229914234502925010e93bdd341"
+            },
+            {
+              "run": 42680025148,
+              "name": "Dependency Security Audit",
+              "conclusion": "success",
+              "commit": "c91b2c1c7d633229914234502925010e93bdd341"
+            },
+            {
+              "run": 42680024750,
+              "name": "Quant API CI",
+              "conclusion": "success",
+              "commit": "c91b2c1c7d633229914234502925010e93bdd341"
+            },
+            {
+              "run": 42704043885,
+              "name": "CI",
+              "conclusion": "cancelled",
+              "commit": "a49b5ca6318088d6f7b885c5bf568999e0e3788f"
+            },
+            {
+              "run": 42704043998,
+              "name": "Dependency Security Audit",
+              "conclusion": "success",
+              "commit": "a49b5ca6318088d6f7b885c5bf568999e0e3788f"
+            }
+          ],
+          "recipient_only": {
+            "older_than_current_main": [
+              {
+                "run": 42424830531,
+                "commit": "154a65111d92cbd344ad2cc1b49a80ed8f53cd28",
+                "kind": "two-host"
+              },
+              {
+                "run": 42424833409,
+                "commit": "154a65111d92cbd344ad2cc1b49a80ed8f53cd28",
+                "kind": "three-host"
+              },
+              {
+                "run": 42430583187,
+                "commit": "bd56475fc3b171982eba17a8cc6ef8b806b3934c",
+                "kind": "three-host"
+              }
+            ],
+            "successful_on_earlier_main": [
+              {
+                "run": 42724204891,
+                "commit": "8a531b37869655d683e3af2b610404965f6376a6",
+                "kind": "three-host recipient-only"
+              },
+              {
+                "run": 42717480948,
+                "commit": "edae0ba330b3e8f4af88ed9cd00031d368f3eb5c",
+                "kind": "two-host recipient E2EE"
+              }
+            ],
+            "current_main": "9f9e27a3cf286cb3bb95cf33b5a245ec2b413118",
+            "current_tip_has_recipient_only_run": false
+          },
+          "satisfies_tracker": false,
+          "gate": "T06"
+        }
+      ]
     },
     {
       "id": "T07",
@@ -185,13 +647,76 @@
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42494850551",
         "services/quant-api/src/osiris_api/authorized_feeds.py",
         "services/quant-api/src/osiris_api/feed_admission.py",
-        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md"
+        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md",
+        "https://github.com/Osiris6900/osiris-eye/pull/309",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42679533894",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42679534042",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42684177898"
       ],
       "evidence_commits": [
-        "5176eae8843a1e5144ac903f37843fe9bb46cdd9"
+        "5176eae8843a1e5144ac903f37843fe9bb46cdd9",
+        "7d0599fea4a20b9c454ef437a1dc44c7b01f981e",
+        "2f616c2258eafa220b34895ae5d123a4d7ff1907"
       ],
       "open_prs": [],
-      "blocker": "Feed quality, freshness, timestamp/availability checks, source-governed views and native offline capture paths are implemented and tested. Genuine sustained vendor streaming captures, corporate-action artifacts and independently verified time/source provenance remain pending."
+      "blocker": "Feed quality, freshness, timestamp/availability checks, source-governed views and native offline capture paths are implemented and tested. Genuine sustained vendor streaming captures, corporate-action artifacts and independently verified time/source provenance remain pending. #309 merged as scaffolding at 2f616c2258eafa220b34895ae5d123a4d7ff1907 (head 7d0599fea4a20b9c454ef437a1dc44c7b01f981e). CI 42679533894 and audit 42679534042 passed on that head; merge CI 42684177898 and audit 42684177853 passed. Opened head bd85dac failed rust-audit 42676883926 on RUSTSEC-2026-0459; that was fixed before merge. Status unchanged.",
+      "contributions": [
+        {
+          "pr": 309,
+          "class": "scaffolding",
+          "github_state": "merged",
+          "requested_as": "open",
+          "opened_head": "bd85dac05289d529b0013be6561a7771ebd1743d",
+          "head": "7d0599fea4a20b9c454ef437a1dc44c7b01f981e",
+          "merge_commit": "2f616c2258eafa220b34895ae5d123a4d7ff1907",
+          "merged_at": "2026-11-09T19:31:33Z",
+          "opened_head_ci": {
+            "run": 42676883926,
+            "name": "Dependency Security Audit",
+            "conclusion": "failure",
+            "job": "rust-audit",
+            "cause": "RUSTSEC-2026-0459 libsqlite3-sys"
+          },
+          "edition2024": "No edition2024 failure in CI. The rust job on bd85dac succeeded. The current PR body does not mention a Cargo 1.83 parse error.",
+          "ci": [
+            {
+              "run": 42679533894,
+              "name": "CI",
+              "conclusion": "success",
+              "commit": "7d0599fea4a20b9c454ef437a1dc44c7b01f981e"
+            },
+            {
+              "run": 42679534042,
+              "name": "Dependency Security Audit",
+              "conclusion": "success",
+              "commit": "7d0599fea4a20b9c454ef437a1dc44c7b01f981e",
+              "jobs": [
+                "rust-audit"
+              ]
+            },
+            {
+              "run": 42679534025,
+              "name": "Quant API CI",
+              "conclusion": "success",
+              "commit": "7d0599fea4a20b9c454ef437a1dc44c7b01f981e"
+            },
+            {
+              "run": 42684177898,
+              "name": "CI",
+              "conclusion": "success",
+              "commit": "2f616c2258eafa220b34895ae5d123a4d7ff1907"
+            },
+            {
+              "run": 42684177853,
+              "name": "Dependency Security Audit",
+              "conclusion": "success",
+              "commit": "2f616c2258eafa220b34895ae5d123a4d7ff1907"
+            }
+          ],
+          "satisfies_tracker": false,
+          "gate": "T08"
+        }
+      ]
     },
     {
       "id": "T09",
@@ -308,15 +833,71 @@
         "services/quant-api/tests/test_durable_paper_ledger.py",
         "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md",
         "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json",
-        "docs/release/VERIFIED_ARTIFACTS_2026_11_13.json"
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_13.json",
+        "https://github.com/Osiris6900/osiris-eye/pull/305",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42683473725",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42683473791",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42748111800"
       ],
       "evidence_commits": [
         "305ceb1d4d4c6f3d649cb58ee2c82eedb3818644",
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9",
-        "43157b1bad5a93c8bc441a21a04b8572a9e736f5"
+        "43157b1bad5a93c8bc441a21a04b8572a9e736f5",
+        "fe90bae1778b7e30a17a5e991c9a585a71718b60",
+        "cb83b019ab5a897938623d052458c6b6d6f706a5",
+        "deed94692cd92096d84d8657e3d12034691d8466",
+        "3a126f9a04e384229ade0313675c20ab90b44b49"
       ],
       "open_prs": [],
-      "blocker": "The integration candidate implements opt-in Alpaca paper transport, persisted intent/ack binding, monotonic fill reconciliation and canonical internal paper OMS. Authorized actual broker-paper captures, operational reconciliation and broader FIX-session acceptance remain pending; no live broker routing is enabled."
+      "contributions": [
+        {
+          "pr": 305,
+          "class": "scaffolding",
+          "status": "merged",
+          "opened_head": "fe90bae1778b7e30a17a5e991c9a585a71718b60",
+          "head": "cb83b019ab5a897938623d052458c6b6d6f706a5",
+          "merge_commit": "deed94692cd92096d84d8657e3d12034691d8466",
+          "merged_at": "2026-11-09T19:27:08Z",
+          "ci": [
+            {
+              "run": 42683473725,
+              "name": "Quant API CI",
+              "conclusion": "success",
+              "commit": "deed94692cd92096d84d8657e3d12034691d8466"
+            },
+            {
+              "run": 42683473791,
+              "name": "Dependency Security Audit",
+              "conclusion": "success",
+              "commit": "deed94692cd92096d84d8657e3d12034691d8466"
+            },
+            {
+              "run": 42683473981,
+              "name": "CI",
+              "conclusion": "cancelled",
+              "commit": "deed94692cd92096d84d8657e3d12034691d8466"
+            },
+            {
+              "run": 42748111800,
+              "name": "CI",
+              "conclusion": "success",
+              "commit": "3a126f9a04e384229ade0313675c20ab90b44b49",
+              "jobs": [
+                "python",
+                "rust",
+                "web"
+              ],
+              "covers": "same paper_execution.py blob as deed94692cd92096d84d8657e3d12034691d8466"
+            }
+          ],
+          "gaps": [
+            "no broker-sandbox match",
+            "unrealized loss is not an input to the daily-loss gate",
+            "live execution stays disabled"
+          ]
+        }
+      ],
+      "blocker": "#305 merged as scaffolding at deed94692cd92096d84d8657e3d12034691d8466 (opened at fe90bae1778b7e30a17a5e991c9a585a71718b60, head cb83b019ab5a897938623d052458c6b6d6f706a5). It follows #277 and does not close T14. Quant API CI 42683473725 and dependency audit 42683473791 passed on that merge commit; main CI 42683473981 on that merge was cancelled and could not be re-run. CI 42748111800 on 3a126f9a04e384229ade0313675c20ab90b44b49 is the substitute run for cancelled main CI 42683473981. paper_execution.py is unchanged since #305's merge on that commit. No broker-sandbox match. The daily-loss gate uses realized P&L only. Live execution stays disabled."
     },
     {
       "id": "T15",
@@ -356,14 +937,77 @@
         "scripts/test_paper_order_journal.py",
         "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md",
         "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json",
-        "docs/release/VERIFIED_ARTIFACTS_2026_11_13.json"
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_13.json",
+        "https://github.com/Osiris6900/osiris-eye/pull/309",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42679533894",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42679534042",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42684177898"
       ],
       "evidence_commits": [
         "0a610db74cac5381ebbb4abe358286a80a6e6298",
-        "43157b1bad5a93c8bc441a21a04b8572a9e736f5"
+        "43157b1bad5a93c8bc441a21a04b8572a9e736f5",
+        "7d0599fea4a20b9c454ef437a1dc44c7b01f981e",
+        "2f616c2258eafa220b34895ae5d123a4d7ff1907"
       ],
       "open_prs": [],
-      "blocker": "Current risk/kill-switch/stale-feed tests, temporary-ledger fault injection and actual receipt-to-paper child-process loss/recovery are implemented. Independent service-outage acceptance and final-candidate external operational/risk review remain pending; local/CI synthetic checks do not accept this gate."
+      "blocker": "Current risk/kill-switch/stale-feed tests, temporary-ledger fault injection and actual receipt-to-paper child-process loss/recovery are implemented. Independent service-outage acceptance and final-candidate external operational/risk review remain pending; local/CI synthetic checks do not accept this gate. #309 merged as scaffolding at 2f616c2258eafa220b34895ae5d123a4d7ff1907 (head 7d0599fea4a20b9c454ef437a1dc44c7b01f981e). CI 42679533894 and audit 42679534042 passed on that head; merge CI 42684177898 and audit 42684177853 passed. Opened head bd85dac failed rust-audit 42676883926 on RUSTSEC-2026-0459; that was fixed before merge. Status unchanged.",
+      "contributions": [
+        {
+          "pr": 309,
+          "class": "scaffolding",
+          "github_state": "merged",
+          "requested_as": "open",
+          "opened_head": "bd85dac05289d529b0013be6561a7771ebd1743d",
+          "head": "7d0599fea4a20b9c454ef437a1dc44c7b01f981e",
+          "merge_commit": "2f616c2258eafa220b34895ae5d123a4d7ff1907",
+          "merged_at": "2026-11-09T19:31:33Z",
+          "opened_head_ci": {
+            "run": 42676883926,
+            "name": "Dependency Security Audit",
+            "conclusion": "failure",
+            "job": "rust-audit",
+            "cause": "RUSTSEC-2026-0459 libsqlite3-sys"
+          },
+          "edition2024": "No edition2024 failure in CI. The rust job on bd85dac succeeded. The current PR body does not mention a Cargo 1.83 parse error.",
+          "ci": [
+            {
+              "run": 42679533894,
+              "name": "CI",
+              "conclusion": "success",
+              "commit": "7d0599fea4a20b9c454ef437a1dc44c7b01f981e"
+            },
+            {
+              "run": 42679534042,
+              "name": "Dependency Security Audit",
+              "conclusion": "success",
+              "commit": "7d0599fea4a20b9c454ef437a1dc44c7b01f981e",
+              "jobs": [
+                "rust-audit"
+              ]
+            },
+            {
+              "run": 42679534025,
+              "name": "Quant API CI",
+              "conclusion": "success",
+              "commit": "7d0599fea4a20b9c454ef437a1dc44c7b01f981e"
+            },
+            {
+              "run": 42684177898,
+              "name": "CI",
+              "conclusion": "success",
+              "commit": "2f616c2258eafa220b34895ae5d123a4d7ff1907"
+            },
+            {
+              "run": 42684177853,
+              "name": "Dependency Security Audit",
+              "conclusion": "success",
+              "commit": "2f616c2258eafa220b34895ae5d123a4d7ff1907"
+            }
+          ],
+          "satisfies_tracker": false,
+          "gate": "T16"
+        }
+      ]
     },
     {
       "id": "T17",
@@ -380,14 +1024,113 @@
         "apps/web/src/AdminCentre.tsx",
         "services/quant-api/src/osiris_api/admin_centre.py",
         "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md",
-        "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json"
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json",
+        "https://github.com/Osiris6900/osiris-eye/pull/308",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42679237031",
+        "https://github.com/Osiris6900/osiris-eye/pull/438",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/43486289288",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/43486289381",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/43486289127",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/43486289393",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/43486289124"
       ],
       "evidence_commits": [
         "0a610db74cac5381ebbb4abe358286a80a6e6298",
-        "5176eae8843a1e5144ac903f37843fe9bb46cdd9"
+        "5176eae8843a1e5144ac903f37843fe9bb46cdd9",
+        "3975e8561318a8bb9c360b01aff2d0c2b941861e",
+        "22c829c4795668fbcac486283dcbe2e5c041cc2b",
+        "b57ff6bea6795cdb7d374721e2b99eec4a30862a"
       ],
-      "open_prs": [],
-      "blocker": "Authenticated canonical account/risk/feed/network/source views, actual Rust receipt metrics, role/MFA boundaries and Chromium navigation are implemented. Genuine source connections, sustained authenticated-node monitoring/alerts and independent operational acceptance remain pending."
+      "open_prs": [
+        308
+      ],
+      "blocker": "Authenticated canonical account/risk/feed/network/source views, actual Rust receipt metrics, role/MFA boundaries and Chromium navigation are implemented. Genuine source connections, sustained authenticated-node monitoring/alerts and independent operational acceptance remain pending. #438 merged as scaffolding at b57ff6bea6795cdb7d374721e2b99eec4a30862a (head 22c829c4795668fbcac486283dcbe2e5c041cc2b). CI 43486289288, Quant API CI 43486289127, audit 43486289381, 179 contract 43486289393, and 182 contract 43486289124 passed. The pull request says this is not accepted operations evidence, so T17 stays Partial.",
+      "contributions": [
+        {
+          "pr": 308,
+          "class": "scaffolding",
+          "tracker_items_on_pr": "none",
+          "related_rows": [
+            "T17",
+            "T18"
+          ],
+          "github_state": "closed-unmerged",
+          "stacked_on": 284,
+          "merge_note": "stacked on #284, merge #284 first; scaffolding only",
+          "head": "3975e8561318a8bb9c360b01aff2d0c2b941861e",
+          "ci": [
+            {
+              "run": 42679237031,
+              "name": "CI",
+              "conclusion": "success"
+            },
+            {
+              "run": 42679237305,
+              "name": "Dependency Security Audit",
+              "conclusion": "success"
+            },
+            {
+              "run": 42679237321,
+              "name": "Quant API CI",
+              "conclusion": "success"
+            }
+          ],
+          "satisfies_tracker": false
+        },
+        {
+          "pr": 438,
+          "class": "scaffolding",
+          "github_state": "merged",
+          "head": "22c829c4795668fbcac486283dcbe2e5c041cc2b",
+          "satisfies_tracker": false,
+          "after": [
+            278,
+            284,
+            271
+          ],
+          "ci": [
+            {
+              "run": 43486289288,
+              "name": "CI",
+              "conclusion": "success",
+              "jobs": [
+                "python",
+                "web",
+                "rust"
+              ]
+            },
+            {
+              "run": 43486289381,
+              "name": "Dependency Security Audit",
+              "conclusion": "success",
+              "jobs": [
+                "rust-audit",
+                "python-audit",
+                "npm-audit",
+                "dependency-inventory"
+              ]
+            },
+            {
+              "run": 43486289127,
+              "name": "Quant API CI",
+              "conclusion": "success"
+            },
+            {
+              "run": 43486289393,
+              "name": "179 evidence contract tests",
+              "conclusion": "success"
+            },
+            {
+              "run": 43486289124,
+              "name": "182 evidence contract tests",
+              "conclusion": "success"
+            }
+          ],
+          "merge_commit": "b57ff6bea6795cdb7d374721e2b99eec4a30862a",
+          "merged_at": "2026-11-13T18:59:07Z",
+          "not_accepted_operations_evidence": true
+        }
+      ]
     },
     {
       "id": "T18",
@@ -401,13 +1144,104 @@
       "evidence": [
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42471703916",
         "services/quant-api/src/osiris_api/admin_centre.py",
-        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md"
+        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md",
+        "https://github.com/Osiris6900/osiris-eye/pull/307",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42685744834",
+        "docs/evidence/deploy-recovery.schema.json",
+        "https://github.com/Osiris6900/osiris-eye/pull/308",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42679237031"
       ],
       "evidence_commits": [
-        "0a610db74cac5381ebbb4abe358286a80a6e6298"
+        "0a610db74cac5381ebbb4abe358286a80a6e6298",
+        "efc40cd1040d33042586e190e834f33cdd1237cb",
+        "187f0c16a2afdb3a37bbe3950d841816d8fe5115",
+        "3975e8561318a8bb9c360b01aff2d0c2b941861e"
       ],
-      "open_prs": [],
-      "blocker": "Actual temporary SQLite backup/restore/continuation, cross-runner integrity intake, authority fencing and rollout/rollback checks are implemented. Approved independent-host service DR with measured RTO/RPO, accepted custody/storage and operator signoff remain pending."
+      "open_prs": [
+        308
+      ],
+      "blocker": "Actual temporary SQLite backup/restore/continuation, cross-runner integrity intake, authority fencing and rollout/rollback checks are implemented. Approved independent-host service DR with measured RTO/RPO, accepted custody/storage and operator signoff remain pending. #307 is scaffolding only (dry-run 42685744834 on merge 187f0c16). It does not implement this row. Next evidence: a real staging recovery drill artifact conforming to docs/evidence/deploy-recovery.schema.json.",
+      "contributions": [
+        {
+          "pr": 307,
+          "class": "scaffolding",
+          "evidence_shape_only": true,
+          "status": "merged",
+          "head": "efc40cd1040d33042586e190e834f33cdd1237cb",
+          "merge_commit": "187f0c16a2afdb3a37bbe3950d841816d8fe5115",
+          "merged_at": "2026-11-09T19:41:18Z",
+          "ci": [
+            {
+              "run": 42685745608,
+              "name": "CI",
+              "conclusion": "success",
+              "commit": "187f0c16a2afdb3a37bbe3950d841816d8fe5115"
+            },
+            {
+              "run": 42685745207,
+              "name": "Dependency Security Audit",
+              "conclusion": "success",
+              "commit": "187f0c16a2afdb3a37bbe3950d841816d8fe5115"
+            },
+            {
+              "run": 42685744834,
+              "name": "Deployment recovery dry run",
+              "conclusion": "success",
+              "commit": "187f0c16a2afdb3a37bbe3950d841816d8fe5115"
+            },
+            {
+              "run": 42679946619,
+              "name": "CI",
+              "conclusion": "success",
+              "commit": "efc40cd1040d33042586e190e834f33cdd1237cb"
+            },
+            {
+              "run": 42679946957,
+              "name": "Deployment recovery dry run",
+              "conclusion": "success",
+              "commit": "efc40cd1040d33042586e190e834f33cdd1237cb"
+            }
+          ],
+          "satisfies_tracker": false,
+          "next_evidence": "A real staging recovery drill artifact conforming to docs/evidence/deploy-recovery.schema.json",
+          "gaps": [
+            "drill_status is not_run",
+            "no retained recovery drill",
+            "live execution stays disabled"
+          ]
+        },
+        {
+          "pr": 308,
+          "class": "scaffolding",
+          "tracker_items_on_pr": "none",
+          "related_rows": [
+            "T17",
+            "T18"
+          ],
+          "github_state": "closed-unmerged",
+          "stacked_on": 284,
+          "merge_note": "stacked on #284, merge #284 first; scaffolding only",
+          "head": "3975e8561318a8bb9c360b01aff2d0c2b941861e",
+          "ci": [
+            {
+              "run": 42679237031,
+              "name": "CI",
+              "conclusion": "success"
+            },
+            {
+              "run": 42679237305,
+              "name": "Dependency Security Audit",
+              "conclusion": "success"
+            },
+            {
+              "run": 42679237321,
+              "name": "Quant API CI",
+              "conclusion": "success"
+            }
+          ],
+          "satisfies_tracker": false
+        }
+      ]
     },
     {
       "id": "T19",
@@ -427,15 +1261,155 @@
         "capacity-report-42740964830-1 (downloaded ZIP SHA-256: 229553051305aabbc28c44af50bb58c4f6dfe9ec746ff3f2f85178333661d239)",
         "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md",
         "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json",
-        "docs/release/VERIFIED_ARTIFACTS_2026_11_13.json"
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_13.json",
+        "https://github.com/Osiris6900/osiris-eye/pull/307",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42685744834",
+        "docs/evidence/deploy-recovery.schema.json",
+        "https://github.com/Osiris6900/osiris-eye/pull/436",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/43416302724",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/43416302544",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/43416302491",
+        "docs/workstreams/NON_BROKER_EXECUTION_2026_11_13.md",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42679453468"
       ],
       "evidence_commits": [
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9",
         "d9bb0a959faf5d9c7c97bd6502a143f9df9123d0",
-        "43157b1bad5a93c8bc441a21a04b8572a9e736f5"
+        "43157b1bad5a93c8bc441a21a04b8572a9e736f5",
+        "efc40cd1040d33042586e190e834f33cdd1237cb",
+        "187f0c16a2afdb3a37bbe3950d841816d8fe5115",
+        "666a3e5599363f6347e671664b8135aeab0d38e6",
+        "9f9e27a3cf286cb3bb95cf33b5a245ec2b413118",
+        "26fd658f9f49463fca36e8a0eedc0344881b046a"
       ],
       "open_prs": [],
-      "blocker": "Short historical one-tailnet capacity evidence remains limited to the recorded topology. Source-bound local Rust E2EE receipt -> kernel-pinned Python durable ledger -> current risk -> canonical paper order/fill -> P&L -> forced process loss/new-process recovery is now implemented. Sustained independent-host capacity/failover, broader DR and final-candidate operational acceptance remain pending."
+      "blocker": "Short historical one-tailnet capacity evidence remains limited to the recorded topology. Source-bound local Rust E2EE receipt -> kernel-pinned Python durable ledger -> current risk -> canonical paper order/fill -> P&L -> forced process loss/new-process recovery is now implemented. Sustained independent-host capacity/failover, broader DR and final-candidate operational acceptance remain pending. #307 is scaffolding only (dry-run 42685744834 on merge 187f0c16). It does not implement this row. Next evidence: a real staging recovery drill artifact conforming to docs/evidence/deploy-recovery.schema.json. #436 is supporting evidence for engineering verification and the #182 contract. Head CI 43416302724 and 182 evidence-contract run 43416302491 passed. It does not accept independent-host capacity, failover, or recovery. Status stays Partial. Dependency Security Audit 42679453468 passed on 26fd658f9f49463fca36e8a0eedc0344881b046a, including rust-audit. Main CI 42679453672 was cancelled. This is supporting CI evidence and does not accept T19.",
+      "contributions": [
+        {
+          "pr": 307,
+          "class": "scaffolding",
+          "evidence_shape_only": true,
+          "status": "merged",
+          "head": "efc40cd1040d33042586e190e834f33cdd1237cb",
+          "merge_commit": "187f0c16a2afdb3a37bbe3950d841816d8fe5115",
+          "merged_at": "2026-11-09T19:41:18Z",
+          "ci": [
+            {
+              "run": 42685745608,
+              "name": "CI",
+              "conclusion": "success",
+              "commit": "187f0c16a2afdb3a37bbe3950d841816d8fe5115"
+            },
+            {
+              "run": 42685745207,
+              "name": "Dependency Security Audit",
+              "conclusion": "success",
+              "commit": "187f0c16a2afdb3a37bbe3950d841816d8fe5115"
+            },
+            {
+              "run": 42685744834,
+              "name": "Deployment recovery dry run",
+              "conclusion": "success",
+              "commit": "187f0c16a2afdb3a37bbe3950d841816d8fe5115"
+            },
+            {
+              "run": 42679946619,
+              "name": "CI",
+              "conclusion": "success",
+              "commit": "efc40cd1040d33042586e190e834f33cdd1237cb"
+            },
+            {
+              "run": 42679946957,
+              "name": "Deployment recovery dry run",
+              "conclusion": "success",
+              "commit": "efc40cd1040d33042586e190e834f33cdd1237cb"
+            }
+          ],
+          "satisfies_tracker": false,
+          "next_evidence": "A real staging recovery drill artifact conforming to docs/evidence/deploy-recovery.schema.json",
+          "gaps": [
+            "drill_status is not_run",
+            "no retained recovery drill",
+            "live execution stays disabled"
+          ]
+        },
+        {
+          "pr": 436,
+          "class": "supporting-evidence",
+          "status": "merged",
+          "satisfies_tracker": false,
+          "head": "666a3e5599363f6347e671664b8135aeab0d38e6",
+          "merge_commit": "9f9e27a3cf286cb3bb95cf33b5a245ec2b413118",
+          "merged_at": "2026-11-13T18:34:37Z",
+          "touches": [
+            "T01",
+            "T19"
+          ],
+          "scope": "Advisory scan covers all locked dependency roots. Engineering verification rejects skipped tests. #182 evidence-contract CI passed.",
+          "reconciled_with": "docs/workstreams/NON_BROKER_EXECUTION_2026_11_13.md",
+          "does_not_promote": "17 previously unaccepted gates stay open; counts remain 3 evidenced / 14 partial / 3 remaining",
+          "ci": [
+            {
+              "run": 43416302724,
+              "name": "CI",
+              "conclusion": "success"
+            },
+            {
+              "run": 43416302829,
+              "name": "New platform modules unit tests",
+              "conclusion": "success"
+            },
+            {
+              "run": 43416302491,
+              "name": "182 evidence contract tests",
+              "conclusion": "success"
+            },
+            {
+              "run": 43416302626,
+              "name": "Immutable GitHub Actions pin ratchet",
+              "conclusion": "success"
+            },
+            {
+              "run": 43416302762,
+              "name": "179 evidence contract tests",
+              "conclusion": "success"
+            },
+            {
+              "run": 43416302532,
+              "name": "Release gate inventory",
+              "conclusion": "success"
+            },
+            {
+              "run": 43416302544,
+              "name": "Dependency Security Audit",
+              "conclusion": "success"
+            }
+          ],
+          "gate": "T19"
+        },
+        {
+          "pr": 306,
+          "class": "supporting-ci",
+          "status": "merged",
+          "satisfies_tracker": false,
+          "merge_commit": "26fd658f9f49463fca36e8a0eedc0344881b046a",
+          "ci": [
+            {
+              "run": 42679453468,
+              "name": "Dependency Security Audit",
+              "conclusion": "success",
+              "commit": "26fd658f9f49463fca36e8a0eedc0344881b046a",
+              "jobs": [
+                "python-audit",
+                "rust-audit",
+                "npm-audit",
+                "dependency-inventory"
+              ]
+            }
+          ],
+          "note": "Green audit on the SQLite lock merge. Main CI 42679453672 was cancelled. Does not accept T19."
+        }
+      ]
     },
     {
       "id": "T20",
