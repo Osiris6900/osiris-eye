@@ -58,6 +58,7 @@ admin_authentication_required`; authenticated role without the permission →
 | Route | Permission | Schema |
 |---|---|---|
 | `GET /admin/overview` | read_health | `osiris.admin_overview.v1` |
+| `GET /admin/monitoring` | read_health; paper block also requires read_research | `osiris.admin_monitoring.v1` |
 | `GET /admin/network/status` | read_health | `osiris.admin_network_status.v1` |
 | `GET /admin/feeds/status` | read_health | `osiris.admin_feeds_status.v1` |
 | `GET /admin/paper/status` | read_research | `osiris.admin_paper_status.v1` |
@@ -118,14 +119,24 @@ above can `ack`; acknowledgements record role and timestamp.
   time; idempotency keys omitted), `cost_basis_gross` from ledger positions, and
   `market_value` only when every position has a mark. `open_orders` is `null`
   with reason `not_stored`.
-- Alert list adds `durable: false` and `storage: process_memory_not_durable`.
-  Counts match the arrays returned. The dashboard prints that limitation only
-  for this known storage value and does not render arbitrary storage text.
+- Alert history uses the local SQLite store when it is readable: `storage: sqlite`
+  and `durable: true`. A missing file is an empty history and is not created
+  until an alert is recorded. An unreadable or foreign file fails closed
+  (`storage: unavailable`). The dashboard prints only those known storage
+  states. Acknowledgement stays on the POST route; the dashboard does not send it.
+- `GET /admin/monitoring` is a read-only operational panel. `read_health`
+  returns the peer-health summary and one local node status. The paper block
+  is included only when the same caller also has `read_research`; otherwise
+  its status is `permission_denied` and it contains no balances, symbols, or
+  order ids. A missing registry or an unreadable local node stays null and is
+  not replaced with zeros. The panel does not acknowledge alerts, flip the
+  kill switch, revoke feeds, or place orders.
 - The React dashboard is read-only: it does not call kill-switch, feed revoke,
   or alert ack. Those POST routes remain server-side and RBAC-gated.
 - Unrealized P&L is `null` without external marks (`marks_available: false`).
 - Paper data comes from the durable SQLite ledger (`synthetic-paper-only`).
-- Audit and alerts are bounded in-memory evidence, not a compliance store.
+- Audit is bounded in-memory evidence, not a compliance store. Alert history
+  is the local SQLite file described above, not a compliance archive.
 
 ## Reproduce
 
