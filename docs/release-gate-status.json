@@ -41,7 +41,11 @@
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42679453468",
         "https://github.com/Osiris6900/osiris-eye/pull/302",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42677260186",
-        "https://github.com/Osiris6900/osiris-eye/actions/runs/42677259943"
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42677259943",
+        "https://github.com/Osiris6900/osiris-eye/pull/436",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/43416302724",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/43416302544",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/43416302491"
       ],
       "evidence_commits": [
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9",
@@ -49,7 +53,9 @@
         "c764b0e68b18b7c9f66b7539e9616493f9aafb2d",
         "26fd658f9f49463fca36e8a0eedc0344881b046a",
         "d47d14d0c9b429fbc5c6a7d9c8df6fc75bec961c",
-        "8ef21a84846a0e525978d6589b458caf3afc75e4"
+        "8ef21a84846a0e525978d6589b458caf3afc75e4",
+        "666a3e5599363f6347e671664b8135aeab0d38e6",
+        "9f9e27a3cf286cb3bb95cf33b5a245ec2b413118"
       ],
       "open_prs": [],
       "contributions": [
@@ -145,9 +151,63 @@
           ],
           "does_not_implement": "T01",
           "merge_order": "merged; dropped from the pending order. #306's lock change is the same fix and is superseded"
+        },
+        {
+          "pr": 436,
+          "class": "supporting-evidence",
+          "status": "merged",
+          "satisfies_tracker": false,
+          "head": "666a3e5599363f6347e671664b8135aeab0d38e6",
+          "merge_commit": "9f9e27a3cf286cb3bb95cf33b5a245ec2b413118",
+          "merged_at": "2026-11-13T18:34:37Z",
+          "touches": [
+            "T01",
+            "T19"
+          ],
+          "scope": "Advisory scan covers all locked dependency roots. Engineering verification rejects skipped tests. #182 evidence-contract CI passed.",
+          "reconciled_with": "docs/workstreams/NON_BROKER_EXECUTION_2026_11_13.md",
+          "does_not_promote": "17 previously unaccepted gates stay open; counts remain 3 evidenced / 14 partial / 3 remaining",
+          "ci": [
+            {
+              "run": 43416302724,
+              "name": "CI",
+              "conclusion": "success"
+            },
+            {
+              "run": 43416302829,
+              "name": "New platform modules unit tests",
+              "conclusion": "success"
+            },
+            {
+              "run": 43416302491,
+              "name": "182 evidence contract tests",
+              "conclusion": "success"
+            },
+            {
+              "run": 43416302626,
+              "name": "Immutable GitHub Actions pin ratchet",
+              "conclusion": "success"
+            },
+            {
+              "run": 43416302762,
+              "name": "179 evidence contract tests",
+              "conclusion": "success"
+            },
+            {
+              "run": 43416302532,
+              "name": "Release gate inventory",
+              "conclusion": "success"
+            },
+            {
+              "run": 43416302544,
+              "name": "Dependency Security Audit",
+              "conclusion": "success"
+            }
+          ],
+          "gate": "T01"
         }
       ],
-      "blocker": "RUSTSEC-2026-0459 is cleared: rusqlite 0.41.1 and libsqlite3-sys 0.39.1 are the only copies, and the lock ratchet floor is libsqlite3-sys >= 0.39.0. #302 merged at 8ef21a84846a0e525978d6589b458caf3afc75e4 (head d47d14d0c9b429fbc5c6a7d9c8df6fc75bec961c). CI 42677260186 and Dependency Security Audit 42677259943 passed on that head, including rust-audit. #306's lock bump is the same fix and is superseded; its only unique merged change is fetch-depth 0. T01 stays Partial because paste 1.0.15 (RUSTSEC-2024-0436) remains. The SBOM generator no longer marks Python resolution unresolved, and Dependency Security Audit already runs scripts/check_license_provenance.py. Accepted final-candidate audit, SBOM, and provenance artifacts, plus a reviewed paste disposition, are still required. facts.cargo_versions and facts.advisory_source_commit still match the worktree (source 2b685c2bc8689422724f1d9eb52ceef660ebb8a7). #302's advisory file recorded source 2501a07441c7a3e124a7494f2384903c85f5b6ca; later refreshes replaced that file."
+      "blocker": "RUSTSEC-2026-0459 is cleared: rusqlite 0.41.1 and libsqlite3-sys 0.39.1 are the only copies, and the lock ratchet floor is libsqlite3-sys >= 0.39.0. #302 merged at 8ef21a84846a0e525978d6589b458caf3afc75e4 (head d47d14d0c9b429fbc5c6a7d9c8df6fc75bec961c). CI 42677260186 and Dependency Security Audit 42677259943 passed on that head, including rust-audit. #306's lock bump is the same fix and is superseded; its only unique merged change is fetch-depth 0. T01 stays Partial because paste 1.0.15 (RUSTSEC-2024-0436) remains. The SBOM generator no longer marks Python resolution unresolved, and Dependency Security Audit already runs scripts/check_license_provenance.py. Accepted final-candidate audit, SBOM, and provenance artifacts, plus a reviewed paste disposition, are still required. facts.cargo_versions and facts.advisory_source_commit still match the worktree (source 2b685c2bc8689422724f1d9eb52ceef660ebb8a7). #302's advisory file recorded source 2501a07441c7a3e124a7494f2384903c85f5b6ca; later refreshes replaced that file. #436 merged at 9f9e27a3cf286cb3bb95cf33b5a245ec2b413118 (head 666a3e5599363f6347e671664b8135aeab0d38e6). Dependency Security Audit 43416302544 passed. The retained scan covers all locked roots and still leaves paste 1.0.15. Final-candidate audit, SBOM, and provenance acceptance remain open. Status stays Partial."
     },
     {
       "id": "T02",
@@ -1129,17 +1189,24 @@
         "docs/release/VERIFIED_ARTIFACTS_2026_11_13.json",
         "https://github.com/Osiris6900/osiris-eye/pull/307",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42685744834",
-        "docs/evidence/deploy-recovery.schema.json"
+        "docs/evidence/deploy-recovery.schema.json",
+        "https://github.com/Osiris6900/osiris-eye/pull/436",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/43416302724",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/43416302544",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/43416302491",
+        "docs/workstreams/NON_BROKER_EXECUTION_2026_11_13.md"
       ],
       "evidence_commits": [
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9",
         "d9bb0a959faf5d9c7c97bd6502a143f9df9123d0",
         "43157b1bad5a93c8bc441a21a04b8572a9e736f5",
         "efc40cd1040d33042586e190e834f33cdd1237cb",
-        "187f0c16a2afdb3a37bbe3950d841816d8fe5115"
+        "187f0c16a2afdb3a37bbe3950d841816d8fe5115",
+        "666a3e5599363f6347e671664b8135aeab0d38e6",
+        "9f9e27a3cf286cb3bb95cf33b5a245ec2b413118"
       ],
       "open_prs": [],
-      "blocker": "Short historical one-tailnet capacity evidence remains limited to the recorded topology. Source-bound local Rust E2EE receipt -> kernel-pinned Python durable ledger -> current risk -> canonical paper order/fill -> P&L -> forced process loss/new-process recovery is now implemented. Sustained independent-host capacity/failover, broader DR and final-candidate operational acceptance remain pending. #307 is scaffolding only (dry-run 42685744834 on merge 187f0c16). It does not implement this row. Next evidence: a real staging recovery drill artifact conforming to docs/evidence/deploy-recovery.schema.json.",
+      "blocker": "Short historical one-tailnet capacity evidence remains limited to the recorded topology. Source-bound local Rust E2EE receipt -> kernel-pinned Python durable ledger -> current risk -> canonical paper order/fill -> P&L -> forced process loss/new-process recovery is now implemented. Sustained independent-host capacity/failover, broader DR and final-candidate operational acceptance remain pending. #307 is scaffolding only (dry-run 42685744834 on merge 187f0c16). It does not implement this row. Next evidence: a real staging recovery drill artifact conforming to docs/evidence/deploy-recovery.schema.json. #436 is supporting evidence for engineering verification and the #182 contract. Head CI 43416302724 and 182 evidence-contract run 43416302491 passed. It does not accept independent-host capacity, failover, or recovery. Status stays Partial.",
       "contributions": [
         {
           "pr": 307,
@@ -1188,6 +1255,60 @@
             "no retained recovery drill",
             "live execution stays disabled"
           ]
+        },
+        {
+          "pr": 436,
+          "class": "supporting-evidence",
+          "status": "merged",
+          "satisfies_tracker": false,
+          "head": "666a3e5599363f6347e671664b8135aeab0d38e6",
+          "merge_commit": "9f9e27a3cf286cb3bb95cf33b5a245ec2b413118",
+          "merged_at": "2026-11-13T18:34:37Z",
+          "touches": [
+            "T01",
+            "T19"
+          ],
+          "scope": "Advisory scan covers all locked dependency roots. Engineering verification rejects skipped tests. #182 evidence-contract CI passed.",
+          "reconciled_with": "docs/workstreams/NON_BROKER_EXECUTION_2026_11_13.md",
+          "does_not_promote": "17 previously unaccepted gates stay open; counts remain 3 evidenced / 14 partial / 3 remaining",
+          "ci": [
+            {
+              "run": 43416302724,
+              "name": "CI",
+              "conclusion": "success"
+            },
+            {
+              "run": 43416302829,
+              "name": "New platform modules unit tests",
+              "conclusion": "success"
+            },
+            {
+              "run": 43416302491,
+              "name": "182 evidence contract tests",
+              "conclusion": "success"
+            },
+            {
+              "run": 43416302626,
+              "name": "Immutable GitHub Actions pin ratchet",
+              "conclusion": "success"
+            },
+            {
+              "run": 43416302762,
+              "name": "179 evidence contract tests",
+              "conclusion": "success"
+            },
+            {
+              "run": 43416302532,
+              "name": "Release gate inventory",
+              "conclusion": "success"
+            },
+            {
+              "run": 43416302544,
+              "name": "Dependency Security Audit",
+              "conclusion": "success"
+            }
+          ],
+          "gate": "T19"
         }
       ]
     },
