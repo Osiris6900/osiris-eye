@@ -892,12 +892,12 @@
           ],
           "gaps": [
             "no broker-sandbox match",
-            "unrealized loss is not an input to the daily-loss gate",
+            "historical #305 gap: the daily-loss gate used realized P&L only",
             "live execution stays disabled"
           ]
         }
       ],
-      "blocker": "#305 merged as scaffolding at deed94692cd92096d84d8657e3d12034691d8466 (opened at fe90bae1778b7e30a17a5e991c9a585a71718b60, head cb83b019ab5a897938623d052458c6b6d6f706a5). It follows #277 and does not close T14. Quant API CI 42683473725 and dependency audit 42683473791 passed on that merge commit; main CI 42683473981 on that merge was cancelled and could not be re-run. CI 42748111800 on 3a126f9a04e384229ade0313675c20ab90b44b49 is the substitute run for cancelled main CI 42683473981. paper_execution.py is unchanged since #305's merge on that commit. No broker-sandbox match. The daily-loss gate uses realized P&L only. Live execution stays disabled."
+      "blocker": "#305 merged as scaffolding at deed94692cd92096d84d8657e3d12034691d8466 (opened at fe90bae1778b7e30a17a5e991c9a585a71718b60, head cb83b019ab5a897938623d052458c6b6d6f706a5). It follows #277 and does not close T14. Quant API CI 42683473725 and dependency audit 42683473791 passed on that merge commit; main CI 42683473981 on that merge was cancelled and could not be re-run. CI 42748111800 on 3a126f9a04e384229ade0313675c20ab90b44b49 is the substitute run for cancelled main CI 42683473981. paper_execution.py is unchanged since #305's merge on that commit. No broker-sandbox match. The daily-loss gate includes adverse unrealized loss and fails closed when another holding has no fresh mark. Unrealized gains do not offset realized losses. Live execution stays disabled."
     },
     {
       "id": "T15",

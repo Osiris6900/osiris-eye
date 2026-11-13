@@ -177,6 +177,7 @@ def execute_receipted_observation(
         symbol=normalized["instrument"],
         price=str(price),
         side="SELL" if side == "SELL" else "BUY",
+        now=current.isoformat(),
     )
     validate_p2p_observation(
         observation,

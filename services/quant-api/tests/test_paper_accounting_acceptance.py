@@ -51,6 +51,7 @@ def fill(key, fill_key, quantity="1", **extra):
 def test_working_buy_rechecks_loss_limit_after_another_position_is_closed(db):
     initialize_paper_account("1000", RiskLimits(max_daily_loss=10))
     assert order("inventory", symbol="ETH")["status"] == "filled"
+    mark_to_market({"ETH": "100"}, observed_at=NOW, now=NOW)
     assert order("pending", working=True)["status"] == "accepted"
     assert order("loss", symbol="ETH", side="SELL", price="50")["status"] == "filled"
     before = snapshot()
@@ -82,6 +83,7 @@ def test_gross_risk_uses_other_positions_current_marks(db):
 def test_working_fill_rechecks_changed_gross_exposure_without_double_reserving(db):
     initialize_paper_account("1000", RiskLimits(max_gross_exposure=250))
     assert order("held", symbol="ETH")["status"] == "filled"
+    mark_to_market({"ETH": "100"}, observed_at=NOW, now=NOW)
     assert order("pending", working=True)["status"] == "accepted"
     context = execution_context(symbol="BTC", price="100")
     assert context["current_gross_exposure"] == "200"
