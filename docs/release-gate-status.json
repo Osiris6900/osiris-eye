@@ -58,10 +58,29 @@
           "head": "c764b0e68b18b7c9f66b7539e9616493f9aafb2d",
           "merge_commit": "26fd658f9f49463fca36e8a0eedc0344881b046a",
           "merged_at": "2026-11-09T19:02:06Z",
-          "lock": {"rusqlite": "0.41.1", "libsqlite3-sys": "0.39.1"},
+          "lock": {
+            "rusqlite": "0.41.1",
+            "libsqlite3-sys": "0.39.1"
+          },
           "ci": [
-            {"run": 42679453468, "name": "Dependency Security Audit", "conclusion": "success", "commit": "26fd658f9f49463fca36e8a0eedc0344881b046a", "jobs": ["python-audit", "rust-audit", "npm-audit", "dependency-inventory"]},
-            {"run": 42679453672, "name": "CI", "conclusion": "cancelled", "commit": "26fd658f9f49463fca36e8a0eedc0344881b046a"}
+            {
+              "run": 42679453468,
+              "name": "Dependency Security Audit",
+              "conclusion": "success",
+              "commit": "26fd658f9f49463fca36e8a0eedc0344881b046a",
+              "jobs": [
+                "python-audit",
+                "rust-audit",
+                "npm-audit",
+                "dependency-inventory"
+              ]
+            },
+            {
+              "run": 42679453672,
+              "name": "CI",
+              "conclusion": "cancelled",
+              "commit": "26fd658f9f49463fca36e8a0eedc0344881b046a"
+            }
           ],
           "merge_order": "prerequisite; other open release-gate PRs rebase onto main after it",
           "does_not_implement": "T01"
@@ -149,13 +168,68 @@
       "acceptance_satisfied": true,
       "evidence": [
         "docs/P2P_PUBLIC_NODE_DEPLOYMENT.md",
-        "https://github.com/Osiris6900/osiris-eye/actions/runs/42724204891"
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42724204891",
+        "https://github.com/Osiris6900/osiris-eye/pull/307",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42685744834",
+        "docs/evidence/deploy-recovery.schema.json"
       ],
       "evidence_commits": [
-        "8a531b37869655d683e3af2b610404965f6376a6"
+        "8a531b37869655d683e3af2b610404965f6376a6",
+        "efc40cd1040d33042586e190e834f33cdd1237cb",
+        "187f0c16a2afdb3a37bbe3950d841816d8fe5115"
       ],
       "open_prs": [],
-      "blocker": "Ghost-mode relay design is adopted; Host C non-recipient observer passed in run 42724204891. This does not prove long-lived relay uptime, public-node deployment, or incident recovery."
+      "blocker": "Ghost-mode relay design is adopted; Host C non-recipient observer passed in run 42724204891. This does not prove long-lived relay uptime, public-node deployment, or incident recovery. #307 is scaffolding only (dry-run 42685744834 on merge 187f0c16). It does not implement this row. Next evidence: a real staging recovery drill artifact conforming to docs/evidence/deploy-recovery.schema.json.",
+      "contributions": [
+        {
+          "pr": 307,
+          "class": "scaffolding",
+          "evidence_shape_only": true,
+          "status": "merged",
+          "head": "efc40cd1040d33042586e190e834f33cdd1237cb",
+          "merge_commit": "187f0c16a2afdb3a37bbe3950d841816d8fe5115",
+          "merged_at": "2026-11-09T19:41:18Z",
+          "ci": [
+            {
+              "run": 42685745608,
+              "name": "CI",
+              "conclusion": "success",
+              "commit": "187f0c16a2afdb3a37bbe3950d841816d8fe5115"
+            },
+            {
+              "run": 42685745207,
+              "name": "Dependency Security Audit",
+              "conclusion": "success",
+              "commit": "187f0c16a2afdb3a37bbe3950d841816d8fe5115"
+            },
+            {
+              "run": 42685744834,
+              "name": "Deployment recovery dry run",
+              "conclusion": "success",
+              "commit": "187f0c16a2afdb3a37bbe3950d841816d8fe5115"
+            },
+            {
+              "run": 42679946619,
+              "name": "CI",
+              "conclusion": "success",
+              "commit": "efc40cd1040d33042586e190e834f33cdd1237cb"
+            },
+            {
+              "run": 42679946957,
+              "name": "Deployment recovery dry run",
+              "conclusion": "success",
+              "commit": "efc40cd1040d33042586e190e834f33cdd1237cb"
+            }
+          ],
+          "satisfies_tracker": false,
+          "next_evidence": "A real staging recovery drill artifact conforming to docs/evidence/deploy-recovery.schema.json",
+          "gaps": [
+            "drill_status is not_run",
+            "no retained recovery drill",
+            "live execution stays disabled"
+          ]
+        }
+      ]
     },
     {
       "id": "T06",
@@ -356,9 +430,24 @@
           "merge_commit": "deed94692cd92096d84d8657e3d12034691d8466",
           "merged_at": "2026-11-09T19:27:08Z",
           "ci": [
-            {"run": 42683473725, "name": "Quant API CI", "conclusion": "success", "commit": "deed94692cd92096d84d8657e3d12034691d8466"},
-            {"run": 42683473791, "name": "Dependency Security Audit", "conclusion": "success", "commit": "deed94692cd92096d84d8657e3d12034691d8466"},
-            {"run": 42683473981, "name": "CI", "conclusion": "cancelled", "commit": "deed94692cd92096d84d8657e3d12034691d8466"}
+            {
+              "run": 42683473725,
+              "name": "Quant API CI",
+              "conclusion": "success",
+              "commit": "deed94692cd92096d84d8657e3d12034691d8466"
+            },
+            {
+              "run": 42683473791,
+              "name": "Dependency Security Audit",
+              "conclusion": "success",
+              "commit": "deed94692cd92096d84d8657e3d12034691d8466"
+            },
+            {
+              "run": 42683473981,
+              "name": "CI",
+              "conclusion": "cancelled",
+              "commit": "deed94692cd92096d84d8657e3d12034691d8466"
+            }
           ],
           "gaps": [
             "no broker-sandbox match",
@@ -452,13 +541,68 @@
       "evidence": [
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42471703916",
         "services/quant-api/src/osiris_api/admin_centre.py",
-        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md"
+        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md",
+        "https://github.com/Osiris6900/osiris-eye/pull/307",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42685744834",
+        "docs/evidence/deploy-recovery.schema.json"
       ],
       "evidence_commits": [
-        "0a610db74cac5381ebbb4abe358286a80a6e6298"
+        "0a610db74cac5381ebbb4abe358286a80a6e6298",
+        "efc40cd1040d33042586e190e834f33cdd1237cb",
+        "187f0c16a2afdb3a37bbe3950d841816d8fe5115"
       ],
       "open_prs": [],
-      "blocker": "Actual temporary SQLite backup/restore/continuation, cross-runner integrity intake, authority fencing and rollout/rollback checks are implemented. Approved independent-host service DR with measured RTO/RPO, accepted custody/storage and operator signoff remain pending."
+      "blocker": "Actual temporary SQLite backup/restore/continuation, cross-runner integrity intake, authority fencing and rollout/rollback checks are implemented. Approved independent-host service DR with measured RTO/RPO, accepted custody/storage and operator signoff remain pending. #307 is scaffolding only (dry-run 42685744834 on merge 187f0c16). It does not implement this row. Next evidence: a real staging recovery drill artifact conforming to docs/evidence/deploy-recovery.schema.json.",
+      "contributions": [
+        {
+          "pr": 307,
+          "class": "scaffolding",
+          "evidence_shape_only": true,
+          "status": "merged",
+          "head": "efc40cd1040d33042586e190e834f33cdd1237cb",
+          "merge_commit": "187f0c16a2afdb3a37bbe3950d841816d8fe5115",
+          "merged_at": "2026-11-09T19:41:18Z",
+          "ci": [
+            {
+              "run": 42685745608,
+              "name": "CI",
+              "conclusion": "success",
+              "commit": "187f0c16a2afdb3a37bbe3950d841816d8fe5115"
+            },
+            {
+              "run": 42685745207,
+              "name": "Dependency Security Audit",
+              "conclusion": "success",
+              "commit": "187f0c16a2afdb3a37bbe3950d841816d8fe5115"
+            },
+            {
+              "run": 42685744834,
+              "name": "Deployment recovery dry run",
+              "conclusion": "success",
+              "commit": "187f0c16a2afdb3a37bbe3950d841816d8fe5115"
+            },
+            {
+              "run": 42679946619,
+              "name": "CI",
+              "conclusion": "success",
+              "commit": "efc40cd1040d33042586e190e834f33cdd1237cb"
+            },
+            {
+              "run": 42679946957,
+              "name": "Deployment recovery dry run",
+              "conclusion": "success",
+              "commit": "efc40cd1040d33042586e190e834f33cdd1237cb"
+            }
+          ],
+          "satisfies_tracker": false,
+          "next_evidence": "A real staging recovery drill artifact conforming to docs/evidence/deploy-recovery.schema.json",
+          "gaps": [
+            "drill_status is not_run",
+            "no retained recovery drill",
+            "live execution stays disabled"
+          ]
+        }
+      ]
     },
     {
       "id": "T19",
@@ -478,15 +622,70 @@
         "capacity-report-42740964830-1 (downloaded ZIP SHA-256: 229553051305aabbc28c44af50bb58c4f6dfe9ec746ff3f2f85178333661d239)",
         "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md",
         "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json",
-        "docs/release/VERIFIED_ARTIFACTS_2026_11_13.json"
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_13.json",
+        "https://github.com/Osiris6900/osiris-eye/pull/307",
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42685744834",
+        "docs/evidence/deploy-recovery.schema.json"
       ],
       "evidence_commits": [
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9",
         "d9bb0a959faf5d9c7c97bd6502a143f9df9123d0",
-        "43157b1bad5a93c8bc441a21a04b8572a9e736f5"
+        "43157b1bad5a93c8bc441a21a04b8572a9e736f5",
+        "efc40cd1040d33042586e190e834f33cdd1237cb",
+        "187f0c16a2afdb3a37bbe3950d841816d8fe5115"
       ],
       "open_prs": [],
-      "blocker": "Short historical one-tailnet capacity evidence remains limited to the recorded topology. Source-bound local Rust E2EE receipt -> kernel-pinned Python durable ledger -> current risk -> canonical paper order/fill -> P&L -> forced process loss/new-process recovery is now implemented. Sustained independent-host capacity/failover, broader DR and final-candidate operational acceptance remain pending."
+      "blocker": "Short historical one-tailnet capacity evidence remains limited to the recorded topology. Source-bound local Rust E2EE receipt -> kernel-pinned Python durable ledger -> current risk -> canonical paper order/fill -> P&L -> forced process loss/new-process recovery is now implemented. Sustained independent-host capacity/failover, broader DR and final-candidate operational acceptance remain pending. #307 is scaffolding only (dry-run 42685744834 on merge 187f0c16). It does not implement this row. Next evidence: a real staging recovery drill artifact conforming to docs/evidence/deploy-recovery.schema.json.",
+      "contributions": [
+        {
+          "pr": 307,
+          "class": "scaffolding",
+          "evidence_shape_only": true,
+          "status": "merged",
+          "head": "efc40cd1040d33042586e190e834f33cdd1237cb",
+          "merge_commit": "187f0c16a2afdb3a37bbe3950d841816d8fe5115",
+          "merged_at": "2026-11-09T19:41:18Z",
+          "ci": [
+            {
+              "run": 42685745608,
+              "name": "CI",
+              "conclusion": "success",
+              "commit": "187f0c16a2afdb3a37bbe3950d841816d8fe5115"
+            },
+            {
+              "run": 42685745207,
+              "name": "Dependency Security Audit",
+              "conclusion": "success",
+              "commit": "187f0c16a2afdb3a37bbe3950d841816d8fe5115"
+            },
+            {
+              "run": 42685744834,
+              "name": "Deployment recovery dry run",
+              "conclusion": "success",
+              "commit": "187f0c16a2afdb3a37bbe3950d841816d8fe5115"
+            },
+            {
+              "run": 42679946619,
+              "name": "CI",
+              "conclusion": "success",
+              "commit": "efc40cd1040d33042586e190e834f33cdd1237cb"
+            },
+            {
+              "run": 42679946957,
+              "name": "Deployment recovery dry run",
+              "conclusion": "success",
+              "commit": "efc40cd1040d33042586e190e834f33cdd1237cb"
+            }
+          ],
+          "satisfies_tracker": false,
+          "next_evidence": "A real staging recovery drill artifact conforming to docs/evidence/deploy-recovery.schema.json",
+          "gaps": [
+            "drill_status is not_run",
+            "no retained recovery drill",
+            "live execution stays disabled"
+          ]
+        }
+      ]
     },
     {
       "id": "T20",
