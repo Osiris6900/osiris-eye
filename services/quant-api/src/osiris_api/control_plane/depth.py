@@ -184,26 +184,7 @@ class DepthService:
             raise ValueError("stale_depth_or_invalid_side")
         requested = Fraction(money(quantity))
         limit = None if limit_price is None else Fraction(money(limit_price))
-        with self._timed_transaction(instrument) as (conn, now):
-            prior = conn.execute(
-                "SELECT body FROM cp_documents WHERE collection='depth' AND id=?", (instrument,)
-            ).fetchone()
-            if not prior:
-                raise ValueError("depth_unavailable")
-            book = json.loads(prior[0])
-            if book.get("schema_version") != 2:
-                raise ValueError("depth_recapture_required")
-            if book["entitlement_reference"] != self.entitlement_reference:
-                raise ValueError("depth_entitlement_mismatch")
-            history = conn.execute(
-                "SELECT body FROM cp_documents WHERE collection='depth-history' AND id=?",
-                (book["snapshot_id"],),
-            ).fetchone()
-            if not history or history[0] != prior[0]:
-                raise ValueError("depth_history_mismatch")
-            age = now - book["captured_ms"]
-            if age < 0 or age > max_age_ms:
-                raise ValueError("stale_depth_or_invalid_side")
+        book, age = self.current_snapshot(instrument, max_age_ms=max_age_ms)
         remaining, cost, fills = requested, Fraction(0), []
         levels = book["asks"] if side == "buy" else book["bids"]
         for price, size in levels:
@@ -230,33 +211,20 @@ class DepthService:
         spread_cost = direction * (best - midpoint) * filled
         depth_cost = direction * (cost - best * filled)
         return {
-            "instrument": instrument,
-            "side": side,
-            "requested_quantity": _exact(requested),
-            "filled_quantity": _exact(filled),
-            "unfilled_quantity": _exact(remaining),
-            "average_price": average,
-            "average_price_is_rounded": rounded,
-            "average_price_exact_ratio": ratio,
-            "filled_notional": _exact(cost),
-            "fills": fills,
+            "instrument": instrument, "side": side,
+            "requested_quantity": _exact(requested), "filled_quantity": _exact(filled),
+            "unfilled_quantity": _exact(remaining), "average_price": average,
+            "average_price_is_rounded": rounded, "average_price_exact_ratio": ratio,
+            "filled_notional": _exact(cost), "fills": fills,
             "limit_price": None if limit is None else _exact(limit),
-            "reference_midpoint": _exact(midpoint),
-            "spread_cost": _exact(spread_cost),
+            "reference_midpoint": _exact(midpoint), "spread_cost": _exact(spread_cost),
             "visible_depth_cost": _exact(depth_cost),
             "shortfall_from_midpoint": _exact(spread_cost + depth_cost),
-            "sequence": book["sequence"],
-            "snapshot_id": book["snapshot_id"],
-            "snapshot_sha256": digest(book),
-            "raw_sha256": book["raw_sha256"],
-            "source_url": book["source_url"],
-            "entitlement_reference": book["entitlement_reference"],
-            "captured_ms": book["captured_ms"],
-            "age_ms": age,
-            "age_basis": book["age_basis"],
-            "retained_depth_truncated": book[
-                "asks_truncated" if side == "buy" else "bids_truncated"
-            ],
+            "sequence": book["sequence"], "snapshot_id": book["snapshot_id"],
+            "snapshot_sha256": digest(book), "raw_sha256": book["raw_sha256"],
+            "source_url": book["source_url"], "entitlement_reference": book["entitlement_reference"],
+            "captured_ms": book["captured_ms"], "age_ms": age, "age_basis": book["age_basis"],
+            "retained_depth_truncated": book["asks_truncated" if side == "buy" else "bids_truncated"],
             "model": "static-displayed-book-sweep",
             "limitations": [
                 "Local receipt age does not verify exchange timestamp or vendor cache freshness.",
@@ -266,3 +234,30 @@ class DepthService:
             ],
             "execution_authorized": False,
         }
+
+    def current_snapshot(self, instrument: str, *, max_age_ms: int = 5000) -> tuple[dict, int]:
+        """Read a detached, freshness/rights/history-checked current capture."""
+        instrument = identifier(instrument)
+        if type(max_age_ms) is not int or max_age_ms <= 0:
+            raise ValueError("depth_unavailable")
+        with self._timed_transaction(instrument) as (conn, now):
+            prior = conn.execute(
+                "SELECT body FROM cp_documents WHERE collection='depth' AND id=?", (instrument,)
+            ).fetchone()
+            if not prior:
+                raise ValueError("depth_unavailable")
+            book = json.loads(prior[0])
+            if book.get("schema_version") != 2:
+                raise ValueError("depth_recapture_required")
+            if book["entitlement_reference"] != self.entitlement_reference:
+                raise ValueError("depth_entitlement_mismatch")
+            history = conn.execute(
+                "SELECT body FROM cp_documents WHERE collection='depth-history' AND id=?",
+                (book["snapshot_id"],),
+            ).fetchone()
+            if not history or history[0] != prior[0]:
+                raise ValueError("depth_history_mismatch")
+            age = now - book["captured_ms"]
+            if age < 0 or age > max_age_ms:
+                raise ValueError("stale_depth_or_invalid_side")
+        return book, age

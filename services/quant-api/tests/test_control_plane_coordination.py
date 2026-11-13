@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+import base64
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -6,7 +7,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from osiris_api.control_plane.agents import JobWorker, ResearchAgents
 from osiris_api.control_plane.coordination import Coordinator
-from osiris_api.control_plane.database import Database
+from osiris_api.control_plane.database import Database, canonical, digest
 from osiris_api.control_plane.replication import Replicator
 
 
@@ -101,3 +102,28 @@ def test_replica_convergence_signature_gap_and_atomic_rollback(tmp_path):
     with pytest.raises(ValueError, match="gap"):
         left.apply([next_event, gap])
     assert len(left.export("a")) == 1
+
+
+@pytest.mark.parametrize("sequence", [2**63, 10**100])
+def test_replication_integer_overflow_rejected_before_any_write(tmp_path, sequence):
+    key = Ed25519PrivateKey.generate()
+    trusted = {"a": key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)}
+    replica = Replicator(Database(str(tmp_path / "replica.db")), trusted)
+    first = Replicator.sign("a", 1, "first", {}, key)
+    # Build a correctly signed envelope without relying on the signing helper's
+    # validation, as an independently implemented peer could do.
+    event = {"origin": "a", "seq": sequence, "id": "overflow", "payload": {}}
+    envelope = {**event, "digest": digest(event),
+                "signature": base64.b64encode(key.sign(canonical(event))).decode()}
+    with pytest.raises(ValueError, match="sequence"):
+        replica.apply([first, envelope])
+    assert replica.export("a") == []
+    with pytest.raises(ValueError, match="sequence"):
+        Replicator.sign("a", sequence, "overflow", {}, key)
+    with pytest.raises(ValueError, match="cursor"):
+        replica.export("a", after=sequence)
+
+
+def test_replication_cursor_accepts_largest_sqlite_integer(tmp_path):
+    replica = Replicator(Database(str(tmp_path / "replica.db")), {})
+    assert replica.export("a", after=2**63 - 1) == []

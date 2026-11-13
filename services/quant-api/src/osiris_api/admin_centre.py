@@ -33,7 +33,7 @@ from urllib.parse import quote
 from . import authorized_feeds
 from .p2p_local_health import read_local_node_health, software_version
 from .admin_alert_store import (
-    ALERT_DB_ENV, AlertStoreError, acknowledge_stored_alert,
+    ALERT_DB_ENV as ALERT_DB_ENV, AlertStoreError, acknowledge_stored_alert,
     record_raised_alerts, resolve_alert_db_path, unavailable_alert_history,
 )
 from .durable_paper_ledger import snapshot as paper_ledger_snapshot
@@ -1033,6 +1033,8 @@ def _daily_loss_view(state: str, *, reason: str | None = None) -> dict[str, Any]
         "state": state,
         "reason": state if reason is None else reason,
         "realized_pnl": None,
+        "unrealized_pnl": None,
+        "adverse_daily_pnl": None,
         "limit": None,
         "live_execution": False,
     }
@@ -1043,31 +1045,46 @@ def _accept_daily_loss(raw: Mapping[str, Any] | None) -> dict[str, Any]:
     rejected = _daily_loss_view("unavailable", reason="account_unavailable")
     if not isinstance(raw, Mapping) or raw.get("live_execution") is not False:
         return rejected
-    if raw.get("basis") != "realized_pnl" or raw.get("state") not in {"clear", "limit_reached"}:
+    if (raw.get("basis") != "realized_plus_adverse_unrealized"
+            or raw.get("state") not in {"clear", "limit_reached"}):
         return rejected
     realized_text = _decimal_text(raw.get("realized_pnl"))
+    unrealized_text = _decimal_text(raw.get("unrealized_pnl"))
+    adverse_text = _decimal_text(raw.get("adverse_daily_pnl"))
     limit_text = _decimal_text(raw.get("limit"))
-    if realized_text is None or limit_text is None:
+    if realized_text is None or limit_text is None or adverse_text is None:
         return rejected
     try:
         realized = Decimal(realized_text)
+        adverse = Decimal(adverse_text)
+        unrealized = None if unrealized_text is None else Decimal(unrealized_text)
         limit = Decimal(limit_text)
     except InvalidOperation:
         return rejected
-    if limit < 0 or not realized.is_finite() or not limit.is_finite():
+    if (limit < 0 or not realized.is_finite() or not limit.is_finite() or not adverse.is_finite()
+            or (unrealized is None and (raw.get("unrealized_pnl") is not None or realized > -limit))
+            or (unrealized is not None and not unrealized.is_finite())):
         return rejected
-    expected = "limit_reached" if realized <= -limit else "clear"
+    computed = realized + (min(unrealized, Decimal("0")) if unrealized is not None else Decimal("0"))
+    if computed != adverse:
+        return rejected
+    expected = "limit_reached" if adverse <= -limit else "clear"
     if raw.get("state") != expected:
         return rejected
     realized_out = _canonical_money(realized)
+    adverse_out = _canonical_money(adverse)
+    unrealized_out = _canonical_money(unrealized) if unrealized is not None else None
     limit_out = _canonical_money(limit)
-    if realized_out is None or limit_out is None:
+    if (realized_out is None or limit_out is None or adverse_out is None
+            or (unrealized is not None and unrealized_out is None)):
         return rejected
     return {
-        "basis": "realized_pnl",
+        "basis": "realized_plus_adverse_unrealized",
         "state": expected,
         "reason": None,
         "realized_pnl": realized_out,
+        "unrealized_pnl": unrealized_out,
+        "adverse_daily_pnl": adverse_out,
         "limit": limit_out,
         "live_execution": False,
     }

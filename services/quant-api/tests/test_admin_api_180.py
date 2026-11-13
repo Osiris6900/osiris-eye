@@ -718,7 +718,7 @@ def test_operations_reports_node_version_and_paper_loss_gate(client, monkeypatch
     assert paper["open_positions"] == [
         {"symbol": "BTC-USD", "quantity": "1", "average_cost": "100"},
     ]
-    assert paper["daily_loss_gate"]["basis"] == "realized_pnl"
+    assert paper["daily_loss_gate"]["basis"] == "realized_plus_adverse_unrealized"
     assert paper["daily_loss_gate"]["state"] == "limit_reached"
     assert paper["daily_loss_gate"]["limit"] == "10"
     assert paper["daily_loss_gate"]["live_execution"] is False

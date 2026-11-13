@@ -52,6 +52,71 @@ def test_mfa_lockout_persists_across_restarts(tmp_path):
     restarted.verify("alice", totp(seed, int(now[0] // 30)))
 
 
+def test_expired_session_cannot_revive_after_clock_rollback_and_restart(tmp_path):
+    now = [1_800_000_000.0]
+    db = Database(str(tmp_path / "identity.db"))
+    identity = IdentityService(EncryptedSecrets(db, b"a" * 32), clock=lambda: now[0])
+    seed = identity.enroll("alice")
+    token = identity.login("alice", "analyst", totp(seed, int(now[0] // 30)), "config")
+    now[0] += 901
+    with pytest.raises(ValueError, match="invalid_session"):
+        identity.session(token, "config")
+    now[0] -= 900
+    restarted = IdentityService(EncryptedSecrets(Database(db.path), b"a" * 32),
+                                clock=lambda: now[0])
+    with pytest.raises(ValueError, match="clock_rollback"):
+        restarted.session(token, "config")
+
+
+def test_expired_enrollment_cannot_revive_after_refusal_and_clock_rollback(tmp_path):
+    now = [1_800_000_000.0]
+    db = Database(str(tmp_path / "identity.db"))
+    identity = IdentityService(EncryptedSecrets(db, b"a" * 32), clock=lambda: now[0])
+    seed = identity.enroll("alice")
+    now[0] += 601
+    with pytest.raises(ValueError, match="mfa_unavailable"):
+        identity.verify("alice", totp(seed, int(now[0] // 30)))
+    now[0] -= 600
+    restarted = IdentityService(EncryptedSecrets(Database(db.path), b"a" * 32),
+                                clock=lambda: now[0])
+    with pytest.raises(ValueError, match="identity_clock_rollback"):
+        restarted.login("alice", "analyst", totp(seed, int(now[0] // 30)), "config")
+    assert db.list("sessions") == []
+    assert db.get("mfa", "alice")["value"]["confirmed"] is False
+
+
+def test_refused_reenrollment_fences_expired_sessions_without_changing_seed(tmp_path):
+    now = [1_800_000_000.0]
+    db = Database(str(tmp_path / "identity.db"))
+    store = EncryptedSecrets(db, b"a" * 32)
+    identity = IdentityService(store, clock=lambda: now[0])
+    seed = identity.enroll("alice")
+    token = identity.login("alice", "analyst", totp(seed, int(now[0] // 30)), "config")
+    original = db.get("mfa", "alice")
+    now[0] += 901
+    with pytest.raises(ValueError, match="mfa_already_enrolled"):
+        identity.enroll("alice")
+    assert db.get("mfa", "alice") == original
+    assert store.get("totp:alice") == seed
+    now[0] -= 900
+    restarted = IdentityService(EncryptedSecrets(Database(db.path), b"a" * 32),
+                                clock=lambda: now[0])
+    with pytest.raises(ValueError, match="identity_clock_rollback"):
+        restarted.session(token, "config")
+
+
+@pytest.mark.parametrize("invalid", [float("nan"), float("inf"), -1, "bad", True, 1e40])
+def test_invalid_identity_clock_never_accepts_session(tmp_path, invalid):
+    now = [1_800_000_000.0]
+    identity = IdentityService(EncryptedSecrets(Database(str(tmp_path / "identity.db")),
+                                                b"a" * 32), clock=lambda: now[0])
+    seed = identity.enroll("alice")
+    token = identity.login("alice", "analyst", totp(seed, int(now[0] // 30)), "config")
+    now[0] = invalid
+    with pytest.raises(ValueError, match="invalid_identity_clock"):
+        identity.session(token, "config")
+
+
 def test_secrets_are_encrypted_and_bound_to_name(tmp_path):
     db = Database(str(tmp_path / "secrets.db"))
     vault = EncryptedSecrets(db, b"a" * 32)

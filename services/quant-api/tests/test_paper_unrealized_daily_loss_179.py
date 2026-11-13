@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from osiris_api.main import app
 from osiris_api.paper_execution import (
     apply_paper_fill,
+    daily_loss_gate,
     execution_context,
     initialize_paper_account,
     mark_to_market,
@@ -74,6 +75,49 @@ def test_mark_down_blocks_a_new_buy_while_realized_pnl_is_flat(db):
     replay = _order("add")
     assert replay["status"] == "idempotent_replay"
     assert snapshot()["fill_count"] == 1
+
+
+def test_operator_loss_gate_matches_execution_for_adverse_unrealized_loss(db):
+    from osiris_api.admin_centre import _accept_daily_loss
+
+    _init()
+    _order("open", quantity="2")
+    mark_to_market({"BTC": "90"}, observed_at=NOW, now=NOW)
+    before = snapshot()
+    gate = daily_loss_gate(now=NOW)
+    assert gate["basis"] == "realized_plus_adverse_unrealized"
+    assert gate["state"] == "limit_reached"
+    assert gate["realized_pnl"] == "0"
+    assert gate["unrealized_pnl"] == gate["adverse_daily_pnl"] == "-20"
+    assert _accept_daily_loss(gate) == gate
+    assert snapshot() == before  # read-only, including the event chain
+    lied = {**gate, "state": "clear", "adverse_daily_pnl": "0"}
+    assert _accept_daily_loss(lied)["state"] == "unavailable"
+
+
+def test_operator_loss_gate_cannot_report_clear_with_missing_or_stale_marks(db):
+    _init(max_market_age_seconds="1")
+    _order("open")
+    assert daily_loss_gate(now=NOW)["state"] == "unavailable"
+    mark_to_market({"BTC": "100"}, observed_at=NOW, now=NOW)
+    assert daily_loss_gate(now=NOW)["state"] == "clear"
+    expired = daily_loss_gate(now=LATER)
+    assert expired["state"] == "unavailable"
+    assert expired["reason"] == "unrealized_pnl_unavailable"
+    assert expired["adverse_daily_pnl"] is None
+
+
+def test_operator_reports_known_realized_breach_even_without_remaining_mark(db):
+    from osiris_api.admin_centre import _accept_daily_loss
+
+    _init()
+    _order("open", quantity="2")
+    _order("cut", side="SELL", price="50")
+    gate = daily_loss_gate(now=NOW)
+    assert gate["state"] == "limit_reached"
+    assert gate["realized_pnl"] == gate["adverse_daily_pnl"] == "-50"
+    assert gate["unrealized_pnl"] is None
+    assert _accept_daily_loss(gate) == gate
 
 
 def test_lower_stored_mark_is_used_when_the_order_price_is_higher(db):

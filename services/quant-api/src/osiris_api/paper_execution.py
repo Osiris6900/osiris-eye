@@ -13,7 +13,8 @@ import math
 import os
 import sqlite3
 from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import Context, Decimal, Inexact, InvalidOperation, localcontext
+from fractions import Fraction
 from pathlib import Path
 from threading import Lock
 from typing import Any
@@ -34,6 +35,7 @@ ORDER_STATES = (
 )
 OPEN_ORDER_STATES = frozenset({"accepted", "partially_filled"})
 JOURNAL_SCHEMA = "osiris.paper_order_journal.v2"
+CLOSING_SETTLEMENT_MODEL = "closing-cash-conservation-v1"
 _JOURNAL_POLICY_FIELDS = (
     "max_order_notional", "max_position_notional", "max_daily_loss", "max_gross_exposure",
     "max_market_age_seconds", "max_future_skew_seconds",
@@ -328,12 +330,47 @@ def _apply(
     return cash + proceeds, held - qty, avg, delta
 
 
+def _closing_settlement_enabled(conn: sqlite3.Connection) -> bool:
+    row = conn.execute("SELECT payload FROM paper_exec_audit ORDER BY seq LIMIT 1").fetchone()
+    initial = json.loads(row[0]) if row else {}
+    if not isinstance(initial, dict):
+        raise ValueError("invalid_accounting_initialization")
+    model = initial.get("accounting_model")
+    if model is not None and model != CLOSING_SETTLEMENT_MODEL:
+        raise ValueError("unsupported_accounting_model")
+    return model == CLOSING_SETTLEMENT_MODEL
+
+
+def _finite_decimal(value: Fraction) -> Decimal:
+    # Only finite cash flows and already rounded allocations enter this helper.
+    # Do not round a closing residual using the ambient Decimal context.
+    with localcontext(Context(prec=4096)) as context:
+        context.traps[Inexact] = True
+        return validate_decimal_bounds(Decimal(value.numerator) / Decimal(value.denominator))
+
+
+def _fill_cashflow(side: str, qty: Decimal, px: Decimal, fee: Decimal) -> Fraction:
+    notional = Fraction(qty) * Fraction(px)
+    return (notional if side == "SELL" else -notional) - Fraction(fee)
+
+
+def _closing_delta(conn, symbol, qty, px, fee):
+    flow, allocated = Fraction(0), Fraction(0)
+    for fill in conn.execute("SELECT * FROM paper_exec_fills WHERE symbol=? ORDER BY seq", (symbol,)):
+        flow += _fill_cashflow(fill["side"], Decimal(fill["quantity"]), Decimal(fill["price"]), Decimal(fill["fee"]))
+        allocated += Fraction(Decimal(fill["realized_pnl"]))
+    return _finite_decimal(flow + _fill_cashflow("SELL", qty, px, fee) - allocated)
+
+
 def _recompute(conn: sqlite3.Connection) -> tuple[Decimal, Decimal, dict[str, tuple[Decimal, Decimal]]]:
     account = conn.execute("SELECT * FROM paper_exec_meta WHERE id=1").fetchone()
     if account is None:
         raise ValueError("account_not_initialized")
     cash = Decimal(account["initial_cash"])
     realized = Decimal("0")
+    settle = _closing_settlement_enabled(conn)
+    flows: dict[str, Fraction] = {}
+    allocated: dict[str, Fraction] = {}
     positions: dict[str, tuple[Decimal, Decimal]] = {}
     fills = conn.execute("SELECT * FROM paper_exec_fills ORDER BY seq").fetchall()
     for fill in fills:
@@ -345,7 +382,17 @@ def _recompute(conn: sqlite3.Connection) -> tuple[Decimal, Decimal, dict[str, tu
         if applied is None:
             raise ValueError("reconciliation_break")
         cash, new_qty, new_avg, delta = applied
-        realized += delta
+        if settle:
+            symbol = fill["symbol"]
+            flows[symbol] = flows.get(symbol, Fraction(0)) + _fill_cashflow(
+                fill["side"], Decimal(fill["quantity"]), Decimal(fill["price"]), Decimal(fill["fee"]),
+            )
+            if new_qty == 0:
+                delta = _finite_decimal(flows[symbol] - allocated.get(symbol, Fraction(0)))
+            allocated[symbol] = allocated.get(symbol, Fraction(0)) + Fraction(delta)
+            realized = _finite_decimal(Fraction(realized) + Fraction(delta))
+        else:
+            realized += delta
         if new_qty == 0:
             positions.pop(fill["symbol"], None)
         else:
@@ -558,6 +605,8 @@ def _reconcile_breaks(conn: sqlite3.Connection) -> list[str]:
         breaks.append("unrealized_pnl")
     breaks.extend(_order_breaks(conn))
     breaks.extend(_journal_projection_breaks(conn))
+    from .paper_depth_execution import projection_breaks
+    breaks.extend(projection_breaks(conn))
     return breaks
 
 
@@ -932,7 +981,12 @@ def _persist_application(
     if applied is None:
         return None
     new_cash, new_qty, new_avg, realized_delta = applied
-    new_realized = Decimal(account["realized_pnl"]) + realized_delta
+    if _closing_settlement_enabled(conn):
+        if new_qty == 0:
+            realized_delta = _closing_delta(conn, symbol, qty, px, fee)
+        new_realized = _finite_decimal(Fraction(Decimal(account["realized_pnl"])) + Fraction(realized_delta))
+    else:
+        new_realized = Decimal(account["realized_pnl"]) + realized_delta
     conn.execute(
         "UPDATE paper_exec_meta SET cash=?, realized_pnl=? WHERE id=1",
         (_canonical(new_cash), _canonical(new_realized)),
@@ -996,6 +1050,7 @@ def initialize_paper_account(
             _append_audit(conn, "account_initialized", None, {
                 "cash": _canonical(cash), "live_execution": False, "broker_order_submitted": False,
                 "journal_schema": JOURNAL_SCHEMA,
+                "accounting_model": CLOSING_SETTLEMENT_MODEL,
                 "risk_policy": {field: stored_policy[field] for field in _JOURNAL_POLICY_FIELDS},
             })
             _assert_ready(conn)
@@ -1304,14 +1359,28 @@ def apply_paper_fill(
     simulate_crash: bool = False,
 ) -> dict[str, Any]:
     """Fill some or all of an accepted paper order. A crash rolls the fill back."""
+    return _apply_paper_fill(
+        client_order_id=client_order_id, client_fill_id=client_fill_id,
+        quantity=quantity, price=price, fee=fee, observed_at=observed_at, now=now,
+        live_execution=live_execution, simulate_crash=simulate_crash,
+    )
+
+
+def _apply_paper_fill(
+    *, client_order_id, client_fill_id, quantity, price=None, fee=None,
+    observed_at=None, now=None, live_execution=False, simulate_crash=False,
+    depth_context=None,
+) -> dict[str, Any]:
+    """Shared transaction; source provenance is library-only, never an HTTP field."""
     _refuse_live(live_execution)
     key = _text_id(client_order_id, "invalid_client_order_id")
     fill_id = _text_id(client_fill_id, "invalid_client_fill_id")
-    fill_qty = _number(quantity, positive=True)
+    fill_qty = _number(quantity, positive=depth_context is None)
     explicit_price = None if price is None else _number(price, positive=True)
     explicit_fee = None if fee is None else _number(fee)
     error: str | None = None
     result: dict[str, Any] | None = None
+    depth_plan = None
     with _lock:
         conn = _connect()
         try:
@@ -1322,9 +1391,30 @@ def apply_paper_fill(
             ).fetchone()
             if order is None:
                 raise ValueError("order_not_found")
+            if depth_context is not None:
+                from .paper_depth_execution import prepare, finish
+                depth_plan = prepare(conn, order, depth_context)
+                receipt = depth_plan["receipt"]
+                if depth_plan["replayed"] or receipt["outcome"] == "no_executable_liquidity":
+                    if not depth_plan["replayed"]:
+                        finish(conn, key, depth_plan)
+                    stored_fill = conn.execute(
+                        "SELECT * FROM paper_exec_fills WHERE client_fill_id=?", (receipt["fill_id"],)
+                    ).fetchone() if receipt["fill_id"] else None
+                    _assert_ready(conn)
+                    if simulate_crash:
+                        raise RuntimeError("simulated_crash_before_commit")
+                    conn.commit()
+                    return {**_public(order, stored_fill, replay=depth_plan["replayed"]),
+                            "depth": receipt, "execution_authorized": False}
+                fill_qty = _number(receipt["quantity"], positive=True)
+                explicit_price = _number(receipt["price"], positive=True)
+                observed_at, now = depth_plan["observed_at"], depth_plan["now"]
             existing = conn.execute(
                 "SELECT * FROM paper_exec_fills WHERE client_fill_id=?", (fill_id,)
             ).fetchone()
+            if depth_context is not None and existing is not None:
+                raise ValueError("depth_fill_id_already_used_without_plan")
             if existing is not None:
                 price_s = existing["price"] if explicit_price is None else _canonical(explicit_price)
                 fee_s = existing["fee"] if explicit_fee is None else _canonical(explicit_fee)
@@ -1437,6 +1527,9 @@ def apply_paper_fill(
                                 "quantity": qty_s, "price": px_s, "state": target,
                                 "symbol": order["symbol"], "side": order["side"], "fee": fee_s,
                                 "live_execution": False, "broker_order_submitted": False,
+                                **({"depth_origin": {"plan_id": depth_plan["receipt"]["plan_id"],
+                                    "book_sha256": depth_plan["receipt"]["book_sha256"]}}
+                                   if depth_plan else {}),
                             })
                             conn.execute(
                                 """INSERT INTO paper_exec_fills(
@@ -1452,6 +1545,8 @@ def apply_paper_fill(
                                    WHERE client_order_id=?""",
                                 (target, target, _canonical(new_filled), _canonical(new_leaves), key),
                             )
+                            if depth_plan is not None:
+                                finish(conn, key, depth_plan)
                             _assert_ready(conn)
                             if simulate_crash:
                                 raise RuntimeError("simulated_crash_before_commit")
@@ -1463,6 +1558,8 @@ def apply_paper_fill(
                                 "SELECT * FROM paper_exec_fills WHERE client_fill_id=?", (fill_id,)
                             ).fetchone()
                             result = _public(stored, stored_fill, replay=False)
+                            if depth_plan is not None:
+                                result.update(depth=depth_plan["receipt"], execution_authorized=False)
         except Exception:
             conn.rollback()
             raise
@@ -1905,18 +2002,19 @@ def execution_status(*, read_only: bool = False) -> dict[str, Any]:
             conn.close()
 
 
-def daily_loss_gate() -> dict[str, Any]:
+def daily_loss_gate(*, now: object = None) -> dict[str, Any]:
     """Read-only paper daily-loss gate. Does not create or write the ledger.
 
-    Amounts are returned only when reconciliation passed and the same realized
-    P&L is still on the account row. The comparison matches the execution
-    check: realized P&L at or below the negative limit is ``limit_reached``.
+    Reconciliation, policy and fresh marks come from one read-only transaction.
+    Match execution's adverse-unrealized policy; unknown losses never look clear.
     """
     blank = {
-        "basis": "realized_pnl",
+        "basis": DAILY_LOSS_BASIS,
         "state": "unavailable",
         "reason": "account_unavailable",
         "realized_pnl": None,
+        "unrealized_pnl": None,
+        "adverse_daily_pnl": None,
         "limit": None,
         "live_execution": False,
     }
@@ -1927,58 +2025,46 @@ def daily_loss_gate() -> dict[str, Any]:
     if not Path(path).is_file():
         blank["reason"] = "not_initialized"
         return blank
-    try:
-        current = execution_status(read_only=True)
-    except (ValueError, ArithmeticError, sqlite3.Error, OSError):
-        return blank
-    account = current.get("account") if isinstance(current, dict) else None
-    report = current.get("reconciliation") if isinstance(current, dict) else None
-    if not isinstance(account, dict) or not isinstance(report, dict):
-        return blank
-    if account.get("live_execution") is not False or account.get("broker_order_submitted") is not False:
-        return blank
-    if account.get("initialized") is not True:
-        blank["reason"] = "not_initialized"
-        return blank
-    if report.get("passed") is not True:
-        blank["reason"] = "reconciliation_unavailable"
+    now = datetime.now(timezone.utc).isoformat() if now is None else now
+    if _parse_time(now) is None:
         return blank
     connection = None
     try:
         connection = sqlite3.connect(
-            Path(path).resolve().as_uri() + "?mode=ro", uri=True, timeout=15,
+            Path(path).resolve().as_uri() + "?mode=ro", uri=True, timeout=15, isolation_level=None,
         )
         connection.row_factory = sqlite3.Row
-        row = connection.execute(
-            "SELECT realized_pnl, max_daily_loss FROM paper_exec_meta WHERE id=1"
-        ).fetchone()
-    except (sqlite3.Error, OSError):
+        connection.execute("BEGIN")
+        account = connection.execute("SELECT * FROM paper_exec_meta WHERE id=1").fetchone()
+        if account is None:
+            blank["reason"] = "not_initialized"
+            return blank
+        _verify_audit(connection)
+        if _reconcile_breaks(connection):
+            blank["reason"] = "reconciliation_unavailable"
+            return blank
+        realized, limit = Decimal(account["realized_pnl"]), Decimal(account["max_daily_loss"])
+        unrealized, unmarked = _expected_unrealized(
+            _open_positions(connection), _fresh_mark_prices(connection, account, now),
+        )
+        if unmarked and realized > -limit:
+            blank["reason"] = "unrealized_pnl_unavailable"
+            return blank
+        adverse = realized + (min(unrealized, Decimal("0")) if not unmarked else Decimal("0"))
+        return {
+            "basis": DAILY_LOSS_BASIS,
+            "state": "limit_reached" if adverse <= -limit else "clear",
+            "reason": None, "realized_pnl": _canonical(realized),
+            "unrealized_pnl": None if unmarked else _canonical(unrealized),
+            "adverse_daily_pnl": _canonical(adverse), "limit": _canonical(limit),
+            "live_execution": False,
+        }
+    except (ValueError, ArithmeticError, sqlite3.Error, OSError):
+        blank["reason"] = "reconciliation_unavailable"
         return blank
     finally:
         if connection is not None:
             connection.close()
-    if row is None:
-        blank["reason"] = "not_initialized"
-        return blank
-    try:
-        realized = Decimal(row["realized_pnl"])
-        limit = Decimal(row["max_daily_loss"])
-        recorded = Decimal(str(account["realized_pnl"]))
-    except (InvalidOperation, TypeError, KeyError, ArithmeticError):
-        return blank
-    if (
-        not realized.is_finite() or not limit.is_finite() or not recorded.is_finite()
-        or realized != recorded or limit < 0
-    ):
-        return blank
-    return {
-        "basis": "realized_pnl",
-        "state": "limit_reached" if realized <= -limit else "clear",
-        "reason": None,
-        "realized_pnl": _canonical(realized),
-        "limit": _canonical(limit),
-        "live_execution": False,
-    }
 
 
 _RISK_LIMIT_FIELDS = (

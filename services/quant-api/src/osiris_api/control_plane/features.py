@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import re
 
-from .database import Database, identifier
+from .database import MAX_SQLITE_INTEGER, Database, identifier
 
 
 class FeatureStore:
@@ -25,7 +25,7 @@ class FeatureStore:
         if (
             type(event_ms) is not int
             or type(available_ms) is not int
-            or not 0 <= event_ms <= available_ms
+            or not 0 <= event_ms <= available_ms <= MAX_SQLITE_INTEGER
             or type(value) not in (int, float)
             or not math.isfinite(value)
             or not isinstance(source_hash, str)
@@ -54,7 +54,7 @@ class FeatureStore:
             or not 1 <= len(feature_names) <= 100
             or len(set(feature_names)) != len(feature_names)
             or type(as_of_ms) is not int
-            or as_of_ms < 0
+            or not 0 <= as_of_ms <= MAX_SQLITE_INTEGER
         ):
             raise ValueError("invalid_feature_query")
         rows = {}

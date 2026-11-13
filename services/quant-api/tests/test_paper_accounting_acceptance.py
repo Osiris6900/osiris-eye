@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from osiris_api import paper_execution as ledger
 from osiris_api.paper_execution import (
     apply_paper_fill,
     execution_context,
@@ -148,6 +149,54 @@ def test_partial_round_trip_fees_marks_and_restart_preserve_equity_identity(db):
     assert state["positions"] == []
     assert state["unrealized_pnl"] == "0"
     assert Decimal(state["cash"]) == Decimal(state["initial_cash"]) + Decimal(state["realized_pnl"])
+    assert reconcile()["passed"] is True
+
+
+def test_closing_fill_settles_repeating_cost_basis_residual_after_crash(db):
+    initialize_paper_account("1000")
+    order("buy", quantity="3", price="102", fee="0.3", working=True)
+    fill("buy", "first", quantity="1", price="101")
+    fill("buy", "rest", quantity="2")
+    order("sell-1", side="SELL", price="99", fee="0.1")
+    order("sell-2", side="SELL", price="98", fee="0.1")
+    order("close", side="SELL", price="99", fee="0.1", working=True)
+    before = snapshot()
+    with pytest.raises(RuntimeError, match="simulated_crash"):
+        fill("close", "closing", simulate_crash=True)
+    assert recover()["snapshot"] == before
+    fill("close", "closing")
+    state = recover()["snapshot"]
+    assert state["cash"] == "990.4"
+    assert state["realized_pnl"] == "-9.6"
+    assert state["positions"] == []
+    # A separate instrument and another inventory cycle cannot inherit a residue.
+    order("other-buy", symbol="ETH", quantity="3", price="10", fee="0.1")
+    order("other-sell", symbol="ETH", quantity="3", side="SELL", price="11", fee="0.1")
+    order("again-buy", price="100")
+    order("again-sell", side="SELL", price="101")
+    final = recover()["snapshot"]
+    assert final["cash"] == "994.2"
+    assert final["realized_pnl"] == "-5.8"
+    assert reconcile()["passed"] is True
+
+
+def test_existing_journal_without_accounting_model_retains_original_allocations(db):
+    initialize_paper_account("1000")
+    # Reconstruct an original v2 initialization, before it has any economics.
+    with sqlite3.connect(db) as conn:
+        payload = json.loads(conn.execute("SELECT payload FROM paper_exec_audit WHERE seq=1").fetchone()[0])
+        del payload["accounting_model"]
+        body = ledger._canon_json(payload)
+        row_hash = ledger._row_hash("GENESIS", 1, "account_initialized", None, body)
+        conn.execute("UPDATE paper_exec_audit SET payload=?,row_hash=? WHERE seq=1", (body, row_hash))
+    order("buy", quantity="3", price="102", fee="0.3", working=True)
+    fill("buy", "first", quantity="1", price="101")
+    fill("buy", "rest", quantity="2")
+    for key, price in (("one", "99"), ("two", "98"), ("three", "99")):
+        order(key, side="SELL", price=price, fee="0.1")
+    state = recover()["snapshot"]
+    assert state["cash"] == "990.4"
+    assert state["realized_pnl"] == "-9.6000000000000000000000001"
     assert reconcile()["passed"] is True
 
 
