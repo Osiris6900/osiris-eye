@@ -169,6 +169,22 @@ def paper_status(request: Request) -> dict[str, Any]:
     return _respond(payload, auth, role, "read_research")
 
 
+@router.get("/paper")
+def paper_trading(request: Request) -> dict[str, Any]:
+    """Paper positions, open and recent orders, marked exposure, and risk limits.
+
+    Read-only and paper-only. This route does not place, cancel, or amend an
+    order, and it does not change a kill switch or a risk limit.
+    """
+    role, auth = _authorize(request, "read_research")
+    paper = admin_centre.paper_status()
+    risk = admin_centre.risk_status(paper=paper)
+    payload = admin_centre.paper_trading_status(
+        paper, risk, ingestion_enabled=admin_centre.ingestion_enabled(),
+    )
+    return _respond(payload, auth, role, "read_research")
+
+
 @router.get("/monitoring")
 def monitoring(request: Request) -> dict[str, Any]:
     """Peer and node health for every reader; paper numbers need read_research.
