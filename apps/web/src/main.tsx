@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './style.css';
 import { LiveTradingSetup } from './LiveTradingSetup';
+import { TradingConnections } from './TradingConnections';
 import { ResearchWorkspace } from './ResearchWorkspace';
 import { SecuritySetup } from './SecuritySetup';
 import { DashboardWorkspace } from './DashboardWorkspace';
@@ -32,8 +33,9 @@ export function App() {
       <div className="demo-banner"><span>● PAPER RESEARCH ONLY</span><span>Backend snapshots carry source and time · Live execution disabled</span></div>
       <div className="section-heading"><div><small>MARKETS / RESEARCH / OPERATIONS</small><h1>{active === 'Dashboard' ? 'Trading Intelligence Dashboard' : active}</h1></div><span className="market-open">● RESEARCH MODE</span></div>
       {active === 'Live Trading' || active === 'Settings' ? <>
-        <LiveTradingSetup/>
+        <TradingConnections key={authorization} authorization={authorization}/>
         {active === 'Settings' && <SecuritySetup authorization={authorization} onAuthorization={setAuthorization}/>}
+        <LiveTradingSetup/>
       </> : active === 'Strategy Lab' || active === 'Backtesting' || active === 'Reports' ?
         <><ResearchWorkspace page={active} authorization={authorization} onAuthorization={setAuthorization}/>
           {active === 'Strategy Lab' && <MarketMechanics/>}</> :

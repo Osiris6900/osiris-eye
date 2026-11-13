@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { parseConnectionPreferences, type ConnectionPreferences } from './connectionPreferences';
 
 export type Row = Record<string, unknown>;
 export type Provider = { provider: string; mode: string; available: boolean; supported_asset_classes: string[] };
@@ -8,6 +9,7 @@ export type Dashboard = {
   network: Row; feeds: Row; paper: Row | null; risk: Row | null; pipeline: Row | null;
   peer_metrics?: Row | null;
   providers: Provider[];
+  connection_options?: { version: number; preferences: ConnectionPreferences };
 };
 export type Bar = { symbol: string; event_time: string; available_at: string; open: number; high: number; low: number; close: number; volume: number };
 export type Bars = { provider: string; symbol: string; mode: 'public' | 'synthetic' | 'sandbox'; bars: Bar[]; entitlement: string; window_start: string; window_end: string; live_execution: false };
@@ -36,6 +38,13 @@ function instant(value: unknown): number {
 }
 export function parseDashboard(value: unknown): Dashboard {
   const data = object(value);
+  if (data && data.connection_options !== undefined) {
+    const current = object(data.connection_options);
+    if (!current || typeof current.version !== 'number' || !Number.isSafeInteger(current.version) || current.version < 0) {
+      throw new Error('Invalid connection options.');
+    }
+    parseConnectionPreferences(current.preferences);
+  }
   if (!data || data.schema !== 'osiris.dashboard.v1' || data.live_trading_authorized !== false ||
       typeof data.role !== 'string' || !['allowed', 'denied'].includes(String(data.research_access)) ||
       !object(data.network) || !object(data.feeds) ||

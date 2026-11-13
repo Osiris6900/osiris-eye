@@ -104,11 +104,11 @@ function Signals({ data }: { data: Dashboard }) {
   </Panel>;
 }
 
-function MarketBars({ authorization, providers, diagnostic = false }: { authorization: string; providers: Provider[]; diagnostic?: boolean }) {
-  const [provider, setProvider] = useState('coinbase-public');
-  const [symbol, setSymbol] = useState('BTC-USD');
-  const [assetClass, setAssetClass] = useState('crypto');
-  const [windowHours, setWindowHours] = useState('1');
+function MarketBars({ authorization, providers, diagnostic = false, defaultProvider = 'coinbase-public' }: { authorization: string; providers: Provider[]; diagnostic?: boolean; defaultProvider?: string }) {
+  const [provider, setProvider] = useState(defaultProvider);
+  const [symbol, setSymbol] = useState(defaultProvider === 'stooq-daily' ? 'AAPL.US' : defaultProvider === 'binance-public' ? 'BTCUSDT' : 'BTC-USD');
+  const [assetClass, setAssetClass] = useState(defaultProvider === 'stooq-daily' ? 'equity' : 'crypto');
+  const [windowHours, setWindowHours] = useState(defaultProvider === 'stooq-daily' ? '720' : '1');
   const [data, setData] = useState<Bars | null>(null);
   const [regime, setRegime] = useState<Record<string, unknown> | null>(null);
   const [error, setError] = useState('');
@@ -231,10 +231,10 @@ export function DashboardWorkspace({ page, authorization, onAuthorization }: {
         {page === 'Dashboard' && <Network data={data}/>}
         {['Dashboard', 'AI Signals', 'Paper Trading'].includes(page) && <Signals data={data}/>}
       </div>
-      {market && data.research_access === 'allowed' && <MarketBars authorization={authorization} providers={data.providers}/>}
+      {market && data.research_access === 'allowed' && <MarketBars authorization={authorization} providers={data.providers} defaultProvider={data.connection_options?.preferences.data_provider}/>}
       {['Options Chain', 'Market Regime', 'News & Sentiment'].includes(page) && data.research_access !== 'allowed' ? <p>Access denied for this role.</p> : <>
         {page === 'Options Chain' && <SourceViews kind="options" authorization={authorization}/>}
-        {page === 'Market Regime' && <MarketBars authorization={authorization} providers={data.providers} diagnostic/>}
+        {page === 'Market Regime' && <MarketBars authorization={authorization} providers={data.providers} defaultProvider={data.connection_options?.preferences.data_provider} diagnostic/>}
         {page === 'News & Sentiment' && <SourceViews kind="news" authorization={authorization}/>}
       </>}
       {page === 'Dashboard' && <p className="muted">Options, volatility surfaces, regime labels, news and strategy performance appear only when an evidenced source is connected. Research results are available in Reports.</p>}
