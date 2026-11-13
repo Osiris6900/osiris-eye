@@ -169,6 +169,25 @@ def paper_status(request: Request) -> dict[str, Any]:
     return _respond(payload, auth, role, "read_research")
 
 
+@router.get("/monitoring")
+def monitoring(request: Request) -> dict[str, Any]:
+    """Peer and node health for every reader; paper numbers need read_research.
+
+    The paper snapshot is not passed into the projection when the caller lacks
+    ``read_research``, so a denied response cannot contain balances or symbols.
+    """
+    role, auth = _authorize(request, "read_health")
+    network, _, paper, _ = _snapshots()
+    paper_allowed = admin_centre.authorize(role, "read_research", authenticated=True)
+    if paper_allowed:
+        admin_centre.AUDIT_LOG.record(role, "read_research", "allow", "monitoring_paper")
+    else:
+        admin_centre.AUDIT_LOG.record(role, "read_research", "deny", "monitoring_paper")
+        paper = None
+    payload = admin_centre.monitoring_status(network, paper, paper_allowed=paper_allowed)
+    return _respond(payload, auth, role, "read_health")
+
+
 @router.get("/risk/status")
 def risk_status(request: Request) -> dict[str, Any]:
     role, auth = _authorize(request, "read_research")
