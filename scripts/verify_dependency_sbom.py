@@ -57,14 +57,16 @@ def document(data: bytes) -> dict:
     return value
 
 
-def read_artifact(path: Path, *, archive: bool, expected_digest: str | None = None) -> tuple[dict, str | None]:
+def read_artifact(path: Path, *, archive: bool, expected_digest: str | None = None,
+                  expected_files: set[str] | None = None) -> tuple[dict, str | None]:
+    names = FILES if expected_files is None else expected_files
     if path.is_symlink():
         raise ValueError("artifact path must not be a symlink")
     if not archive:
-        if not path.is_dir() or {p.name for p in path.iterdir()} != FILES:
-            raise ValueError("artifact directory must contain exactly the three SBOM evidence files")
+        if not path.is_dir() or {p.name for p in path.iterdir()} != names:
+            raise ValueError("artifact directory must contain exactly the expected evidence files")
         result = {}
-        for name in sorted(FILES):
+        for name in sorted(names):
             member = path / name
             if not stat.S_ISREG(member.lstat().st_mode) or member.stat().st_size > LIMIT:
                 raise ValueError("evidence files must be bounded regular files")
@@ -82,8 +84,8 @@ def read_artifact(path: Path, *, archive: bool, expected_digest: str | None = No
     from io import BytesIO
     with zipfile.ZipFile(BytesIO(raw)) as bundle:
         members = bundle.infolist()
-        if len(members) != len(FILES) or {p.filename for p in members} != FILES:
-            raise ValueError("archive must contain exactly the three unique SBOM evidence files")
+        if len(members) != len(names) or {p.filename for p in members} != names:
+            raise ValueError("archive must contain exactly the expected unique evidence files")
         for member in members:
             mode = member.external_attr >> 16
             if member.file_size > LIMIT or member.flag_bits & 1 or stat.S_IFMT(mode) not in (0, stat.S_IFREG):

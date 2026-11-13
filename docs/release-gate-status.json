@@ -34,10 +34,12 @@
         "services/quant-api/requirements-lock.txt",
         "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md",
         "docs/workstreams/SBOM_ALL_RUST_ROOTS.md",
-        "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json"
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json",
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_13.json"
       ],
       "evidence_commits": [
-        "5176eae8843a1e5144ac903f37843fe9bb46cdd9"
+        "5176eae8843a1e5144ac903f37843fe9bb46cdd9",
+        "43157b1bad5a93c8bc441a21a04b8572a9e736f5"
       ],
       "open_prs": [],
       "blocker": "The hashed Python deployment lock, resolved Python SBOM components and license/provenance checker are implemented and exercised in dependency-security CI. The paste 1.0.15 maintenance advisory remains; accepted final-candidate audit/SBOM/provenance artifacts and a reviewed maintenance disposition are still required."
@@ -280,10 +282,12 @@
         "services/quant-api/src/osiris_api/risk.py",
         "services/quant-api/tests/test_paper_risk_acceptance_179.py",
         "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md",
-        "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json"
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json",
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_13.json"
       ],
       "evidence_commits": [
-        "5176eae8843a1e5144ac903f37843fe9bb46cdd9"
+        "5176eae8843a1e5144ac903f37843fe9bb46cdd9",
+        "43157b1bad5a93c8bc441a21a04b8572a9e736f5"
       ],
       "open_prs": [],
       "blocker": "Canonical pretrade limits, exact broker economics, stale-feed/kill-switch controls and receipt-bound risk decisions are implemented. Independent ownership/approval of budgets, limits, concentration, drawdown and exception governance remains pending."
@@ -302,11 +306,13 @@
         "services/quant-api/src/osiris_api/durable_paper_ledger.py",
         "services/quant-api/tests/test_durable_paper_ledger.py",
         "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md",
-        "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json"
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json",
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_13.json"
       ],
       "evidence_commits": [
         "305ceb1d4d4c6f3d649cb58ee2c82eedb3818644",
-        "5176eae8843a1e5144ac903f37843fe9bb46cdd9"
+        "5176eae8843a1e5144ac903f37843fe9bb46cdd9",
+        "43157b1bad5a93c8bc441a21a04b8572a9e736f5"
       ],
       "open_prs": [],
       "blocker": "The integration candidate implements opt-in Alpaca paper transport, persisted intent/ack binding, monotonic fill reconciliation and canonical internal paper OMS. Authorized actual broker-paper captures, operational reconciliation and broader FIX-session acceptance remain pending; no live broker routing is enabled."
@@ -323,10 +329,12 @@
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42494850551",
         "services/quant-api/tests/test_durable_paper_ledger.py",
         "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md",
-        "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json"
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json",
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_13.json"
       ],
       "evidence_commits": [
-        "5176eae8843a1e5144ac903f37843fe9bb46cdd9"
+        "5176eae8843a1e5144ac903f37843fe9bb46cdd9",
+        "43157b1bad5a93c8bc441a21a04b8572a9e736f5"
       ],
       "open_prs": [],
       "blocker": "Canonical cash/positions, partial fills/cancellation, fee-inclusive realized/unrealized P&L and bounded adverse slippage are implemented and tested. Venue-calibrated liquidity/queue/impact, margin/borrow models and independent multi-asset execution comparison remain incomplete."
@@ -346,10 +354,12 @@
         "services/quant-api/tests/test_admin_api_180.py",
         "scripts/test_paper_order_journal.py",
         "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md",
-        "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json"
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json",
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_13.json"
       ],
       "evidence_commits": [
-        "0a610db74cac5381ebbb4abe358286a80a6e6298"
+        "0a610db74cac5381ebbb4abe358286a80a6e6298",
+        "43157b1bad5a93c8bc441a21a04b8572a9e736f5"
       ],
       "open_prs": [],
       "blocker": "Current risk/kill-switch/stale-feed tests, temporary-ledger fault injection and actual receipt-to-paper child-process loss/recovery are implemented. Independent service-outage acceptance and final-candidate external operational/risk review remain pending; local/CI synthetic checks do not accept this gate."
@@ -415,11 +425,13 @@
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42740964830",
         "capacity-report-42740964830-1 (downloaded ZIP SHA-256: 229553051305aabbc28c44af50bb58c4f6dfe9ec746ff3f2f85178333661d239)",
         "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md",
-        "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json"
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json",
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_13.json"
       ],
       "evidence_commits": [
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9",
-        "d9bb0a959faf5d9c7c97bd6502a143f9df9123d0"
+        "d9bb0a959faf5d9c7c97bd6502a143f9df9123d0",
+        "43157b1bad5a93c8bc441a21a04b8572a9e736f5"
       ],
       "open_prs": [],
       "blocker": "Short historical one-tailnet capacity evidence remains limited to the recorded topology. Source-bound local Rust E2EE receipt -> kernel-pinned Python durable ledger -> current risk -> canonical paper order/fill -> P&L -> forced process loss/new-process recovery is now implemented. Sustained independent-host capacity/failover, broader DR and final-candidate operational acceptance remain pending."

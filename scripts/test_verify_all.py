@@ -51,6 +51,10 @@ class VerifyAllTests(unittest.TestCase):
         without_trace = module.engineering_report([row for row in passed if row["name"] != "receipt-paper"], source, source)
         self.assertFalse(without_trace["release_gates"]["T19"]["local_checks_passed"])
         self.assertFalse(without_trace["all_passed"])
+        without_integrity = module.engineering_report([row for row in passed if row["name"] != "receipt-artifact-integrity"], source, source)
+        self.assertFalse(without_integrity["all_passed"])
+        for gate in ("T13", "T14", "T15", "T16", "T19"):
+            self.assertFalse(without_integrity["release_gates"][gate]["local_checks_passed"])
         self.assertTrue(all(row["independent_acceptance"] == "pending" for row in report["workstreams"].values()))
         failed = module.engineering_report([row for row in passed if row["name"] != "native-process"], source, source)
         self.assertFalse(failed["all_passed"])
