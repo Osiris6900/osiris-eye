@@ -395,6 +395,40 @@ def _fresh_mark_prices(
     return prices
 
 
+def _buy_exposure_price(
+    conn: sqlite3.Connection, account: sqlite3.Row, symbol: str, price: Decimal, now: object,
+) -> Decimal:
+    """Price used to project long exposure for a buy.
+
+    The order price stays the cash price. A fresh stored mark above it is the
+    exposure price, so a lower order cannot hide a mark-up. A missing or stale
+    mark is not used.
+    """
+    marked = _fresh_mark_prices(conn, account, now).get(symbol)
+    if marked is None or marked <= price:
+        return price
+    return marked
+
+
+def _raise_buy_exposure(
+    conn: sqlite3.Connection, account: sqlite3.Row, symbol: str, price: Decimal,
+    position: Decimal, gross: Decimal, added_qty: Decimal, now: object,
+) -> tuple[Decimal, Decimal]:
+    """Lift buy notionals that were marked at ``price`` up to a fresh mark.
+
+    ``position`` and ``gross`` already value ``symbol`` at ``price``. The risk
+    check adds ``added_qty * price`` afterwards. The uplift makes that sum
+    equal a projection of held and added quantity at the higher mark. Resting
+    buys stay reserved at their own limits.
+    """
+    exposure = _buy_exposure_price(conn, account, symbol, price, now)
+    if exposure == price:
+        return position, gross
+    held, _average = _position(conn, symbol)
+    uplift = (held + added_qty) * (exposure - price)
+    return position + uplift, gross + uplift
+
+
 def _adverse_daily_pnl(
     conn: sqlite3.Connection, account: sqlite3.Row, *, symbol: str, price: Decimal, now: object,
 ) -> tuple[Decimal | None, str | None]:
@@ -778,6 +812,9 @@ def execution_context(
                 pending_position, pending_gross = _open_buy_exposure(conn, normalized)
                 position += pending_position
                 gross += pending_gross
+                position, gross = _raise_buy_exposure(
+                    conn, account, normalized, px, position, gross, Decimal("0"), now,
+                )
             limits = _limits_from_row(account)
             adverse, _loss_reason = _adverse_daily_pnl(
                 conn, account, symbol=normalized, price=px, now=now,
@@ -785,6 +822,9 @@ def execution_context(
             return {
                 "current_position_notional": _canonical(position),
                 "current_gross_exposure": _canonical(gross),
+                "buy_exposure_price": _canonical(
+                    _buy_exposure_price(conn, account, normalized, px, now)
+                ),
                 "daily_pnl": account["realized_pnl"] if adverse is None else _canonical(adverse),
                 "adverse_daily_pnl": None if adverse is None else _canonical(adverse),
                 "daily_loss_ready": adverse is not None,
@@ -820,6 +860,9 @@ def _fill_risk_reason(
         released = quantity * Decimal(order["price"])
         position += pending_position - released
         gross += pending_gross - released
+        position, gross = _raise_buy_exposure(
+            conn, account, order["symbol"], price, position, gross, quantity, now,
+        )
     try:
         approved, reason, _evaluated = check_execution(
             side=order["side"], quantity=_as_float(quantity), price=_as_float(price),
@@ -848,7 +891,8 @@ def _decimal_risk_reason(
     Repeating average costs and realized P&L cannot round-trip through float.
     They must remain usable risk inputs without letting float rounding approve
     an amount just beyond a persisted limit. Adverse unrealized loss is part
-    of that exact check. A missing mark on another holding fails closed.
+    of that exact check. Buy notionals passed here already use a higher fresh
+    mark when one exists. A missing mark on another holding fails closed.
     """
     notional = qty * price
     if notional > Decimal(account["max_order_notional"]):
@@ -1023,6 +1067,9 @@ def _submit_new_order(
         extra_symbol, extra_gross = _open_buy_exposure(conn, symbol)
         position_notional = filled_notional + extra_symbol
         gross = filled_gross + extra_gross
+        position_notional, gross = _raise_buy_exposure(
+            conn, account, symbol, px, position_notional, gross, qty, now,
+        )
     else:
         position_notional, gross = filled_notional, filled_gross
     try:
