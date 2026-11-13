@@ -1,5 +1,21 @@
 # Integrated Delivery Gates — verified inventory 2026-11-08
 
+## 2026-11-13 exact-main verification checkpoint
+
+At main `43157b1bad5a93c8bc441a21a04b8572a9e736f5`, five observed workflows /
+eleven jobs passed. Three actual downloaded ZIPs match GitHub's digests: the
+613-component SBOM reproduces from locked sources; the receipt report matches
+all 799 regular source files and its two risk/fill/recovery traces; the market
+report's eight declared source hashes, sidecar and restart accounting match.
+See [verification and limits](release/VERIFICATION_2026_11_13.md) and
+[machine-readable evidence](release/VERIFIED_ARTIFACTS_2026_11_13.json).
+The receipt verifier now repeats source-completeness and trace-consistency
+checks in CI before upload and in the 26-check engineering profile. Short P2P
+success is not sustained capacity/DR acceptance. **0 of the seventeen open
+gates gained acceptance**; counts remain **3 evidenced / 14 partial / 3 remaining**.
+The T01/T13–T16/T19 evidence references in the JSON are updated to this checkpoint;
+their blocker and acceptance status are unchanged.
+
 ## 2026-11-12 downloaded-byte verification checkpoint
 
 At main `5b43e61c8c974ef4e52b22c32dbd9cba17ccc62c`, all three core CI jobs,

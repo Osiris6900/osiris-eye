@@ -1,0 +1,401 @@
+{
+  "schema": "osiris.downloaded-release-evidence.v1",
+  "verified_at": "2026-11-13T04:05:24.981807+00:00",
+  "baseline_commit": "43157b1bad5a93c8bc441a21a04b8572a9e736f5",
+  "baseline_tree": "098c8989badd4ff77e99f606bc7e2af6fecf52cb",
+  "release_gate_accepted": false,
+  "live_trading_authorized": false,
+  "previously_remaining_gates_accepted": 0,
+  "gate_counts": {
+    "Implemented with evidence": 3,
+    "Partial": 14,
+    "Remaining": 3
+  },
+  "workflows": [
+    {
+      "id": 43327095092,
+      "name": "P2P three-peer mesh and reconnect acceptance",
+      "head_sha": "43157b1bad5a93c8bc441a21a04b8572a9e736f5",
+      "run_attempt": 1,
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43327095092",
+      "jobs": [
+        {
+          "id": 131562195782,
+          "name": "three-peer-mesh",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43327095092/job/131562195782"
+        }
+      ]
+    },
+    {
+      "id": 43327094952,
+      "name": "P2P Tailscale cross-host acceptance",
+      "head_sha": "43157b1bad5a93c8bc441a21a04b8572a9e736f5",
+      "run_attempt": 1,
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43327094952",
+      "jobs": [
+        {
+          "id": 131562195693,
+          "name": "Host A - Tailscale P2P listener",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43327094952/job/131562195693"
+        },
+        {
+          "id": 131562196130,
+          "name": "Host B - Tailscale P2P client",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43327094952/job/131562196130"
+        }
+      ]
+    },
+    {
+      "id": 43326095119,
+      "name": "Quant API CI",
+      "head_sha": "43157b1bad5a93c8bc441a21a04b8572a9e736f5",
+      "run_attempt": 1,
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43326095119",
+      "jobs": [
+        {
+          "id": 131558807991,
+          "name": "test",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43326095119/job/131558807991"
+        }
+      ]
+    },
+    {
+      "id": 43326094957,
+      "name": "Dependency Security Audit",
+      "head_sha": "43157b1bad5a93c8bc441a21a04b8572a9e736f5",
+      "run_attempt": 1,
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43326094957",
+      "jobs": [
+        {
+          "id": 131558807670,
+          "name": "dependency-inventory",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43326094957/job/131558807670"
+        },
+        {
+          "id": 131558807912,
+          "name": "rust-audit",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43326094957/job/131558807912"
+        },
+        {
+          "id": 131558808074,
+          "name": "python-audit",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43326094957/job/131558808074"
+        },
+        {
+          "id": 131558808277,
+          "name": "npm-audit",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43326094957/job/131558808277"
+        }
+      ]
+    },
+    {
+      "id": 43326095035,
+      "name": "CI",
+      "head_sha": "43157b1bad5a93c8bc441a21a04b8572a9e736f5",
+      "run_attempt": 1,
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43326095035",
+      "jobs": [
+        {
+          "id": 131558808113,
+          "name": "rust",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43326095035/job/131558808113"
+        },
+        {
+          "id": 131558808499,
+          "name": "python",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43326095035/job/131558808499"
+        },
+        {
+          "id": 131558808518,
+          "name": "web",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43326095035/job/131558808518"
+        }
+      ]
+    }
+  ],
+  "artifacts": [
+    {
+      "artifact_id": 13991773788,
+      "name": "dependency-sbom-43326094957-1",
+      "run_id": 43326094957,
+      "commit": "43157b1bad5a93c8bc441a21a04b8572a9e736f5",
+      "expires_at": "2026-11-26T23:07:29Z",
+      "size_in_bytes": 86997,
+      "github_digest": "sha256:b92152e8986e29d1736b8b943fd38d8e8bd4a6ade9f0929e39f319b716081080",
+      "zip_sha256": "b92152e8986e29d1736b8b943fd38d8e8bd4a6ade9f0929e39f319b716081080",
+      "downloaded_bytes_verified": true,
+      "files_sha256": {
+        "dependency-sbom.json": "75bf80041097973cf25d91822978a04e4a2b32ed31e3c394cc3a8fe031c4d7ac",
+        "dependency-sbom.json.sha256": "b32a04c8e26910412e64fbe68aa3b0e5251260cced7a715ee829680410d6dd03",
+        "dependency-sbom-provenance.json": "c9decfc5d6cfa2f6e9e59868197fc26e37842f03adc7a7a491033b5b08e13eb2"
+      },
+      "verification": {
+        "archive_sha256": "b92152e8986e29d1736b8b943fd38d8e8bd4a6ade9f0929e39f319b716081080",
+        "candidate_commit": "43157b1bad5a93c8bc441a21a04b8572a9e736f5",
+        "candidate_tree_matches_checkout": true,
+        "checkout_commit": "43157b1bad5a93c8bc441a21a04b8572a9e736f5",
+        "checkout_tree": "098c8989badd4ff77e99f606bc7e2af6fecf52cb",
+        "ci_identity_authenticated": false,
+        "ci_run_attempt": "1",
+        "ci_run_id": "43326094957",
+        "component_count": 613,
+        "files_sha256": {
+          "dependency-sbom-provenance.json": "c9decfc5d6cfa2f6e9e59868197fc26e37842f03adc7a7a491033b5b08e13eb2",
+          "dependency-sbom.json": "75bf80041097973cf25d91822978a04e4a2b32ed31e3c394cc3a8fe031c4d7ac",
+          "dependency-sbom.json.sha256": "b32a04c8e26910412e64fbe68aa3b0e5251260cced7a715ee829680410d6dd03"
+        },
+        "independent_review_verified": false,
+        "input_sha256": {
+          "apps/web/package-lock.json": "fc7b7c0a8bc7216c037feea96eeae9003d32a059d2f34a538de8313136f21c49",
+          "crates/native-feed/Cargo.lock": "a3245172f873236cbe927b02085f8c02c1b07a6a1d66166c54e8370524eec938",
+          "crates/risk-kernel/Cargo.lock": "4323ac3971f58ff86b58615597d6fb3522b0adcd9d34368bf434d7fe4d065f0c",
+          "services/p2p-node/Cargo.lock": "29ae2856e7576c3e8474ad55478992166d73ddf586e17f7c7622af200287e07c",
+          "services/quant-api/pyproject.toml": "cc09246e40902345e7b7eac605e9b528e36c7bbc7df7d35c2229c1dee7676050",
+          "services/quant-api/requirements-lock.txt": "ff5e5ece6f90c6f97786e3cb3f199d06c57cef282b7daa057485277cf5b77ae5"
+        },
+        "live_trading_authorized": false,
+        "passed": true,
+        "release_gate_accepted": false,
+        "schema": "osiris.sbom-artifact-verification.v1"
+      },
+      "scope": "complete locked dependency metadata; not independent licence/security approval"
+    },
+    {
+      "artifact_id": 13992617488,
+      "name": "receipt-paper-43326095035-1",
+      "run_id": 43326095035,
+      "commit": "43157b1bad5a93c8bc441a21a04b8572a9e736f5",
+      "expires_at": "2026-11-26T23:13:05Z",
+      "size_in_bytes": 44413,
+      "github_digest": "sha256:6a7fe5b1eaa682ea4f4a09c451660f58282fe8284b4112cb5d3f8b47ee5f46f8",
+      "zip_sha256": "6a7fe5b1eaa682ea4f4a09c451660f58282fe8284b4112cb5d3f8b47ee5f46f8",
+      "downloaded_bytes_verified": true,
+      "files_sha256": {
+        "receipt-paper.json": "d2bffa9b2e71013138a621000215228afd29d990454ea02bbac5a533f9bce028",
+        "receipt-paper.json.sha256": "f435f459851fb35d74912457f307c8e1aa652b157ceb29d5f3f892959cf4a835"
+      },
+      "verification": {
+        "archive_sha256": "6a7fe5b1eaa682ea4f4a09c451660f58282fe8284b4112cb5d3f8b47ee5f46f8",
+        "audit_rows_verified": 10,
+        "binary_reproduced": false,
+        "binary_sha256": "ec7aeffaccf927098b6797d7b143e0dac722373bcb56b9471a0e2696f65f4faf",
+        "checkout_commit": "43157b1bad5a93c8bc441a21a04b8572a9e736f5",
+        "checkout_tree": "098c8989badd4ff77e99f606bc7e2af6fecf52cb",
+        "checks": [
+          "actual_child_loss_after_fill_commit",
+          "actual_rust_e2ee_and_recipient_receipt",
+          "canonical_admin_account_matches",
+          "current_kill_switch_and_revocation_guard",
+          "exact_fee_inclusive_round_trip_pnl",
+          "kernel_pinned_event_persisted",
+          "new_process_idempotent_recovery",
+          "no_paper_execution_before_acknowledgement",
+          "receipt_to_risk_decision_to_fill_trace",
+          "replay_and_changed_economics_guard"
+        ],
+        "ci_identity_authenticated": false,
+        "files_sha256": {
+          "receipt-paper.json": "d2bffa9b2e71013138a621000215228afd29d990454ea02bbac5a533f9bce028",
+          "receipt-paper.json.sha256": "f435f459851fb35d74912457f307c8e1aa652b157ceb29d5f3f892959cf4a835"
+        },
+        "independent_hosts_verified": false,
+        "independent_review_verified": false,
+        "live_trading_authorized": false,
+        "passed": true,
+        "receipt_origin_recomputed": false,
+        "receipt_signature_reverified": false,
+        "release_gate_accepted": false,
+        "run_truth_independently_verified": false,
+        "schema": "osiris.receipt-paper-artifact-verification.v1",
+        "scope": "two-local-rust-nodes-and-independent-local-python-processes",
+        "source_files_verified": 799,
+        "traces_verified": 2,
+        "worktree_sha256": "ca48af3a355c1939fa06f39d4ce3ec93f4e375a96a3ecb587458afd93280816e"
+      },
+      "scope": "two-local-rust-nodes-and-independent-local-python-processes"
+    },
+    {
+      "artifact_id": 13992233413,
+      "name": "market-paper-acceptance-43326095035-1",
+      "run_id": 43326095035,
+      "commit": "43157b1bad5a93c8bc441a21a04b8572a9e736f5",
+      "expires_at": "2026-11-26T23:08:50Z",
+      "size_in_bytes": 5803,
+      "github_digest": "sha256:c8f502ae2e40c908ab5da386b3ecc5e76f031541e06f08f1b1e6e53533419009",
+      "zip_sha256": "c8f502ae2e40c908ab5da386b3ecc5e76f031541e06f08f1b1e6e53533419009",
+      "downloaded_bytes_verified": true,
+      "files_sha256": {
+        "market-paper-acceptance.json": "2d977c97e3267bec31e9310d058a0cf1982d6ee05d20194123b3e82f2956fb8f",
+        "market-paper-acceptance.json.sha256": "a7ff1f6bf0d316674d20ea5feca3f84ef6ce40bb2ba7d75f1cbde6f71ed1baba"
+      },
+      "verification": {
+        "passed": true,
+        "source_files_verified": 8,
+        "checks": [
+          "market_adapter_to_strategy_to_risk_to_fill",
+          "exact_buy_cash_and_fee_cost_basis",
+          "marked_unrealized_pnl",
+          "same_candle_idempotency",
+          "exact_round_trip_cash_positions_and_pnl",
+          "persisted_kill_switch_blocks_new_orders",
+          "independent_order_notional_limit",
+          "invalid_market_data_fails_closed",
+          "separate_process_restart_recovers_exact_ledger_state"
+        ],
+        "digest_sidecar_verified": true,
+        "audit_rows_verified": 11,
+        "restart_cash": "99988",
+        "restart_realized_pnl": "-12",
+        "live_trading_authorized": false,
+        "release_gate_accepted": false
+      },
+      "scope": "single_runner_isolated_temporary_paper_sqlite"
+    }
+  ],
+  "remaining_gates": [
+    {
+      "id": "T01",
+      "status": "Partial",
+      "acceptance_satisfied": false,
+      "blocker": "The hashed Python deployment lock, resolved Python SBOM components and license/provenance checker are implemented and exercised in dependency-security CI. The paste 1.0.15 maintenance advisory remains; accepted final-candidate audit/SBOM/provenance artifacts and a reviewed maintenance disposition are still required."
+    },
+    {
+      "id": "T04",
+      "status": "Partial",
+      "acceptance_satisfied": false,
+      "blocker": "Operator-dispatched GitHub Actions run 42740964830 (main d9bb0a959faf5d9c7c97bd6502a143f9df9123d0) succeeded on three runner jobs. Retained artifact capacity-report-42740964830-1 (ZIP SHA-256 229553051305aabbc28c44af50bb58c4f6dfe9ec746ff3f2f85178333661d239) contains 10/50/100 peer sweeps: 200/200 delivered, zero lost in each, binary SHA-256 and self-reported distinct boot fingerprints. Scope is one private tailnet, recipient-bootstrap star, 35-49 seconds per sweep; workload paused during bootstrap outage. Raw host fingerprint independence is not independently attested, and sustained multi-host NAT, relay, open-mesh and production outage recovery are unproven. Partial evidence only; acceptance remains false."
+    },
+    {
+      "id": "T06",
+      "status": "Remaining",
+      "acceptance_satisfied": false,
+      "blocker": "Independent crypto/operational-security intake and validation are implemented. No independently signed reviewer report, verified reviewer identity, remediation/retest and approval decision has been supplied; source tests cannot commission or approve that review."
+    },
+    {
+      "id": "T07",
+      "status": "Partial",
+      "acceptance_satisfied": false,
+      "blocker": "The integration candidate implements Alpaca, OANDA, Polygon and Twelve Data bar adapters with bounded pagination, normalization and declared entitlement checks. Authorized vendor credentials, genuine captures, instrument/corporate-action coverage and independent source-owner acceptance remain pending."
+    },
+    {
+      "id": "T08",
+      "status": "Partial",
+      "acceptance_satisfied": false,
+      "blocker": "Feed quality, freshness, timestamp/availability checks, source-governed views and native offline capture paths are implemented and tested. Genuine sustained vendor streaming captures, corporate-action artifacts and independently verified time/source provenance remain pending."
+    },
+    {
+      "id": "T09",
+      "status": "Remaining",
+      "acceptance_satisfied": false,
+      "blocker": "Vendor entitlement intake, expiry/revocation checks and feed-policy enforcement are implemented. Original source-owner licences, permitted-use/redistribution terms and independent rights approval have not been supplied."
+    },
+    {
+      "id": "T10",
+      "status": "Partial",
+      "acceptance_satisfied": false,
+      "blocker": "Source-governed news/event intake, point-in-time storage and deduplication are implemented. Genuine authorized macro/event source integration, retained captures and independent provenance acceptance remain pending."
+    },
+    {
+      "id": "T11",
+      "status": "Partial",
+      "acceptance_satisfied": false,
+      "blocker": "Point-in-time features, ridge fitting, immutable experiment reproduction and a retained synthetic walk-forward archive are implemented. A frozen genuine candidate dataset/model/feature archive and independent lifecycle acceptance remain pending."
+    },
+    {
+      "id": "T12",
+      "status": "Partial",
+      "acceptance_satisfied": false,
+      "blocker": "Chronological holdout, cost-adjusted walk-forward and reproducible experiment checks are implemented for research. A genuine blinded holdout, independent leakage review and calibrated cost/turnover/impact/borrow sensitivity report remain pending."
+    },
+    {
+      "id": "T13",
+      "status": "Partial",
+      "acceptance_satisfied": false,
+      "blocker": "Canonical pretrade limits, exact broker economics, stale-feed/kill-switch controls and receipt-bound risk decisions are implemented. Independent ownership/approval of budgets, limits, concentration, drawdown and exception governance remains pending."
+    },
+    {
+      "id": "T14",
+      "status": "Partial",
+      "acceptance_satisfied": false,
+      "blocker": "The integration candidate implements opt-in Alpaca paper transport, persisted intent/ack binding, monotonic fill reconciliation and canonical internal paper OMS. Authorized actual broker-paper captures, operational reconciliation and broader FIX-session acceptance remain pending; no live broker routing is enabled."
+    },
+    {
+      "id": "T15",
+      "status": "Partial",
+      "acceptance_satisfied": false,
+      "blocker": "Canonical cash/positions, partial fills/cancellation, fee-inclusive realized/unrealized P&L and bounded adverse slippage are implemented and tested. Venue-calibrated liquidity/queue/impact, margin/borrow models and independent multi-asset execution comparison remain incomplete."
+    },
+    {
+      "id": "T16",
+      "status": "Partial",
+      "acceptance_satisfied": false,
+      "blocker": "Current risk/kill-switch/stale-feed tests, temporary-ledger fault injection and actual receipt-to-paper child-process loss/recovery are implemented. Independent service-outage acceptance and final-candidate external operational/risk review remain pending; local/CI synthetic checks do not accept this gate."
+    },
+    {
+      "id": "T17",
+      "status": "Partial",
+      "acceptance_satisfied": false,
+      "blocker": "Authenticated canonical account/risk/feed/network/source views, actual Rust receipt metrics, role/MFA boundaries and Chromium navigation are implemented. Genuine source connections, sustained authenticated-node monitoring/alerts and independent operational acceptance remain pending."
+    },
+    {
+      "id": "T18",
+      "status": "Partial",
+      "acceptance_satisfied": false,
+      "blocker": "Actual temporary SQLite backup/restore/continuation, cross-runner integrity intake, authority fencing and rollout/rollback checks are implemented. Approved independent-host service DR with measured RTO/RPO, accepted custody/storage and operator signoff remain pending."
+    },
+    {
+      "id": "T19",
+      "status": "Partial",
+      "acceptance_satisfied": false,
+      "blocker": "Short historical one-tailnet capacity evidence remains limited to the recorded topology. Source-bound local Rust E2EE receipt -> kernel-pinned Python durable ledger -> current risk -> canonical paper order/fill -> P&L -> forced process loss/new-process recovery is now implemented. Sustained independent-host capacity/failover, broader DR and final-candidate operational acceptance remain pending."
+    },
+    {
+      "id": "T20",
+      "status": "Remaining",
+      "acceptance_satisfied": false,
+      "blocker": "The paper-only signoff worksheet and external security/vendor intake paths are implemented. Actual independent security/model-risk/licensing decisions and authorized operator release approval remain pending. Paper-only scope is unchanged and live execution remains unauthorized."
+    }
+  ],
+  "limitations": [
+    "Observed GitHub workflow/job conclusions are separate from independently verified artifact consistency.",
+    "Artifacts describe the exact baseline, not this later verifier or documentation commit.",
+    "Receipt evidence is local Rust nodes and Python processes with synthetic market inputs; no independent host, vendor, model or release acceptance.",
+    "Binary digest is reported, not rebuilt; receipt signatures and the runtime origin fingerprint are not recomputed from the retained report.",
+    "Short cross-host observation exchange and one-runner three-peer mesh do not establish sustained NAT/relay/open-mesh capacity, failover or production DR.",
+    "Cross-host run retains coordination markers for one day, not a complete binary-bound soak report; mesh success has no retained artifact.",
+    "Retained evidence expires on 2026-11-26; hashes cannot recover expired artifact bytes.",
+    "No independent review, original source-owner rights, genuine calibrated candidate/model, approved external host targets or operator signoff were supplied."
+  ]
+}
