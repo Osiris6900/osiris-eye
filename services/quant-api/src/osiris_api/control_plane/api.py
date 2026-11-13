@@ -14,6 +14,7 @@ from fastapi.responses import PlainTextResponse
 from ..admin_centre import AdminAuth
 from .agents import ResearchAgents
 from .coordination import Coordinator
+from .connections import Connections
 from .database import Database, canonical
 from .experiments import ExperimentRegistry
 from .features import FeatureStore
@@ -143,7 +144,46 @@ def dashboard(request: Request, response: Response):
             "provider", "mode", "supported_asset_classes", "available",
         )} for item in market_data_gateway.providers()["providers"]],
         "live_trading_authorized": False,
+        "connection_options": run(Connections(db).preferences),
     }, request, response)
+
+
+@router.get("/connections")
+def connection_options(request: Request, response: Response):
+    db = database()
+    principal(request, db)
+    return dashboard_response(run(Connections(db).status), request, response)
+
+
+@router.put("/connections")
+def save_connection_options(request: Request, response: Response, payload: dict = Body(...)):
+    db = database()
+    principal(request, db, "operations")
+    if set(payload) != {"preferences", "expected_version"}:
+        raise HTTPException(422, "invalid_connection_request")
+    try:
+        result = Connections(db).save(**payload)
+    except ValueError as error:
+        raise HTTPException(409 if str(error) == "version_conflict" else 422, str(error)) from None
+    return dashboard_response(result, request, response)
+
+
+@router.post("/connections/test")
+def test_connection_options(request: Request, response: Response, payload: dict = Body(...)):
+    db = database()
+    principal(request, db, "operations")
+    if set(payload) != {"expected_version"}:
+        raise HTTPException(422, "invalid_connection_test_request")
+    try:
+        result = Connections(db).test_broker(**payload)
+    except ValueError as error:
+        code = str(error)
+        status = (409 if code == "version_conflict" else 503 if code in {
+            "paper_broker_not_enabled", "paper_broker_credentials_required",
+            "paper_broker_connection_unavailable",
+        } else 422)
+        raise HTTPException(status, code) from None
+    return dashboard_response(result, request, response)
 
 
 @router.get("/market/bars")

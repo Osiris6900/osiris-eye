@@ -4,6 +4,23 @@ import { useState } from 'react';
 import { App } from '../main';
 import { DashboardWorkspace } from '../DashboardWorkspace';
 import { parseBars, parseDashboard } from '../dashboardData';
+it.each([
+  ['binance-public', 'crypto', 'BTCUSDT'], ['stooq-daily', 'equity', 'AAPL.US'],
+] as const)('uses the saved keyless source %s for a newly opened chart', async (provider, assetClass, symbol) => {
+  const data = {
+    ...snapshot(),
+    providers: [{ provider, mode: 'public', available: true, supported_asset_classes: [assetClass] }],
+    connection_options: { version: 2, preferences: { mode: 'ghost', broker: 'none', data_provider: provider } },
+  };
+  fetcher.mockResolvedValue(response(data));
+  render(<Connected/>);
+  const chart = await screen.findByRole('region', { name: 'Market price history' });
+  expect(within(chart).getByLabelText('Provider')).toHaveValue(provider);
+  expect(within(chart).getByLabelText('Asset class')).toHaveValue(assetClass);
+  expect(within(chart).getByLabelText('Symbol')).toHaveValue(symbol);
+  expect(within(chart).getByLabelText('History window')).toHaveValue(provider === 'stooq-daily' ? '720' : '1');
+  expect(fetcher).toHaveBeenCalledTimes(1);
+});
 
 vi.mock('../LiveCryptoTape', () => ({ default: () => <section aria-label="Live crypto prices"/> }));
 const snapshot = () => ({

@@ -106,6 +106,11 @@ remain explicitly simulated; the ticker does not feed research or order routing.
 
 ## Connected market-to-paper pipeline
 
+Settings offers Ghost/keyless defaults, public data source selection and optional
+Alpaca PAPER connection checks, with durable server preferences and operator MFA.
+See [Ghost, keyless and broker options](docs/GHOST_KEYLESS_BROKER_OPTIONS.md).
+Broker selection does not activate order routing or live trading.
+
 `POST /paper/pipeline/run` connects public Coinbase USD candles to a deterministic
 momentum proposal, independent persisted risk checks, and durable paper fills.
 The same execution ledger supplies positions, cash, fees, realized/unrealized

@@ -1,5 +1,6 @@
 .live-setup { padding: 24px; max-width: 960px; margin: 20px 0; }
 .live-setup p { line-height: 1.6; }
+.live-setup p.muted { font-size: 12px; color: #9bb0cc; }
 .live-setup-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; margin: 24px 0; }
 .live-setup-grid label { display: flex; flex-direction: column; gap: 8px; color: #c5d4e7; font-size: 13px; }
 .live-setup-grid input, .live-setup-grid select { width: 100%; box-sizing: border-box; padding: 12px; border: 1px solid #2c405b; border-radius: 6px; background: #0d1829; color: #e8f1fc; font: inherit; }
@@ -9,4 +10,7 @@
 .live-setup button:disabled { opacity: .55; cursor: not-allowed; }
 .live-setup-activation { border-top: 1px solid #263950; margin-top: 28px; padding-top: 24px; }
 .live-setup-activation p { color: #9bb0cc; font-size: 12px; }
+.connection-modes { display: flex; flex-wrap: wrap; gap: 20px; border: 1px solid #2c405b; padding: 16px; border-radius: 6px; }
+.connection-modes legend { color: #c5d4e7; padding: 0 8px; }
+.connection-modes label { display: flex; align-items: center; gap: 8px; }
 @media (max-width: 640px) { .live-setup-grid { grid-template-columns: 1fr; } .live-setup { padding: 16px; } }
