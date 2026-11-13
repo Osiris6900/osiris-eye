@@ -5,6 +5,9 @@ of an existing working order in the canonical, long-only cash paper ledger.
 It uses `DepthService.current_snapshot`: immutable Coinbase L2 history, declared
 source reference, sequence monotonicity, receive-time freshness and clock fencing.
 The financial ledger and the control-plane database must be distinct files.
+Capture retains the best 1,000 levels per side after validating every raw level.
+The HTTP response stays capped at 2 MiB and each raw side at 50,000 levels;
+genuine BTC responses can exceed the former 20,000-level parser limit.
 
 The caller fixes a participation fraction, minimum latency and maximum age.
 The policy is journal-bound on the first snapshot for each instrument and cannot

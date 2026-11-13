@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import time
@@ -13,6 +14,19 @@ from urllib.parse import quote
 from .broker import money
 from .database import Database, canonical, digest, identifier
 from .vendors import HttpJson
+
+MAX_RAW_DEPTH_LEVELS = 50_000
+
+
+def _raw_digest(raw: dict) -> str:
+    # Called after validating every primitive L2 row and its count. Extra
+    # source metadata keeps the ordinary recursive JSON bounds. The untrimmed
+    # market response has its own 2 MiB cap; it is never a stored CP document.
+    canonical({key: value for key, value in raw.items() if key not in {"bids", "asks"}})
+    body = json.dumps(raw, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+    if len(body) > 2_097_152:
+        raise ValueError("depth_raw_response_too_large")
+    return hashlib.sha256(body).hexdigest()
 
 
 def _exact(value: Fraction) -> str:
@@ -113,11 +127,13 @@ class DepthService:
             "entitlement_reference": self.entitlement_reference,
             "captured_ms": received_ms,
             "age_basis": "local-response-receipt",
-            "raw_sha256": digest(raw),
         }
         for side in ("bids", "asks"):
             rows = raw.get(side)
-            if not isinstance(rows, list) or not 1 <= len(rows) <= 20000:
+            # Genuine BTC L2 responses can exceed 20,000 levels on one side
+            # while fitting the transport's 2 MiB cap. Validate every raw level
+            # under a separate CPU bound, then retain only the best 1,000.
+            if not isinstance(rows, list) or not 1 <= len(rows) <= MAX_RAW_DEPTH_LEVELS:
                 raise ValueError("invalid_depth_levels")
             levels = []
             for row in rows:
@@ -137,6 +153,7 @@ class DepthService:
                 for price, size in sorted(levels, reverse=side == "bids")[:1000]
             ]
             book[side + "_truncated"] = len(levels) > 1000
+        book["raw_sha256"] = _raw_digest(raw)
         if money(book["bids"][0][0]) >= money(book["asks"][0][0]):
             raise ValueError("crossed_depth_book")
         with self._timed_transaction(instrument) as (conn, now):
