@@ -301,6 +301,7 @@ RISK_SCHEMA = "osiris.admin_risk_status.v1"
 OVERVIEW_SCHEMA = "osiris.admin_overview.v1"
 MONITORING_SCHEMA = "osiris.admin_monitoring.v1"
 OPERATIONS_SCHEMA = "osiris.admin_operations.v1"
+PAPER_TRADING_SCHEMA = "osiris.admin_paper_trading.v1"
 
 QUALITY_REVIEW_MAX_AGE_SECONDS = 30 * 24 * 60 * 60.0  # mirrors feed_admission
 OUTBOX_BACKLOG_ALERT_THRESHOLD = 100
@@ -310,6 +311,24 @@ IDENTITY_DB_ENV = "OSIRIS_P2P_DB_PATH"
 DEFAULT_IDENTITY_DB_PATH = "./data/osiris-p2p.sqlite3"
 PEER_NODE_LIST_LIMIT = 50
 OPEN_POSITION_LIMIT = 50
+PAPER_ORDER_LIMIT = 20
+_ORDER_STATES = frozenset({"accepted", "partially_filled", "filled", "cancelled", "rejected"})
+_OPEN_ORDER_STATES = frozenset({"accepted", "partially_filled"})
+_ORDER_SIDES = frozenset({"BUY", "SELL"})
+_ORDER_ID_TEXT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_BOOK_FLAGS = {
+    "ingestion_disabled": ("warning", "P2P ingestion kill switch is disabled"),
+    "paper_ledger_uninitialized": (
+        "info", "Paper ledger is not initialized; cash, positions and P&L unavailable",
+    ),
+    "paper_reconciliation_failed": (
+        "critical", "Paper account reconciliation failed; accounting unavailable",
+    ),
+    "paper_execution_halted": ("critical", "Paper execution kill switch is active"),
+}
+_LIMIT_FIELDS = (
+    "max_order_notional", "max_position_notional", "max_daily_loss", "max_gross_exposure",
+)
 _NODE_ID_RE = re.compile(r"^[0-9a-f]{64}$")
 _ISO_UTC_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?\+00:00$")
 _TRUST_LEVELS = frozenset({"trusted", "public_untrusted"})
@@ -1222,6 +1241,384 @@ def operations_status(
         "nodes": _operations_nodes(network if isinstance(network, Mapping) else None, generated),
         "paper_trading": trading,
     }
+
+
+def _hidden_exposure(status: str = "unavailable_without_marks") -> dict[str, Any]:
+    basis = status if status in {"unavailable_without_marks", "unavailable"} else "unavailable"
+    return {
+        "status": status,
+        "market_value": None,
+        "exposure": basis,
+        "exposure_basis": basis,
+        "cost_basis_gross": None,
+        "marks_available": False,
+    }
+
+
+def _marked_exposure(paper: Mapping[str, Any], risk: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Marked exposure only when the paper snapshot and risk snapshot agree."""
+    market = paper.get("market_value")
+    market_text = _decimal_text(market) if market is not None else None
+    if market is not None and market_text is None:
+        return _hidden_exposure("unavailable")
+    cost = paper.get("cost_basis_gross")
+    cost_text = _decimal_text(cost) if cost is not None else None
+    if cost is not None and cost_text is None:
+        cost_text = None
+    marks = paper.get("marks_available") is True
+    if isinstance(risk, Mapping):
+        risk_market = risk.get("market_value")
+        risk_exposure = risk.get("exposure")
+        risk_cost = risk.get("cost_basis_gross")
+        if risk_market is not None and _decimal_text(risk_market) != market_text:
+            return _hidden_exposure("unavailable")
+        if market_text is None:
+            if risk_exposure not in (None, "unavailable_without_marks"):
+                return _hidden_exposure("unavailable")
+        elif risk_exposure not in (None, market_text):
+            return _hidden_exposure("unavailable")
+        if risk_cost is not None and _decimal_text(risk_cost) != cost_text:
+            cost_text = None
+    if market_text is not None and not marks:
+        return _hidden_exposure("unavailable")
+    if marks and market_text is None:
+        hidden = _hidden_exposure("unavailable")
+        hidden["cost_basis_gross"] = cost_text
+        return hidden
+    if market_text is None:
+        hidden = _hidden_exposure()
+        hidden["cost_basis_gross"] = cost_text
+        return hidden
+    return {
+        "status": "mark_to_market",
+        "market_value": market_text,
+        "exposure": market_text,
+        "exposure_basis": "mark_to_market",
+        "cost_basis_gross": cost_text,
+        "marks_available": True,
+    }
+
+
+def _paper_order_row(item: Any, *, open_only: bool) -> dict[str, str] | None:
+    if not isinstance(item, Mapping):
+        return None
+    order_id = item.get("client_order_id")
+    symbol = item.get("symbol")
+    side = item.get("side")
+    state = item.get("state")
+    quantity = _decimal_text(item.get("quantity"))
+    if not isinstance(order_id, str) or _ORDER_ID_TEXT.fullmatch(order_id) is None:
+        return None
+    if not isinstance(symbol, str) or _SYMBOL_TEXT.fullmatch(symbol) is None:
+        return None
+    if side not in _ORDER_SIDES or not isinstance(state, str):
+        return None
+    if open_only:
+        if state not in _OPEN_ORDER_STATES:
+            return None
+    elif state not in _ORDER_STATES:
+        return None
+    if quantity is None:
+        return None
+    try:
+        qty = Decimal(quantity)
+        if not qty.is_finite() or qty <= 0:
+            return None
+    except InvalidOperation:
+        return None
+    price_raw = item.get("price")
+    price_text = None
+    if open_only or price_raw is not None:
+        price_text = _decimal_text(price_raw)
+        if price_text is None:
+            return None
+        try:
+            price = Decimal(price_text)
+        except InvalidOperation:
+            return None
+        if not price.is_finite() or price <= 0:
+            return None
+        price_text = _canonical_money(price)
+        if price_text is None:
+            return None
+    shown_qty = _canonical_money(qty)
+    if shown_qty is None:
+        return None
+    row = {
+        "client_order_id": order_id,
+        "symbol": symbol,
+        "side": side,
+        "state": state,
+        "quantity": shown_qty,
+    }
+    if price_text is not None:
+        row["price"] = price_text
+    for name in ("filled_quantity", "leaves_quantity"):
+        raw = item.get(name)
+        if raw is None:
+            continue
+        text = _decimal_text(raw)
+        if text is None:
+            return None
+        try:
+            amount = Decimal(text)
+        except InvalidOperation:
+            return None
+        if not amount.is_finite() or amount < 0:
+            return None
+        shown = _canonical_money(amount)
+        if shown is None:
+            return None
+        row[name] = shown
+    return row
+
+
+def _paper_order_rows(
+    orders: Any, *, open_only: bool,
+) -> tuple[list[dict[str, str]] | None, int | None, bool, str | None]:
+    if not isinstance(orders, list):
+        return None, None, False, "unavailable"
+    rows: list[dict[str, str]] = []
+    for item in orders:
+        row = _paper_order_row(item, open_only=open_only)
+        if row is None:
+            return None, None, False, "unavailable"
+        rows.append(row)
+    truncated = len(rows) > PAPER_ORDER_LIMIT
+    return rows[:PAPER_ORDER_LIMIT], len(rows), truncated, None
+
+
+def _limit_block(status: str, reason: str | None, limits: dict[str, str] | None = None) -> dict[str, Any]:
+    return {
+        "status": status,
+        "reason": reason,
+        "limits": limits,
+        "live_execution": False,
+    }
+
+
+def _accept_limit_policy(policy: Mapping[str, Any] | None, *, halted: bool) -> dict[str, Any]:
+    """Keep limit amounts only when they are finite paper limits and the halt matches."""
+    if not isinstance(policy, Mapping) or policy.get("live_execution") is not False:
+        return _limit_block("unavailable", "account_unavailable")
+    if policy.get("broker_order_submitted") is not False:
+        return _limit_block("unavailable", "account_unavailable")
+    if policy.get("status") != "available" or policy.get("kill_switch_active") is not halted:
+        return _limit_block("unavailable", "account_unavailable")
+    raw = policy.get("limits")
+    if not isinstance(raw, Mapping):
+        return _limit_block("unavailable", "account_unavailable")
+    limits: dict[str, str] = {}
+    for name in _LIMIT_FIELDS:
+        text = _decimal_text(raw.get(name))
+        if text is None:
+            return _limit_block("unavailable", "account_unavailable")
+        try:
+            value = Decimal(text)
+        except InvalidOperation:
+            return _limit_block("unavailable", "account_unavailable")
+        if not value.is_finite() or (value < 0 if name == "max_daily_loss" else value <= 0):
+            return _limit_block("unavailable", "account_unavailable")
+        shown = _canonical_money(value)
+        if shown is None:
+            return _limit_block("unavailable", "account_unavailable")
+        limits[name] = shown
+    return _limit_block("available", None, limits)
+
+
+def _book_flags(risk: Mapping[str, Any] | None) -> list[dict[str, str]]:
+    if not isinstance(risk, Mapping) or not isinstance(risk.get("flags"), list):
+        return []
+    flags: list[dict[str, str]] = []
+    for item in risk["flags"]:
+        if not isinstance(item, Mapping):
+            continue
+        kind = item.get("kind")
+        expected = _BOOK_FLAGS.get(kind)
+        if expected is None:
+            continue
+        severity, message = expected
+        if item.get("severity") != severity or item.get("message") != message:
+            continue
+        flags.append({"kind": str(kind), "severity": severity, "message": message})
+    return flags
+
+
+def _kill_switch_book(ingestion_enabled: bool | None, state: str, halted: bool | None) -> dict[str, Any]:
+    return {
+        "ingestion_enabled": ingestion_enabled if type(ingestion_enabled) is bool else None,
+        "paper_execution_halted": halted,
+        "paper_execution_state": state,
+        "live_trading_authorized": False,
+    }
+
+
+def _trading_book(status: str, generated: str, **overrides: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "schema": PAPER_TRADING_SCHEMA,
+        "generated_at": generated,
+        "read_only": True,
+        "status": status,
+        "source_ledger": None,
+        "mode": None,
+        "live_trading_authorized": False,
+        "live_execution": False,
+        "broker_order_submitted": False,
+        "positions": None,
+        "position_count": None,
+        "positions_truncated": False,
+        "positions_reason": None,
+        "open_orders": None,
+        "open_order_count": None,
+        "open_orders_truncated": False,
+        "open_orders_reason": None,
+        "recent_orders": None,
+        "recent_order_count": None,
+        "recent_orders_truncated": False,
+        "recent_orders_reason": None,
+        "recent_orders_order": None,
+        "marked_exposure": _hidden_exposure(),
+        "kill_switch": _kill_switch_book(None, "unavailable", None),
+        "risk_limits": _limit_block("unavailable", "unavailable"),
+        "risk_gate": None,
+        "risk_flags": [],
+    }
+    payload.update(overrides)
+    payload["read_only"] = True
+    payload["live_trading_authorized"] = False
+    payload["live_execution"] = False
+    payload["broker_order_submitted"] = False
+    limits = payload.get("risk_limits")
+    if isinstance(limits, dict):
+        limits["live_execution"] = False
+    halt = payload.get("kill_switch")
+    if isinstance(halt, dict):
+        halt["live_trading_authorized"] = False
+    return payload
+
+
+def _load_risk_limits() -> dict[str, Any] | None:
+    try:
+        from .paper_execution import read_risk_limits
+
+        policy = read_risk_limits()
+    except (ValueError, ArithmeticError, sqlite3.Error, OSError, ImportError):
+        return None
+    return policy if isinstance(policy, Mapping) else None
+
+
+def paper_trading_status(
+    paper: Mapping[str, Any] | None = None,
+    risk: Mapping[str, Any] | None = None,
+    *,
+    ingestion_enabled: bool | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Read-only paper book: positions, orders, marked exposure, limits and halt.
+
+    This does not submit, cancel, or amend an order, and it does not change a
+    kill switch or a risk limit. A legacy ledger has no stored orders or limits.
+    """
+    current = _utcnow(now)
+    if paper is None:
+        paper = paper_status(now=current)
+    if risk is None and isinstance(paper, Mapping):
+        risk = risk_status(paper=paper, now=current)
+    generated = paper.get("generated_at") if isinstance(paper, Mapping) else None
+    if not isinstance(generated, str) or _ISO_UTC_RE.fullmatch(generated) is None:
+        generated = current.isoformat()
+    flags = _book_flags(risk if isinstance(risk, Mapping) else None)
+    gate = risk.get("risk_gate") if isinstance(risk, Mapping) else None
+    risk_gate = "enforced" if gate == "enforced" else None
+    ingestion = ingestion_enabled if type(ingestion_enabled) is bool else None
+    if not isinstance(paper, Mapping):
+        return _trading_book(
+            "unavailable", generated,
+            kill_switch=_kill_switch_book(ingestion, "unavailable", None),
+            risk_flags=flags, risk_gate=risk_gate,
+        )
+    source = paper.get("source_ledger")
+    if source not in _PAPER_SOURCES:
+        return _trading_book(
+            "unavailable", generated,
+            kill_switch=_kill_switch_book(ingestion, "unavailable", None),
+            risk_flags=flags, risk_gate=risk_gate,
+        )
+    mode_raw = paper.get("mode")
+    mode = mode_raw if mode_raw in _PAPER_MODES else None
+    if source == "canonical_execution":
+        report = paper.get("reconciliation")
+        if not isinstance(report, Mapping) or report.get("passed") is not True:
+            return _trading_book(
+                "reconciliation_unavailable", generated,
+                source_ledger=source, mode=mode,
+                positions_reason="reconciliation_unavailable",
+                open_orders_reason="account_unavailable",
+                recent_orders_reason="account_unavailable",
+                marked_exposure=_hidden_exposure("unavailable"),
+                kill_switch=_kill_switch_book(ingestion, "unavailable", None),
+                risk_limits=_limit_block("reconciliation_unavailable", "reconciliation_unavailable"),
+                risk_flags=flags, risk_gate=risk_gate,
+            )
+    if paper.get("initialized") is not True:
+        return _trading_book(
+            "not_initialized", generated,
+            source_ledger=source, mode=mode,
+            positions_reason="not_initialized",
+            open_orders_reason="not_stored" if source == "legacy_synthetic" else "account_unavailable",
+            recent_orders_reason="not_stored" if source == "legacy_synthetic" else "account_unavailable",
+            kill_switch=_kill_switch_book(ingestion, "not_stored" if source == "legacy_synthetic" else "unavailable", None),
+            risk_limits=_limit_block(
+                "not_stored" if source == "legacy_synthetic" else "not_initialized",
+                "not_stored" if source == "legacy_synthetic" else "not_initialized",
+            ),
+            risk_flags=flags, risk_gate=risk_gate,
+        )
+    if source == "legacy_synthetic":
+        paper_state, halted = "not_stored", None
+        limits = _limit_block("not_stored", "not_stored")
+    else:
+        halt = paper.get("kill_switch_active")
+        if halt is True:
+            paper_state, halted = "halted", True
+        elif halt is False:
+            paper_state, halted = "clear", False
+        else:
+            paper_state, halted = "unavailable", None
+        limits = (
+            _accept_limit_policy(_load_risk_limits(), halted=halt)
+            if type(halt) is bool else _limit_block("unavailable", "account_unavailable")
+        )
+    positions, count, truncated = _open_position_rows(paper.get("positions"))
+    open_raw = paper.get("open_orders")
+    if open_raw is None:
+        reason = paper.get("open_orders_reason")
+        open_reason = reason if reason in _OPEN_ORDER_REASONS else "unavailable"
+        open_rows, open_count, open_truncated = None, None, False
+    else:
+        open_rows, open_count, open_truncated, open_reason = _paper_order_rows(open_raw, open_only=True)
+    if "orders" not in paper or paper.get("orders") is None:
+        stored = paper.get("open_orders_reason")
+        recent_reason = stored if stored in _OPEN_ORDER_REASONS else "unavailable"
+        recent_rows, recent_count, recent_truncated = None, None, False
+    else:
+        recent_rows, recent_count, recent_truncated, recent_reason = _paper_order_rows(
+            paper.get("orders"), open_only=False,
+        )
+    return _trading_book(
+        "available", generated,
+        source_ledger=source, mode=mode,
+        positions=positions, position_count=count, positions_truncated=truncated,
+        positions_reason=None if positions is not None else "unavailable",
+        open_orders=open_rows, open_order_count=open_count,
+        open_orders_truncated=open_truncated, open_orders_reason=open_reason,
+        recent_orders=recent_rows, recent_order_count=recent_count,
+        recent_orders_truncated=recent_truncated, recent_orders_reason=recent_reason,
+        recent_orders_order="client_order_id" if recent_rows is not None else None,
+        marked_exposure=_marked_exposure(paper, risk if isinstance(risk, Mapping) else None),
+        kill_switch=_kill_switch_book(ingestion, paper_state, halted),
+        risk_limits=limits, risk_flags=flags, risk_gate=risk_gate,
+    )
 
 
 def risk_status(

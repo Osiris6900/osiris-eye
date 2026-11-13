@@ -21,6 +21,7 @@ export const SECTION_PATHS = {
   network: '/admin/network/status',
   feeds: '/admin/feeds/status',
   paper: '/admin/paper/status',
+  trading: '/admin/paper',
   risk: '/admin/risk/status',
   alerts: '/admin/alerts',
 } as const;
@@ -311,6 +312,92 @@ function enrolledCount(nodes: JsonObject | undefined): string {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? String(value) : 'Unavailable';
 }
 
+const ORDER_ID_TEXT = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const MONEY_TEXT = /^-?\d+(\.\d+)?$/;
+const BOOK_FLAG_MESSAGES: Record<string, string> = {
+  ingestion_disabled: 'P2P ingestion kill switch is disabled',
+  paper_ledger_uninitialized: 'Paper ledger is not initialized; cash, positions and P&L unavailable',
+  paper_reconciliation_failed: 'Paper account reconciliation failed; accounting unavailable',
+  paper_execution_halted: 'Paper execution kill switch is active',
+};
+const LIMIT_FIELDS: Array<[string, string]> = [
+  ['max_order_notional', 'Max order notional'],
+  ['max_position_notional', 'Max position notional'],
+  ['max_daily_loss', 'Max daily loss'],
+  ['max_gross_exposure', 'Max gross exposure'],
+];
+const ORDER_REASONS: Record<string, string> = {
+  not_stored: 'Orders are not stored on this paper ledger.',
+  account_unavailable: 'Orders are unavailable.',
+  unavailable: 'Orders are unavailable.',
+};
+const LIMIT_REASONS: Record<string, string> = {
+  not_stored: 'Risk limits are not stored on this paper ledger.',
+  not_initialized: 'Risk limits are unavailable until the paper account is initialized.',
+  reconciliation_unavailable: 'Risk limits are unavailable until reconciliation passes.',
+  unavailable: 'Risk limits are unavailable.',
+  account_unavailable: 'Risk limits are unavailable.',
+};
+
+function moneyOk(value: unknown): value is string {
+  return typeof value === 'string' && value.length <= 40 && MONEY_TEXT.test(value);
+}
+
+function bookPositions(value: unknown): Array<{ symbol: string; quantity: string; average: string }> | null {
+  if (!Array.isArray(value)) return null;
+  const rows = [];
+  for (const item of value) {
+    if (!item || typeof item !== 'object') return null;
+    const row = item as JsonObject;
+    if (typeof row.symbol !== 'string' || !SYMBOL_TEXT.test(row.symbol)) return null;
+    if (!moneyOk(row.quantity) || !moneyOk(row.average_cost)) return null;
+    rows.push({ symbol: row.symbol, quantity: row.quantity, average: row.average_cost });
+  }
+  return rows;
+}
+
+type BookOrder = {
+  id: string; side: string; symbol: string; state: string;
+  quantity: string; price: string | null; leaves: string | null;
+};
+
+function bookOrders(value: unknown): BookOrder[] | null {
+  if (!Array.isArray(value)) return null;
+  const rows: BookOrder[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== 'object') return null;
+    const row = item as JsonObject;
+    if (typeof row.client_order_id !== 'string' || !ORDER_ID_TEXT.test(row.client_order_id)) return null;
+    if (typeof row.symbol !== 'string' || !SYMBOL_TEXT.test(row.symbol)) return null;
+    if (row.side !== 'BUY' && row.side !== 'SELL') return null;
+    if (typeof row.state !== 'string' || !/^[a-z_]{1,32}$/.test(row.state)) return null;
+    if (!moneyOk(row.quantity)) return null;
+    if (row.price != null && !moneyOk(row.price)) return null;
+    if (row.leaves_quantity != null && !moneyOk(row.leaves_quantity)) return null;
+    rows.push({
+      id: row.client_order_id,
+      side: row.side,
+      symbol: row.symbol,
+      state: row.state,
+      quantity: row.quantity,
+      price: moneyOk(row.price) ? row.price : null,
+      leaves: moneyOk(row.leaves_quantity) ? row.leaves_quantity : null,
+    });
+  }
+  return rows;
+}
+
+function bookFlags(value: unknown): Array<{ kind: string; message: string }> {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap(item => {
+    if (!item || typeof item !== 'object') return [];
+    const row = item as JsonObject;
+    if (typeof row.kind !== 'string' || typeof row.message !== 'string') return [];
+    if (BOOK_FLAG_MESSAGES[row.kind] !== row.message) return [];
+    return [{ kind: row.kind, message: row.message }];
+  });
+}
+
 function openPositionRows(paper: JsonObject): Array<{ symbol: string; quantity: string; average: string }> {
   if (!Array.isArray(paper.open_positions)) return [];
   return paper.open_positions.flatMap(item => {
@@ -396,12 +483,86 @@ function PaperTradingOperations({ paper }: { paper: JsonObject | null }) {
   </>;
 }
 
+function BookOrderList({ title, orders, reason, truncated, empty }: {
+  title: string;
+  orders: unknown;
+  reason: unknown;
+  truncated: unknown;
+  empty: string;
+}) {
+  const reasonText = typeof reason === 'string' ? ORDER_REASONS[reason] : undefined;
+  if (reasonText) return <p className="muted">{title}: {reasonText}</p>;
+  const rows = bookOrders(orders);
+  if (rows === null) return <p className="muted">{title} unavailable.</p>;
+  return <>
+    <h3>{title}</h3>
+    {truncated === true && <p className="muted">Order list truncated. The count includes orders that are not shown.</p>}
+    {rows.map(order => <p key={`${order.id}-${order.state}`} className="muted">
+      {order.side} {order.symbol} {order.quantity}{order.price ? ` @ ${order.price}` : ''} · {order.state}
+      {order.leaves ? ` · leaves ${order.leaves}` : ''}
+    </p>)}
+    {rows.length === 0 && <p className="muted">{empty}</p>}
+  </>;
+}
+
+function PaperTradingBook({ book }: { book: JsonObject | undefined }) {
+  if (!book) return <p className="muted">Paper trading view unavailable. Positions are not shown.</p>;
+  const status = typeof book.status === 'string' ? book.status : 'unavailable';
+  const kill = book.kill_switch && typeof book.kill_switch === 'object' ? book.kill_switch as JsonObject : {};
+  const limits = book.risk_limits && typeof book.risk_limits === 'object' ? book.risk_limits as JsonObject : {};
+  const exposure = book.marked_exposure && typeof book.marked_exposure === 'object'
+    ? book.marked_exposure as JsonObject : {};
+  const halt = typeof kill.paper_execution_state === 'string' ? PAPER_HALT_LABELS[kill.paper_execution_state] : undefined;
+  const limitState = typeof limits.status === 'string' ? limits.status : 'unavailable';
+  const limitValues = limits.limits && typeof limits.limits === 'object' ? limits.limits as JsonObject : null;
+  const ingestion = kill.ingestion_enabled === true ? 'Enabled' : kill.ingestion_enabled === false ? 'Disabled' : 'Unavailable';
+  const positions = status === 'available' ? bookPositions(book.positions) : null;
+  const flags = bookFlags(book.risk_flags);
+  const exposureLabel = exposure.status === 'mark_to_market'
+    ? moneyText(exposure.market_value)
+    : exposure.status === 'unavailable_without_marks'
+      ? 'Unavailable without marks'
+      : 'Unavailable';
+  return <>
+    <p className="muted">Paper only. This view does not place orders or change risk limits or the kill switch.</p>
+    <div className="settings">
+      <div className="setting"><span>Ingestion</span><span>{ingestion}</span></div>
+      <div className="setting"><span>Paper execution halt</span><span>{halt ?? 'Unavailable'}</span></div>
+      <div className="setting"><span>Risk gate</span><span>{book.risk_gate === 'enforced' ? 'enforced' : 'Unavailable'}</span></div>
+      <div className="setting"><span>Marked exposure</span><span>{exposureLabel}</span></div>
+      <div className="setting"><span>Cost basis</span><span>{exposure.cost_basis_gross == null ? 'Unavailable' : moneyText(exposure.cost_basis_gross)}</span></div>
+      <div className="setting"><span>Live trading authorized</span><span>{book.live_trading_authorized === false ? 'false' : 'Unavailable'}</span></div>
+    </div>
+    {limitState === 'available' && limitValues ? LIMIT_FIELDS.map(([key, label]) => (
+      <div className="setting" key={key}><span>{label}</span><span>{moneyText(limitValues[key])}</span></div>
+    )) : <p className="muted">{LIMIT_REASONS[limitState] ?? 'Risk limits are unavailable.'}</p>}
+    {flags.map(flag => <p key={flag.kind} className="notice">{flag.message}</p>)}
+    {status === 'not_initialized' && <p className="muted">Paper ledger not initialized. Positions and orders are unavailable.</p>}
+    {status === 'reconciliation_unavailable' && <p role="note">Paper account reconciliation unavailable or failed. Positions, orders, marks and risk limits are unavailable.</p>}
+    {status !== 'available' && status !== 'not_initialized' && status !== 'reconciliation_unavailable' &&
+      <p className="muted">Paper trading view unavailable. Positions are not shown.</p>}
+    {status === 'available' && <>
+      <h3>Open paper positions</h3>
+      {book.positions_truncated === true && <p className="muted">Position list truncated. The count includes positions that are not shown.</p>}
+      {positions === null && <p className="muted">Open paper positions unavailable.</p>}
+      {positions?.map(row => <p key={row.symbol} className="muted">{row.symbol}: {row.quantity} units · average cost {row.average}</p>)}
+      {positions?.length === 0 && <p className="muted">No open paper positions.</p>}
+      <BookOrderList title="Open paper orders" orders={book.open_orders} reason={book.open_orders_reason}
+        truncated={book.open_orders_truncated} empty="No open paper orders." />
+      <BookOrderList title="Recent paper orders" orders={book.recent_orders} reason={book.recent_orders_reason}
+        truncated={book.recent_orders_truncated} empty="No paper orders recorded." />
+      {book.recent_orders_order === 'client_order_id' && Array.isArray(book.recent_orders) && book.recent_orders.length > 0 &&
+        <p className="muted">Recorded orders are ordered by client order id, not by time.</p>}
+    </>}
+  </>;
+}
+
 export function AdminCentre({ apiBase = '/api' }: { apiBase?: string }) {
   const [tokenInput, setTokenInput] = useState('');
   const [token, setToken] = useState<string | null>(null);
   const [sections, setSections] = useState<Record<SectionKey, Section>>(() => ({
     overview: { status: 'idle' }, monitoring: { status: 'idle' }, operations: { status: 'idle' }, network: { status: 'idle' },
-    feeds: { status: 'idle' }, paper: { status: 'idle' }, risk: { status: 'idle' }, alerts: { status: 'idle' },
+    feeds: { status: 'idle' }, paper: { status: 'idle' }, trading: { status: 'idle' }, risk: { status: 'idle' }, alerts: { status: 'idle' },
   }));
   const [view, setView] = useState<SectionKey>('overview');
   const [gateNotice, setGateNotice] = useState('');
@@ -440,7 +601,7 @@ export function AdminCentre({ apiBase = '/api' }: { apiBase?: string }) {
     setToken(null);
     setSections({
       overview: { status: 'idle' }, monitoring: { status: 'idle' }, operations: { status: 'idle' }, network: { status: 'idle' },
-      feeds: { status: 'idle' }, paper: { status: 'idle' }, risk: { status: 'idle' }, alerts: { status: 'idle' },
+      feeds: { status: 'idle' }, paper: { status: 'idle' }, trading: { status: 'idle' }, risk: { status: 'idle' }, alerts: { status: 'idle' },
     });
   };
 
@@ -450,6 +611,7 @@ export function AdminCentre({ apiBase = '/api' }: { apiBase?: string }) {
   const network = sections.network.data;
   const feeds = sections.feeds.data;
   const paper = sections.paper.data;
+  const trading = sections.trading.data;
   const risk = sections.risk.data;
   const alerts = sections.alerts.data;
   const adapters = Array.isArray(feeds?.adapters) ? feeds.adapters as JsonObject[] : null;
@@ -649,6 +811,10 @@ export function AdminCentre({ apiBase = '/api' }: { apiBase?: string }) {
           </p>)}
           {fillRows(paper).length === 0 && <p className="muted">{Array.isArray(paper?.recent_fills) ? 'No paper fills recorded.' : 'Recent fills unavailable.'}</p>}
         </> : <p className="muted">Paper ledger not initialized · cash, positions and P&amp;L unavailable</p>)}
+      </section>}
+
+      {view === 'trading' && <section className="panel" aria-label="Paper trading book">
+        {renderSection('trading', <PaperTradingBook book={trading} />)}
       </section>}
 
       {view === 'risk' && <section className="panel" aria-label="Risk">

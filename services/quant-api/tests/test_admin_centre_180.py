@@ -634,3 +634,254 @@ def test_operations_drops_a_position_book_with_one_invalid_row():
     assert view["paper_trading"]["positions_reason"] == "unavailable"
     assert "bad symbol" not in str(view)
     assert "SYNTH-PERP" not in str(view)
+
+
+def _trading_limits(*, halted: bool) -> dict:
+    return {
+        "status": "available",
+        "reason": None,
+        "live_execution": False,
+        "broker_order_submitted": False,
+        "kill_switch_active": halted,
+        "limits": {
+            "max_order_notional": "5000",
+            "max_position_notional": "8000",
+            "max_daily_loss": "1000",
+            "max_gross_exposure": "20000",
+        },
+    }
+
+
+def test_paper_trading_view_projects_orders_marks_and_limits(monkeypatch):
+    monkeypatch.setattr(
+        "osiris_api.paper_execution.read_risk_limits", lambda: _trading_limits(halted=True),
+    )
+    paper = {
+        "generated_at": NOW.isoformat(),
+        "source_ledger": "canonical_execution",
+        "mode": "paper_only",
+        "initialized": True,
+        "positions": [{
+            "symbol": "BTC-USD", "quantity": "1", "average_cost": "100", "secret": "do-not-leak",
+        }],
+        "kill_switch_active": True,
+        "reconciliation": {"passed": True, "breaks": []},
+        "open_orders": [{
+            "client_order_id": "open-buy", "symbol": "BTC-USD", "side": "BUY",
+            "state": "accepted", "quantity": "1", "price": "50",
+            "filled_quantity": "0", "leaves_quantity": "1",
+            "risk_decision_id": "should-not-leak",
+        }],
+        "orders": [{
+            "client_order_id": "filled-buy", "symbol": "BTC-USD", "side": "BUY",
+            "state": "filled", "quantity": "1", "filled_quantity": "1", "leaves_quantity": "0",
+        }],
+        "market_value": "110",
+        "cost_basis_gross": "100",
+        "marks_available": True,
+    }
+    risk = {
+        "market_value": "110",
+        "exposure": "110",
+        "cost_basis_gross": "100",
+        "risk_gate": "enforced",
+        "flags": [
+            {
+                "kind": "paper_execution_halted", "severity": "critical",
+                "message": "Paper execution kill switch is active",
+            },
+            {
+                "kind": "feed_quality_review_stale", "severity": "critical",
+                "message": "token=supersecretvalue",
+            },
+        ],
+    }
+    view = admin_centre.paper_trading_status(paper, risk, ingestion_enabled=False, now=NOW)
+    assert view["schema"] == admin_centre.PAPER_TRADING_SCHEMA
+    assert view["read_only"] is True
+    assert view["status"] == "available"
+    assert view["live_trading_authorized"] is False
+    assert view["live_execution"] is False
+    assert view["broker_order_submitted"] is False
+    assert view["positions"] == [{"symbol": "BTC-USD", "quantity": "1", "average_cost": "100"}]
+    assert view["open_orders"] == [{
+        "client_order_id": "open-buy", "symbol": "BTC-USD", "side": "BUY", "state": "accepted",
+        "quantity": "1", "price": "50", "filled_quantity": "0", "leaves_quantity": "1",
+    }]
+    assert view["recent_orders"][0]["client_order_id"] == "filled-buy"
+    assert view["recent_orders"][0]["state"] == "filled"
+    assert view["recent_orders_order"] == "client_order_id"
+    assert view["marked_exposure"]["status"] == "mark_to_market"
+    assert view["marked_exposure"]["market_value"] == "110"
+    assert view["marked_exposure"]["exposure"] == "110"
+    assert view["marked_exposure"]["exposure_basis"] == "mark_to_market"
+    assert view["kill_switch"]["paper_execution_state"] == "halted"
+    assert view["kill_switch"]["paper_execution_halted"] is True
+    assert view["kill_switch"]["ingestion_enabled"] is False
+    assert view["risk_limits"]["status"] == "available"
+    assert view["risk_limits"]["limits"]["max_gross_exposure"] == "20000"
+    assert view["risk_limits"]["live_execution"] is False
+    assert view["risk_gate"] == "enforced"
+    assert view["risk_flags"] == [{
+        "kind": "paper_execution_halted", "severity": "critical",
+        "message": "Paper execution kill switch is active",
+    }]
+    rendered = str(view)
+    assert "should-not-leak" not in rendered
+    assert "supersecretvalue" not in rendered
+    assert "do-not-leak" not in rendered
+
+
+def test_paper_trading_view_legacy_omits_orders_and_limits():
+    view = admin_centre.paper_trading_status({
+        "generated_at": NOW.isoformat(),
+        "source_ledger": "legacy_synthetic",
+        "mode": "synthetic-paper-only",
+        "initialized": True,
+        "positions": [{"symbol": "SYNTH-PERP", "quantity": "2", "average_cost": "100"}],
+        "open_orders": None,
+        "open_orders_reason": "not_stored",
+        "market_value": None,
+        "cost_basis_gross": "200",
+        "marks_available": False,
+    }, {
+        "market_value": None,
+        "exposure": "unavailable_without_marks",
+        "cost_basis_gross": "200",
+        "risk_gate": "enforced",
+        "flags": [],
+    }, ingestion_enabled=True, now=NOW)
+    assert view["status"] == "available"
+    assert view["positions"] == [{"symbol": "SYNTH-PERP", "quantity": "2", "average_cost": "100"}]
+    assert view["open_orders"] is None
+    assert view["open_orders_reason"] == "not_stored"
+    assert view["recent_orders"] is None
+    assert view["recent_orders_reason"] == "not_stored"
+    assert view["marked_exposure"]["status"] == "unavailable_without_marks"
+    assert view["marked_exposure"]["market_value"] is None
+    assert view["marked_exposure"]["cost_basis_gross"] == "200"
+    assert view["risk_limits"]["status"] == "not_stored"
+    assert view["risk_limits"]["limits"] is None
+    assert view["kill_switch"]["paper_execution_state"] == "not_stored"
+
+
+def test_paper_trading_view_hides_unreconciled_books_and_bad_order_ids(monkeypatch):
+    monkeypatch.setattr(
+        "osiris_api.paper_execution.read_risk_limits", lambda: _trading_limits(halted=False),
+    )
+    hidden = admin_centre.paper_trading_status({
+        "generated_at": NOW.isoformat(),
+        "source_ledger": "canonical_execution",
+        "mode": "paper_only",
+        "initialized": True,
+        "cash": "999999",
+        "positions": [{"symbol": "BTC-USD", "quantity": "1", "average_cost": "10"}],
+        "open_orders": [{
+            "client_order_id": "open-buy", "symbol": "BTC-USD", "side": "BUY",
+            "state": "accepted", "quantity": "1", "price": "10",
+        }],
+        "kill_switch_active": False,
+        "reconciliation": {"passed": False, "breaks": ["cash"]},
+        "market_value": "10",
+        "marks_available": True,
+    }, {"exposure": "10", "market_value": "10", "risk_gate": "enforced", "flags": []},
+        ingestion_enabled=False, now=NOW)
+    assert hidden["status"] == "reconciliation_unavailable"
+    assert hidden["positions"] is None
+    assert hidden["open_orders"] is None
+    assert hidden["risk_limits"]["limits"] is None
+    assert hidden["marked_exposure"]["market_value"] is None
+    assert "BTC-USD" not in str(hidden)
+    assert "999999" not in str(hidden)
+    poisoned = admin_centre.paper_trading_status({
+        "generated_at": NOW.isoformat(),
+        "source_ledger": "canonical_execution",
+        "mode": "paper_only",
+        "initialized": True,
+        "kill_switch_active": False,
+        "reconciliation": {"passed": True},
+        "positions": [{"symbol": "BTC-USD", "quantity": "1", "average_cost": "10"}],
+        "open_orders": [{
+            "client_order_id": "token=supersecretvalue", "symbol": "BTC-USD", "side": "BUY",
+            "state": "accepted", "quantity": "1", "price": "10",
+        }],
+        "orders": [{
+            "client_order_id": "filled-buy", "symbol": "BTC-USD", "side": "BUY",
+            "state": "filled", "quantity": "1",
+        }],
+        "market_value": None,
+        "marks_available": False,
+        "cost_basis_gross": "10",
+    }, {
+        "market_value": None, "exposure": "unavailable_without_marks",
+        "cost_basis_gross": "10", "risk_gate": "enforced", "flags": [],
+    }, ingestion_enabled=False, now=NOW)
+    assert poisoned["status"] == "available"
+    assert poisoned["open_orders"] is None
+    assert poisoned["open_orders_reason"] == "unavailable"
+    assert poisoned["recent_orders"][0]["client_order_id"] == "filled-buy"
+    assert "supersecretvalue" not in str(poisoned)
+
+
+def test_paper_trading_view_hides_limits_that_disagree_with_the_halt(monkeypatch):
+    monkeypatch.setattr(
+        "osiris_api.paper_execution.read_risk_limits", lambda: _trading_limits(halted=False),
+    )
+    view = admin_centre.paper_trading_status({
+        "generated_at": NOW.isoformat(),
+        "source_ledger": "canonical_execution",
+        "mode": "paper_only",
+        "initialized": True,
+        "kill_switch_active": True,
+        "reconciliation": {"passed": True},
+        "positions": [{"symbol": "BTC-USD", "quantity": "1", "average_cost": "80"}],
+        "open_orders": [],
+        "orders": [],
+        "market_value": None,
+        "marks_available": False,
+    }, {
+        "market_value": None, "exposure": "unavailable_without_marks", "risk_gate": "enforced",
+        "flags": [],
+    }, ingestion_enabled=False, now=NOW)
+    assert view["kill_switch"]["paper_execution_state"] == "halted"
+    assert view["risk_limits"]["status"] == "unavailable"
+    assert view["risk_limits"]["limits"] is None
+    assert "5000" not in str(view["risk_limits"])
+    assert view["positions"][0]["symbol"] == "BTC-USD"
+
+
+def test_paper_trading_view_hides_marked_exposure_when_snapshots_disagree():
+    view = admin_centre.paper_trading_status({
+        "generated_at": NOW.isoformat(),
+        "source_ledger": "legacy_synthetic",
+        "mode": "synthetic-paper-only",
+        "initialized": True,
+        "positions": [],
+        "open_orders": None,
+        "open_orders_reason": "not_stored",
+        "market_value": "110",
+        "marks_available": True,
+        "cost_basis_gross": "100",
+    }, {
+        "market_value": "999",
+        "exposure": "999",
+        "cost_basis_gross": "100",
+        "risk_gate": "enforced",
+        "flags": [],
+    }, ingestion_enabled=False, now=NOW)
+    assert view["marked_exposure"]["status"] == "unavailable"
+    assert view["marked_exposure"]["market_value"] is None
+    assert "110" not in str(view["marked_exposure"])
+    assert "999" not in str(view)
+
+
+def test_read_risk_limits_does_not_create_a_missing_database(tmp_path, monkeypatch):
+    missing = tmp_path / "absent" / "execution.sqlite3"
+    monkeypatch.setenv("OSIRIS_PAPER_EXECUTION_DB", str(missing))
+    from osiris_api.paper_execution import read_risk_limits
+
+    result = read_risk_limits()
+    assert result["reason"] == "not_initialized"
+    assert result["limits"] is None
+    assert result["live_execution"] is False
+    assert not missing.exists() and not missing.parent.exists()
