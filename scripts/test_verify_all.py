@@ -29,6 +29,9 @@ class VerifyAllTests(unittest.TestCase):
         for name in ("rust-native", "native-process", "peer-receipts", "browser", "recovery-intakes"):
             self.assertIn("PLAN " + name + ":", result.stdout)
         self.assertNotIn("PLAN release-strict:", result.stdout)
+        for name in ("dependency-advisories", "python-lock", "license-provenance"):
+            self.assertIn("PLAN " + name + ":", result.stdout)
+        self.assertIn("--junitxml", result.stdout)
 
     def test_workstream_report_requires_every_check_and_unchanged_sources(self):
         module = load_module()
@@ -48,6 +51,10 @@ class VerifyAllTests(unittest.TestCase):
         without_sbom = module.engineering_report([row for row in passed if row["name"] != "supply-chain-sbom"], source, source)
         self.assertFalse(without_sbom["release_gates"]["T01"]["local_checks_passed"])
         self.assertFalse(without_sbom["all_passed"])
+        for name in ("dependency-advisories", "python-lock", "license-provenance"):
+            missing = module.engineering_report([row for row in passed if row["name"] != name], source, source)
+            self.assertFalse(missing["release_gates"]["T01"]["local_checks_passed"])
+            self.assertFalse(missing["all_passed"])
         without_trace = module.engineering_report([row for row in passed if row["name"] != "receipt-paper"], source, source)
         self.assertFalse(without_trace["release_gates"]["T19"]["local_checks_passed"])
         self.assertFalse(without_trace["all_passed"])
@@ -129,6 +136,40 @@ class VerifyAllTests(unittest.TestCase):
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("positive", result.stderr)
+
+    def test_actual_pytest_skip_is_not_reported_as_complete(self):
+        module = load_module()
+        for source, status in (
+            ("def test_run(): assert True\n", "passed"),
+            ("import pytest\ndef test_run(): pytest.skip('binary missing')\n", "failed"),
+            ("import pytest\n@pytest.mark.xfail(reason='unverified')\ndef test_run(): assert False\n", "failed"),
+        ):
+            with self.subTest(source=source), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory)
+                (path / "test_case.py").write_text(source)
+                junit = path / "tests.xml"
+                result = module.run_check("python-tests", [sys.executable, "-m", "pytest",
+                    "-q", str(path / "test_case.py"), "--junitxml", str(junit)], None, 30)
+                self.assertEqual(result["exit_code"], 0, result)
+                checked = module.require_complete_pytest(result, junit)
+                self.assertEqual(checked["status"], status, checked)
+                self.assertEqual(checked["test_evidence"]["test_cases"], 1)
+                self.assertEqual(len(checked["test_evidence"]["sha256"]), 64)
+
+    def test_missing_empty_or_malformed_junit_never_passes(self):
+        module = load_module()
+        with tempfile.TemporaryDirectory() as directory:
+            report = Path(directory) / "tests.xml"
+            passed = {"name": "python-tests", "status": "passed"}
+            self.assertEqual(module.require_complete_pytest(passed, report)["status"], "failed")
+            for document in ("not XML", "<testsuites/>", "<unknown><testcase/></unknown>",
+                '<testsuites><testsuite><testcase><failure/></testcase></testsuite></testsuites>',
+                '<testsuites><testsuite><testcase><error/></testcase></testsuite></testsuites>'):
+                report.write_text(document)
+                with self.subTest(document=document):
+                    self.assertEqual(module.require_complete_pytest(passed, report)["status"], "failed")
+            failed = {"name": "python-tests", "status": "failed", "exit_code": 3}
+            self.assertEqual(module.require_complete_pytest(failed, report), failed)
 
 
 if __name__ == "__main__":

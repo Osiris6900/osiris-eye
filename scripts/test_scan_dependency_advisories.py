@@ -8,6 +8,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import scan_dependency_advisories as scan
@@ -257,7 +258,7 @@ class PythonLockScanTests(AdvisoryScanTests):
 
     def test_scanned_report_rejected_without_python_lock(self):
         report = self.build_python(FakeClient())
-        with self.assertRaisesRegex(ValueError, "unscanned"):
+        with self.assertRaisesRegex(ValueError, "input inventory"):
             scan.validate_report(report, self.cargo, self.npm, self.pyproject)
 
     def test_unresolved_report_rejected_with_python_lock(self):
@@ -281,11 +282,13 @@ class PythonLockScanTests(AdvisoryScanTests):
             root / "apps/web/package-lock.json",
             root / "services/quant-api/pyproject.toml",
             root / scan.LOCK_RELATIVE_PATH,
+            scan.cargo_lock_inputs(root),
         )
         packages = scan.locked_packages(
             root / "services/p2p-node/Cargo.lock",
             root / "apps/web/package-lock.json",
             root / scan.LOCK_RELATIVE_PATH,
+            scan.cargo_lock_inputs(root),
         )
         findings = report["findings"]
         self.assertEqual(report["summary"], {
@@ -302,6 +305,101 @@ class PythonLockScanTests(AdvisoryScanTests):
                 f["classification"] == "maintenance-only" for f in findings
             ),
         })
+
+    def test_offline_cli_never_constructs_a_network_client_or_changes_the_report(self):
+        root = Path(__file__).resolve().parents[1]
+        report_path = root / "docs/P2P_DEPENDENCY_ADVISORIES.json"
+        original = report_path.read_bytes()
+        with patch.object(scan, "OsvClient", side_effect=AssertionError("network forbidden")), \
+             patch.object(sys, "argv", ["scan", "--check", str(report_path), "--fail-on-vulnerability"]):
+            scan.main()
+        self.assertEqual(report_path.read_bytes(), original)
+
+
+class MultiRootAndPaginationTests(AdvisoryScanTests):
+    def test_extra_root_is_scanned_shared_crates_deduplicate_and_hashes_are_bound(self):
+        extra = self.root / "native.lock"
+        extra.write_text(self.cargo.read_text() + '''
+[[package]]
+name = "native-only"
+version = "7.8.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+''')
+        locks = {"crates/native-feed/Cargo.lock": extra}
+        package = {"ecosystem": "crates.io", "name": "native-only", "version": "7.8.9"}
+        client = FakeClient([(package, "NATIVE-ADVISORY")],
+                            {"NATIVE-ADVISORY": advisory("NATIVE-ADVISORY")})
+        report = scan.build_report(self.cargo, self.npm, self.pyproject, {}, "a" * 40,
+                                   client, additional_cargo_locks=locks)
+        self.assertEqual(report["coverage"]["crates.io"]["packages"], 2)
+        self.assertEqual(report["findings"][0]["name"], "native-only")
+        scan.validate_report(report, self.cargo, self.npm, self.pyproject,
+                             additional_cargo_locks=locks)
+        extra.write_text(extra.read_text() + "# changed\n")
+        with self.assertRaisesRegex(ValueError, "stale for crates/native-feed"):
+            scan.validate_report(report, self.cargo, self.npm, self.pyproject,
+                                 additional_cargo_locks=locks)
+
+    def test_missing_extra_root_or_conflicting_checksum_fails_before_network(self):
+        extra = self.root / "native.lock"
+        with self.assertRaises(OSError):
+            scan.locked_packages(self.cargo, self.npm, additional_cargo_locks={"native": extra})
+        extra.write_text(self.cargo.read_text().replace("a" * 64, "b" * 64))
+        with self.assertRaisesRegex(ValueError, "conflicting Cargo checksum"):
+            scan.locked_packages(self.cargo, self.npm, additional_cargo_locks={"native": extra})
+
+    def test_input_mutation_during_scan_is_refused(self):
+        client = FakeClient()
+        def mutate(packages, batch_size):
+            self.cargo.write_text(self.cargo.read_text() + "# changed mid-scan\n")
+            return []
+        client.querybatch = mutate
+        with self.assertRaisesRegex(ValueError, "inputs changed"):
+            self.build(client)
+
+    def test_unexpected_or_omitted_lock_inventory_is_rejected(self):
+        report = self.build(FakeClient())
+        report["source"]["inputs"]["extra.lock"] = {"sha256": "c" * 64}
+        with self.assertRaisesRegex(ValueError, "input inventory"):
+            scan.validate_report(report, self.cargo, self.npm, self.pyproject)
+        with self.assertRaisesRegex(ValueError, "invalid additional"):
+            scan.build_report(self.cargo, self.npm, self.pyproject, {}, "a" * 40,
+                              FakeClient(), additional_cargo_locks={"../outside": self.cargo})
+
+    def test_osv_continuations_keep_later_vulnerabilities_and_bind_each_package(self):
+        calls = []
+        other = {"ecosystem": "npm", "name": "other", "version": "2.0.0"}
+        responses = [
+            {"results": [{"vulns": [{"id": "FIRST"}], "next_page_token": "next"}, {}]},
+            {"vulns": [{"id": "FIRST"}, {"id": "SECOND"}], "next_page_token": "last"},
+            {"vulns": [{"id": "THIRD"}]},
+        ]
+        def opener(request, timeout):
+            calls.append((request.full_url, json.loads(request.data)))
+            return io.BytesIO(json.dumps(responses.pop(0)).encode())
+        found = scan.OsvClient(opener=opener, retries=1).querybatch([self.package, other])
+        self.assertEqual(found, [(self.package, name) for name in ("FIRST", "SECOND", "THIRD")])
+        self.assertEqual(calls[1], (scan.API_BASE + "/query", {
+            "package": {"ecosystem": "crates.io", "name": "demo"},
+            "version": "1.2.3", "page_token": "next",
+        }))
+        self.assertEqual(calls[2][1]["page_token"], "last")
+
+    def test_invalid_repeated_or_failed_continuations_never_become_a_clean_scan(self):
+        for bad in (None, [], 1):
+            def opener(request, timeout):
+                return io.BytesIO(json.dumps({"results": [{"next_page_token": bad}]}).encode())
+            with self.subTest(token=bad), self.assertRaisesRegex(ValueError, "page token"):
+                scan.OsvClient(opener=opener, retries=1).querybatch([self.package])
+        responses = [{"results": [{"next_page_token": "again"}]}, {"next_page_token": "again"}]
+        with patch.object(scan.OsvClient, "_json", side_effect=responses):
+            with self.assertRaisesRegex(ValueError, "pagination repeated"):
+                scan.OsvClient().querybatch([self.package])
+        with patch.object(scan.OsvClient, "_json", side_effect=[
+                {"results": [{"next_page_token": "next"}]}, ValueError("offline")]):
+            with self.assertRaisesRegex(ValueError, "offline"):
+                scan.OsvClient().querybatch([self.package])
 
 
 if __name__ == "__main__":

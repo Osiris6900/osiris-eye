@@ -17,13 +17,17 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          fetch-depth: 2 # Include PR head and base objects for exact-tree verification.
+          fetch-depth: 0 # Retained advisory inputs must resolve at their recorded commit.
       - name: Validate lockfile inputs
         run: |
           python scripts/check_dependency_inventory.py
           python -m unittest discover -s scripts -p 'test_check_dependency_inventory.py' -v
           python scripts/check_p2p_known_vulnerable_locks.py services/p2p-node/Cargo.lock
           python -m unittest discover -s scripts -p 'test_check_p2p_known_vulnerable_locks.py' -v
+      - name: Validate advisory coverage of all locked products offline
+        run: |
+          python scripts/test_scan_dependency_advisories.py
+          python scripts/scan_dependency_advisories.py --check docs/P2P_DEPENDENCY_ADVISORIES.json --fail-on-vulnerability
       - name: Generate complete locked dependency SBOM and source record
         env:
           OSIRIS_CANDIDATE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}

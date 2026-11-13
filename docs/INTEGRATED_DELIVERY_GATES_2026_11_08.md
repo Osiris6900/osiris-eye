@@ -1,5 +1,18 @@
 # Integrated Delivery Gates — verified inventory 2026-11-08
 
+## 2026-11-13 non-broker verification hardening
+
+Ghost/keyless remains the default; actual external broker acceptance is deferred.
+The retained OSV scan now covers all three Rust roots, including native-feed's
+previously omitted `memmap2`, and consumes bounded continuation pages. Its 608
+exact packages yielded zero vulnerability groups and the existing `paste`
+maintenance warning. Offline CI verifies all six input hashes against the
+recorded source commit. The 29-check engineering profile also enforces Python
+lock/licence policy and rejects missing, empty or skipped backend JUnit evidence.
+See [implementation, commands and per-gate remaining work](workstreams/NON_BROKER_EXECUTION_2026_11_13.md).
+This strengthens local evidence; no release gate or issue gains acceptance.
+Counts remain **3 evidenced / 14 partial / 3 remaining**.
+
 ## 2026-11-13 exact-main verification checkpoint
 
 At main `43157b1bad5a93c8bc441a21a04b8572a9e736f5`, five observed workflows /
@@ -75,7 +88,7 @@ Machine-readable copy: [`docs/release-gate-status.json`](release-gate-status.jso
 
 | Tracker item | Module issue | Status | Evidence | — | Missing evidence / blocker |
 | --- | --- | --- | --- | --- | --- |
-| T01. Remediate OSV dependencies (#171) and resolve Python lock/provenance gate | #171 | Partial | [PR #239](https://github.com/Osiris6900/osiris-eye/pull/239) and [PR #257](https://github.com/Osiris6900/osiris-eye/pull/257) merged. [Audit 42494850772](https://github.com/Osiris6900/osiris-eye/actions/runs/42494850772) green at `5176eae`. [`docs/P2P_DEPENDENCY_ADVISORIES.json`](P2P_DEPENDENCY_ADVISORIES.json) queried 2026-11-08T11:20:57Z at source `587dbc71`: 0 vulnerability groups; lockfile hashes match this worktree. Hickory 0.26.3 and yamux 0.14.1 are the only copies in `services/p2p-node/Cargo.lock`. Hashed lock: `services/quant-api/requirements-lock.txt`. | — | The hashed Python deployment lock, resolved Python SBOM components and license/provenance checker are implemented and exercised in dependency-security CI. The paste 1.0.15 maintenance advisory remains; accepted final-candidate audit/SBOM/provenance artifacts and a reviewed maintenance disposition are still required. |
+| T01. Remediate OSV dependencies (#171) and resolve Python lock/provenance gate | #171 | Partial | [PR #239](https://github.com/Osiris6900/osiris-eye/pull/239) and [PR #257](https://github.com/Osiris6900/osiris-eye/pull/257) merged. [Audit 42494850772](https://github.com/Osiris6900/osiris-eye/actions/runs/42494850772) green at `5176eae`. [`docs/P2P_DEPENDENCY_ADVISORIES.json`](P2P_DEPENDENCY_ADVISORIES.json) queried 2026-11-13T11:15:07Z against dependency inputs at `2b685c2bc8689422724f1d9eb52ceef660ebb8a7`: all three Rust roots, npm and Python, 608 exact packages, 0 vulnerability groups and 1 maintenance-only group; all six input hashes match. Hickory 0.26.3 and yamux 0.14.1 are the only copies in `services/p2p-node/Cargo.lock`. Hashed lock: `services/quant-api/requirements-lock.txt`. | — | The hashed Python deployment lock, resolved Python SBOM components and license/provenance checker are implemented and exercised in dependency-security CI. The paste 1.0.15 maintenance advisory remains; accepted final-candidate audit/SBOM/provenance artifacts and a reviewed maintenance disposition are still required. |
 | T02. Implement immutable action pinning and CI ratchet (#167) | #167 | Implemented with evidence | [PR #240](https://github.com/Osiris6900/osiris-eye/pull/240) merged as `6c6d155110c796d43bf5c879ea1487e1620ac81a`. [CI 42494850551](https://github.com/Osiris6900/osiris-eye/actions/runs/42494850551) python job runs `scripts/check_action_pinning.py` and succeeded at `5176eae`. Nine workflow files contain 68 `uses` references, all 40-character SHAs, zero mutable tags. | — | Checkbox evidence is the SHA ratchet on CI. A separate trust review of those pinned commits remains on T06. |
 | T03. Re-run final-candidate 2/3 host E2EE with binary hashes and retained evidence | #176, #177 | Implemented with evidence | Verified [three-host run 42724204891](https://github.com/Osiris6900/osiris-eye/actions/runs/42724204891) with retained `three-e2ee-evidence-42724204891-1` artifact (14 days); [two-host run 42720301712](https://github.com/Osiris6900/osiris-eye/actions/runs/42720301712) succeeded. Binary-hash artifact contents require separate review. | — | 3-host E2EE run 42724204891 passed with retained artifact three-e2ee-evidence-42724204891-1 (14-day retention); 2-host run 42720301712 passed. Binary SHA-256 contents must be reviewed inside retained artifact before external certification. |
 | T04. Run sustained multi-host outage/load/relay/NAT acceptance | #176, #255 | Partial | Operator [capacity run 42740964830](https://github.com/Osiris6900/osiris-eye/actions/runs/42740964830) succeeded on exact main SHA `d9bb0a959faf5d9c7c97bd6502a143f9df9123d0`; three distinct GitHub runner jobs green. Retained `capacity-report-42740964830-1` ZIP SHA-256 `229553051305aabbc28c44af50bb58c4f6dfe9ec746ff3f2f85178333661d239`: 10/50/100 peers, 200/200 delivered and zero lost per sweep; report self-attests distinct host boot fingerprints and common binary hash. | — | **Partial with limits**: ~35–49 s/sweep, one tailnet, recipient-bootstrap star, workload paused during outage; raw fingerprints not independently verified. Sustained NAT/relay/open-mesh and production failover missing. Acceptance false. |
