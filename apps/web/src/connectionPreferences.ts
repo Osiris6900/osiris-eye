@@ -1,10 +1,11 @@
 export type ConnectionPreferences = {
-  mode: 'ghost' | 'broker'; data_provider: 'coinbase-public' | 'binance-public' | 'stooq-daily';
+  mode: 'ghost' | 'broker'; data_provider: 'coinbase-public' | 'binance-public' | 'kraken-public' | 'stooq-daily';
   broker: 'none' | 'alpaca-paper';
 };
 export const connectionDefaults: ConnectionPreferences = { mode: 'ghost', data_provider: 'coinbase-public', broker: 'none' };
 export const keylessProviders = [
   ['coinbase-public', 'Coinbase public · crypto'], ['binance-public', 'Binance public · crypto'],
+  ['kraken-public', 'Kraken public · USD crypto'],
   ['stooq-daily', 'Stooq public · daily equities'],
 ] as const;
 

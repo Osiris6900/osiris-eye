@@ -28,7 +28,7 @@ def test_every_offered_keyless_provider_is_registered_by_the_actual_gateway():
         "registered={p['provider']:p for p in market_data_gateway.providers()['providers']}; "
         "assert all(p['id'] in registered and registered[p['id']]['mode']=='public' for p in PROVIDERS)"
     )], env={**os.environ, **{name: "true" for name in (
-        "OSIRIS_PUBLIC_COINBASE_ENABLED", "OSIRIS_PUBLIC_BINANCE_ENABLED", "OSIRIS_PUBLIC_STOOQ_ENABLED",
+        "OSIRIS_PUBLIC_COINBASE_ENABLED", "OSIRIS_PUBLIC_BINANCE_ENABLED", "OSIRIS_PUBLIC_STOOQ_ENABLED", "OSIRIS_PUBLIC_KRAKEN_ENABLED",
     )}}, capture_output=True, text=True, timeout=30)
     assert check.returncode == 0, check.stderr
 
@@ -69,7 +69,7 @@ def test_default_ghost_needs_no_vendor_secrets_and_never_contacts_a_broker(servi
     assert service.transport.calls == []
 
 
-@pytest.mark.parametrize("provider", ["coinbase-public", "binance-public", "stooq-daily"])
+@pytest.mark.parametrize("provider", ["coinbase-public", "binance-public", "kraken-public", "stooq-daily"])
 def test_keyless_selection_survives_restart_without_connecting(service, provider):
     selected = {**DEFAULT, "data_provider": provider}
     result = service.save(selected, expected_version=0)
