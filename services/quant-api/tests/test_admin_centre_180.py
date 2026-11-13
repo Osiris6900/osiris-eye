@@ -503,3 +503,134 @@ def test_monitoring_hides_unreconciled_and_uninitialized_paper_balances():
     }, paper_allowed=True, now=NOW)
     assert poisoned["paper"]["status"] == "unavailable"
     assert "supersecretvalue" not in str(poisoned)
+
+
+def test_operations_lists_node_status_and_hides_denied_paper_positions():
+    network = _monitoring_network()
+    network["local_live_node"]["version"] = "0.1.0"
+    network["local_live_node"]["unsafe version"] = "should-not-leak"
+    paper = {
+        "source_ledger": "legacy_synthetic",
+        "mode": "synthetic-paper-only",
+        "initialized": True,
+        "positions": [
+            {"symbol": "SYNTH-PERP", "quantity": "2", "average_cost": "100", "client_order_id": "fill-key"},
+            {"symbol": "FLAT", "quantity": "0", "average_cost": "5"},
+        ],
+        "kill_switch_active": True,
+    }
+    allowed = admin_centre.operations_status(network, paper, paper_allowed=True, now=NOW)
+    assert allowed["schema"] == admin_centre.OPERATIONS_SCHEMA
+    assert allowed["read_only"] is True
+    assert allowed["live_trading_authorized"] is False
+    enrolled = allowed["nodes"]["nodes"]
+    assert allowed["nodes"]["enrolled_count"] == 1
+    assert enrolled[0]["status"] == "enrolled"
+    assert enrolled[0]["node_id"] == "ab" * 32
+    assert enrolled[0]["last_seen_at"] == NOW.isoformat()
+    assert enrolled[0]["last_seen_meaning"] == "enrollment_or_reenrollment_not_liveness"
+    assert enrolled[0]["version"] is None
+    assert enrolled[0]["version_reason"] == "not_recorded"
+    assert enrolled[0]["liveness"] == "not_observed"
+    local = allowed["nodes"]["local"]
+    assert local["status"] == "ready"
+    assert local["last_seen_at"] == NOW.isoformat()
+    assert local["last_seen_meaning"] == "admin_probe_time_not_node_clock"
+    assert local["version"] == "0.1.0"
+    assert local["version_reason"] == "reported"
+    assert local["authenticated_or_attested"] is False
+    trading = allowed["paper_trading"]
+    assert trading["status"] == "available"
+    assert trading["kill_switch"]["ingestion_state"] == "disabled"
+    assert trading["kill_switch"]["paper_execution_state"] == "not_stored"
+    assert trading["kill_switch"]["paper_execution_halted"] is None
+    assert trading["open_positions"] == [
+        {"symbol": "SYNTH-PERP", "quantity": "2", "average_cost": "100"},
+    ]
+    assert trading["open_position_count"] == 1
+    assert trading["daily_loss_gate"]["state"] == "not_stored"
+    assert trading["daily_loss_gate"]["limit"] is None
+    assert trading["live_trading_authorized"] is False
+    rendered = str(allowed)
+    assert "should-not-leak" not in rendered
+    assert "sensitive-node-identity" not in rendered
+    assert "fill-key" not in rendered
+    assert "public_key" not in rendered
+    denied = admin_centre.operations_status(network, paper, paper_allowed=False, now=NOW)
+    assert denied["nodes"]["local"]["version"] == "0.1.0"
+    assert denied["paper_trading"]["status"] == "permission_denied"
+    assert denied["paper_trading"]["open_positions"] is None
+    assert denied["paper_trading"]["daily_loss_gate"]["state"] == "permission_denied"
+    assert denied["paper_trading"]["kill_switch"]["ingestion_state"] == "disabled"
+    assert denied["paper_trading"]["kill_switch"]["paper_execution_halted"] is None
+    assert "SYNTH-PERP" not in str(denied["paper_trading"])
+    assert "100" not in str(denied["paper_trading"])
+
+
+def test_operations_rejects_unsafe_versions_and_unreconciled_positions():
+    network = _monitoring_network()
+    network["local_live_node"]["version"] = "not a version"
+    network["local_live_node"]["ready"] = False
+    view = admin_centre.operations_status(network, {
+        "source_ledger": "canonical_execution",
+        "mode": "paper_only",
+        "initialized": True,
+        "cash": "999999",
+        "positions": [{"symbol": "BTC-USD", "quantity": "1", "average_cost": "10"}],
+        "kill_switch_active": True,
+        "reconciliation": {"passed": False, "breaks": ["cash"]},
+    }, paper_allowed=True, now=NOW)
+    assert view["nodes"]["local"]["status"] == "not_ready"
+    assert view["nodes"]["local"]["version"] is None
+    assert view["nodes"]["local"]["version_reason"] == "not_reported"
+    assert "not a version" not in str(view)
+    paper = view["paper_trading"]
+    assert paper["status"] == "reconciliation_unavailable"
+    assert paper["open_positions"] is None
+    assert paper["kill_switch"]["paper_execution_halted"] is None
+    assert paper["daily_loss_gate"]["state"] == "reconciliation_unavailable"
+    assert paper["daily_loss_gate"]["limit"] is None
+    assert "BTC-USD" not in str(view)
+    assert "999999" not in str(view)
+
+
+def test_operations_hides_a_daily_loss_gate_that_disagrees_with_its_amounts(monkeypatch):
+    def lied():
+        return {
+            "basis": "realized_pnl", "state": "clear", "reason": None,
+            "realized_pnl": "-20", "limit": "10", "live_execution": False,
+        }
+
+    monkeypatch.setattr("osiris_api.paper_execution.daily_loss_gate", lied)
+    view = admin_centre.operations_status(_monitoring_network(), {
+        "source_ledger": "canonical_execution",
+        "mode": "paper_only",
+        "initialized": True,
+        "positions": [{"symbol": "BTC-USD", "quantity": "1", "average_cost": "80"}],
+        "kill_switch_active": False,
+        "reconciliation": {"passed": True, "breaks": []},
+    }, paper_allowed=True, now=NOW)
+    gate = view["paper_trading"]["daily_loss_gate"]
+    assert gate["state"] == "unavailable"
+    assert gate["realized_pnl"] is None
+    assert gate["limit"] is None
+    assert "-20" not in str(view["paper_trading"]["daily_loss_gate"])
+    assert view["paper_trading"]["open_positions"][0]["symbol"] == "BTC-USD"
+    assert view["paper_trading"]["kill_switch"]["paper_execution_state"] == "clear"
+
+
+def test_operations_drops_a_position_book_with_one_invalid_row():
+    view = admin_centre.operations_status(_monitoring_network(), {
+        "source_ledger": "legacy_synthetic",
+        "mode": "synthetic-paper-only",
+        "initialized": True,
+        "positions": [
+            {"symbol": "SYNTH-PERP", "quantity": "1", "average_cost": "10"},
+            {"symbol": "bad symbol", "quantity": "1", "average_cost": "10"},
+        ],
+    }, paper_allowed=True, now=NOW)
+    assert view["paper_trading"]["status"] == "available"
+    assert view["paper_trading"]["open_positions"] is None
+    assert view["paper_trading"]["positions_reason"] == "unavailable"
+    assert "bad symbol" not in str(view)
+    assert "SYNTH-PERP" not in str(view)
