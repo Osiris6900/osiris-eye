@@ -1110,13 +1110,13 @@
         "3975e8561318a8bb9c360b01aff2d0c2b941861e",
         "22c829c4795668fbcac486283dcbe2e5c041cc2b",
         "b57ff6bea6795cdb7d374721e2b99eec4a30862a",
-        "b4a4130c530f2ddb2c0d42c74271553b73f970c0"
+        "b4a4130c530f2ddb2c0d42c74271553b73f970c0",
+        "35fd514d06f7d897b1aa68be792f3b803abd69dc"
       ],
       "open_prs": [
-        308,
-        440
+        308
       ],
-      "blocker": "Authenticated canonical account/risk/feed/network/source views, actual Rust receipt metrics, role/MFA boundaries and Chromium navigation are implemented. Genuine source connections, sustained authenticated-node monitoring/alerts and independent operational acceptance remain pending. #438 merged as scaffolding at b57ff6bea6795cdb7d374721e2b99eec4a30862a (head 22c829c4795668fbcac486283dcbe2e5c041cc2b). CI 43486289288, Quant API CI 43486289127, audit 43486289381, 179 contract 43486289393, and 182 contract 43486289124 passed. The pull request says this is not accepted operations evidence, so T17 stays Partial. #440 is open scaffolding at b4a4130c530f2ddb2c0d42c74271553b73f970c0 after the merged #180 admin pull requests. It is not merged, so T17 stays Partial. Head CI 43495262061 and audit 43495262176 passed.",
+      "blocker": "Authenticated canonical account/risk/feed/network/source views, actual Rust receipt metrics, role/MFA boundaries and Chromium navigation are implemented. Genuine source connections, sustained authenticated-node monitoring/alerts and independent operational acceptance remain pending. #438 merged as scaffolding at b57ff6bea6795cdb7d374721e2b99eec4a30862a (head 22c829c4795668fbcac486283dcbe2e5c041cc2b). CI 43486289288, Quant API CI 43486289127, audit 43486289381, 179 contract 43486289393, and 182 contract 43486289124 passed. The pull request says this is not accepted operations evidence, so T17 stays Partial. #440 merged as scaffolding at 35fd514d06f7d897b1aa68be792f3b803abd69dc (head b4a4130c530f2ddb2c0d42c74271553b73f970c0). CI 43495262061, Quant API CI 43495261981, audit 43495262176, 179 contract 43495262506, and 182 contract 43495262035 passed. The pull request says this does not move T17 to accepted operations evidence, so T17 stays Partial.",
       "contributions": [
         {
           "pr": 308,
@@ -1205,7 +1205,7 @@
         {
           "pr": 440,
           "class": "scaffolding",
-          "github_state": "open",
+          "github_state": "merged",
           "satisfies_tracker": false,
           "head": "b4a4130c530f2ddb2c0d42c74271553b73f970c0",
           "after": [
@@ -1253,7 +1253,11 @@
               "conclusion": "success",
               "commit": "b4a4130c530f2ddb2c0d42c74271553b73f970c0"
             }
-          ]
+          ],
+          "status": "merged",
+          "merge_commit": "35fd514d06f7d897b1aa68be792f3b803abd69dc",
+          "merged_at": "2026-11-13T19:56:08Z",
+          "not_accepted_operations_evidence": true
         }
       ]
     },
