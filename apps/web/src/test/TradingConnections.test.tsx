@@ -167,4 +167,3 @@ it('offers the controls on both Settings and Live Trading while retaining the li
   expect(screen.getByRole('button', { name: 'Activate live trading' })).toBeDisabled();
   expect(within(screen.getByRole('region', { name: 'Ghost, keyless and broker connections' })).getByLabelText('Paper broker')).toHaveValue('none');
 });
-

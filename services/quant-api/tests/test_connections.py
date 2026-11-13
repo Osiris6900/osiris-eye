@@ -266,4 +266,3 @@ def test_api_paper_probe_returns_only_sanitized_output(api, monkeypatch):
     assert "private-account" not in result.text
     assert result.headers["cache-control"] == "no-store"
     assert calls == [("GET", "/v2/account", None)]
-
