@@ -33,6 +33,21 @@ class VerifyAllTests(unittest.TestCase):
             self.assertIn("PLAN " + name + ":", result.stdout)
         self.assertIn("--junitxml", result.stdout)
 
+    def test_both_profiles_exercise_release_evidence_contracts(self):
+        module = load_module()
+        for checks in (module.CHECKS, module.ENGINEERING_CHECKS):
+            with self.subTest(checks=checks):
+                commands = {name: command for name, command, _ in checks}
+                self.assertEqual(commands["release-evidence-contracts"],
+                    ["python", "-m", "unittest", "discover", "-s", "scripts",
+                     "-p", "test_check_release*.py"])
+        passed = [{"name": name, "status": "passed"} for name, _, _ in module.ENGINEERING_CHECKS]
+        source = {"git_head": "a" * 40, "worktree_sha256": "b" * 64}
+        missing = module.engineering_report(
+            [row for row in passed if row["name"] != "release-evidence-contracts"], source, source)
+        self.assertFalse(missing["all_passed"])
+        self.assertFalse(missing["release_gates"]["T20"]["local_checks_passed"])
+
     def test_workstream_report_requires_every_check_and_unchanged_sources(self):
         module = load_module()
         passed = [{"name": name, "status": "passed"} for name, _, _ in module.ENGINEERING_CHECKS]
