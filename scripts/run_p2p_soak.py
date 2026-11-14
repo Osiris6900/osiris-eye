@@ -306,6 +306,7 @@ class Controller:
         self.failure = None
         self.stage = 'starting'
         self.deliveries, self.sent, self.samples = {}, {}, []
+        self.delivery_counts = {}
         self.sources = {}
         self.finished, self.listeners = set(), set()
         self.subscriptions = set()
@@ -354,7 +355,15 @@ class Controller:
         elif kind == 'disconnected':
             self.subscriptions.discard((host, event['node'], event['peer']))
         elif kind == 'delivery':
-            self.deliveries.setdefault(event['digest'], time.monotonic())
+            # Only the intended sink can prove recipient decryption. A
+            # publisher reporting plaintext must not be relabelled as Host B.
+            if host != 'host-b':
+                raise RuntimeError('unexpected_decryption_recipient')
+            digest = event['digest']
+            if not isinstance(digest, str) or digest not in self.sent:
+                raise RuntimeError('untracked_delivery_observation')
+            self.delivery_counts[digest] = self.delivery_counts.get(digest, 0) + 1
+            self.deliveries.setdefault(digest, time.monotonic())
         elif kind == 'metrics':
             self.metrics[host] = event
         elif kind == 'finished':
@@ -428,6 +437,37 @@ class Controller:
                     proc.wait()
 
 
+
+def workload_records(controller, workload, start, *, outage_start_ms, restart_ms, recovered_ms, complete=True):
+    """Retain actual publish times, including observations lost during downtime."""
+    records = []
+    for digest in workload:
+        elapsed = int((controller.sent[digest] - start) * 1000)
+        in_outage = (outage_start_ms is not None and outage_start_ms <= elapsed
+                     and (recovered_ms is None or elapsed < recovered_ms))
+        sink_down = (outage_start_ms is not None and outage_start_ms <= elapsed
+                     and (restart_ms is None or elapsed < restart_ms))
+        delivery_time = controller.deliveries.get(digest)
+        count = controller.delivery_counts.get(digest, 0)
+        records.append({
+            'payload_sha256': digest,
+            'outcome': ('delivered' if digest in controller.deliveries
+                        else ('lost' if complete else 'pending_at_abort')),
+            'source_host': controller.sources[digest], 'recipient_host': 'host-b',
+            'published_elapsed_ms': elapsed, 'during_outage': in_outage,
+            'while_sink_stopped': sink_down,
+            'delivery_count': count, 'duplicate_deliveries': max(0, count - 1),
+            'delivered_elapsed_ms': int((delivery_time - start) * 1000) if delivery_time is not None else None,
+            'delivered_after_restart': (delivery_time is not None and restart_ms is not None
+                                        and delivery_time >= start + restart_ms / 1000),
+            'outage_publication_delivered_after_restart': (in_outage and delivery_time is not None
+                and restart_ms is not None and delivery_time >= start + restart_ms / 1000),
+            'latency_ms': ((controller.deliveries[digest] - controller.sent[digest]) * 1000
+                           if digest in controller.deliveries else None),
+        })
+    return records
+
+
 def measure(args):
     c = Controller()
     base = [sys.executable, str(Path(__file__).resolve()), '--agent', '--binary', str(args.binary)]
@@ -457,6 +497,7 @@ def measure(args):
             c.launch(host, [sys.executable, str(Path(__file__).resolve()), *peer_args[2:]])
         else:
             c.launch(host, ['ssh', '-T', *args.ssh_option, target, shlex.join(peer_args)])
+    workload, start, outage_start, restart_ms, recovered_ms = [], None, None, None, None
     try:
         c.wait(lambda: len(c.metadata) == host_count, stage='agent_metadata')
         commit, clean = revision()
@@ -492,6 +533,9 @@ def measure(args):
         restarted_time = None
         recovery_seen = False
         recovery_warmup = None
+        recovered_ms = None
+        restart_ms = None
+        traffic_on = args.traffic_during_outage
         next_message = start
         period = (args.duration - 10) / args.messages
         next_status = start
@@ -500,10 +544,12 @@ def measure(args):
             now = time.monotonic()
             elapsed = now - start
             if not stopped and elapsed >= args.duration / 2:
-                # This experiment declares a drained restart, not in-flight
-                # durability. A real pre-outage delivery failure still fails.
-                c.wait(lambda: all(d in c.deliveries for d in workload),
-                       30, stage='pre_outage_drain')
+                # Legacy runs intentionally drain and pause. The opt-in mode
+                # keeps scheduled workload on and retains every loss; no resend
+                # or guaranteed message durability is implied by this harness.
+                if not traffic_on:
+                    c.wait(lambda: all(d in c.deliveries for d in workload),
+                           30, stage='pre_outage_drain')
                 outage_start = int((time.monotonic() - start) * 1000)
                 c.command('host-b', action='stop_sink')
                 c.wait(lambda: c.sink_stopped, 15, stage='sink_stop')
@@ -516,16 +562,19 @@ def measure(args):
                 c.command('host-b', action='restart_sink')
                 restarted = True
                 restarted_time = now
-            # Pause scheduled workload during the outage; probes continue. This
-            # measures recovery, not guaranteed in-flight message durability.
+                restart_ms = int((now - start) * 1000)
+            # Recovery still requires fresh delivery from every publisher in
+            # both modes. Only the default mode pauses its scheduled workload.
             if (stopped and recovery_seen and recovery_warmup is None
                     and all((h, n, sink) in c.subscriptions for h, n in senders)):
                 recovery_warmup = [c.publish(h, n, f'{run_id}-recovery-warmup-{i}')
                                    for i, (h, n) in enumerate(senders)]
             all_recovered = (recovery_warmup is not None
                              and all(d in c.deliveries for d in recovery_warmup))
-            paused = stopped and not all_recovered
+            paused = stopped and not all_recovered and not traffic_on
             if stopped and all_recovered:
+                if recovered_ms is None:
+                    recovered_ms = int((time.monotonic() - start) * 1000)
                 c.stage = 'measurement'
             if now >= next_message and len(workload) < args.messages and not paused:
                 h, n = senders[len(workload) % len(senders)]
@@ -552,10 +601,10 @@ def measure(args):
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline and not all(d in c.deliveries for d in workload):
             c.drain(.1)
-        ended_at = datetime.now(timezone.utc)
         for host in c.agents:
             c.command(host, action='finish')
         c.wait(lambda: len(c.finished) == host_count, 30)
+        ended_at = datetime.now(timezone.utc)
         latencies = [(c.deliveries[d]-c.sent[d])*1000 for d in workload if d in c.deliveries]
         host_records = []
         for host, metadata in c.metadata.items():
@@ -572,6 +621,8 @@ def measure(args):
                 **{k: metrics[k] for k in ('rss_peak_bytes', 'cpu_percent', 'disk_growth_bytes')},
             })
         independent = len({m['host_fingerprint'] for m in c.metadata.values()}) == host_count
+        records = workload_records(c, workload, start, outage_start_ms=outage_start,
+                                   restart_ms=restart_ms, recovered_ms=recovered_ms)
         evidence = {
             'schema': 'osiris.p2p_load_acceptance.v1',
             'measurement_class': measurement_class(c.metadata, args.local_agents),
@@ -579,27 +630,35 @@ def measure(args):
             'workflow_url': args.workflow_url, 'attempt': args.attempt, 'operator': 'github-actions',
             'started_at': started_at.isoformat(), 'ended_at': ended_at.isoformat(),
             'workload': {'peers': len(c.peers), 'messages': len(workload), 'fanout': 1,
-                         'duration_seconds': (ended_at-started_at).total_seconds()},
+                         'duration_seconds': (ended_at-started_at).total_seconds(),
+                         'messages_while_sink_stopped': sum(r['while_sink_stopped'] for r in records),
+                         'messages_during_outage': sum(r['during_outage'] for r in records)},
             'delivery': {'sent': len(workload), 'delivered': len(latencies),
-                         'lost': len(workload)-len(latencies), 'rejected': 0, 'pending': 0},
+                         'lost': len(workload)-len(latencies), 'rejected': 0, 'pending': 0,
+                         'duplicate_deliveries': sum(r['duplicate_deliveries'] for r in records),
+                         'delivered_after_restart': sum(r['delivered_after_restart'] for r in records),
+                         'outage_publications_delivered_after_restart': sum(
+                             r['outage_publication_delivered_after_restart'] for r in records)},
             'latency_ms': {'count': len(latencies), 'p50': percentile(latencies, .5),
                            'p95': percentile(latencies, .95), 'p99': percentile(latencies, .99),
                            'max': max(latencies, default=0)},
             'hosts': host_records, 'outage': {'kind': 'bootstrap', 'outage_start_ms': outage_start,
+                                             'sink_restart_ms': restart_ms,
+                                             'all_publishers_recovered_ms': recovered_ms,
                                              'samples': c.samples},
-            'delivery_records': [
-                {'payload_sha256': d, 'outcome': 'delivered' if d in c.deliveries else 'lost',
-                 'source_host': c.sources[d], 'recipient_host': 'host-b',
-                 'latency_ms': (c.deliveries[d]-c.sent[d])*1000 if d in c.deliveries else None}
-                for d in workload
-            ],
+            'delivery_records': records,
             'measurement_notes': {
                 'latency': 'controller monotonic write-to-observed-decryption, includes SSH observer transport',
                 'resources': 'aggregate node and agent RSS; peak one-second CPU as share of host logical CPUs',
                 'controller_resources_included_on_host_a': True,
-                'workload_paused_during_outage': True, 'outage_probes_excluded_from_workload': True,
-                'workload_drained_before_outage': True,
-                'all_publishers_decryption_rechecked_before_resuming': True,
+                'traffic_during_outage': traffic_on,
+                'traffic_mode': 'continuous_during_outage' if traffic_on else 'drained_restart',
+                'workload_retransmissions': 0,
+                'publication_cadence': 'best-effort controller cadence; stop acknowledgement and event processing may delay scheduling',
+                'delivery_observation_cutoff': 'controller stops collecting when all agents report finished; later or undrained events remain unmeasured',
+                'workload_paused_during_outage': not traffic_on, 'outage_probes_excluded_from_workload': True,
+                'workload_drained_before_outage': not traffic_on,
+                'all_publishers_decryption_rechecked_before_resuming': not traffic_on,
                 'diagnostic_counts': {h: c.metrics[h]['diagnostic_counts'] for h in c.metrics},
                 'state_preserved_across_sink_restart': True,
                 'topology': 'recipient-bootstrap star; publishers trust only recipient',
@@ -616,6 +675,14 @@ def measure(args):
             'observed_peer_count': len(c.peers), 'known_delivery_count': len(c.deliveries),
             'submitted_including_warmup_and_probes': len(c.sent),
             'outage_samples': c.samples,
+            'observation_complete': False,
+            'measurement_started_at': started_at.isoformat() if start is not None else None,
+            'traffic_mode': 'continuous_during_outage' if args.traffic_during_outage else 'drained_restart',
+            'outage_start_ms': outage_start, 'sink_restart_ms': restart_ms,
+            'all_publishers_recovered_ms': recovered_ms,
+            'workload_delivery_records': (workload_records(c, workload, start,
+                outage_start_ms=outage_start, restart_ms=restart_ms, recovered_ms=recovered_ms, complete=False)
+                if start is not None else []),
             'binding_readiness': [
                 {'host': h, 'node': n,
                  'recipient_binding': (h, n, c.peers.get(('host-b', 0))) in c.bindings,
@@ -647,6 +714,8 @@ def main():
     p.add_argument('--messages', type=int, default=10000)
     p.add_argument('--duration', type=int, default=900)
     p.add_argument('--local-agents', action='store_true')
+    p.add_argument('--traffic-during-outage', action='store_true',
+                   help='keep scheduled workload on during sink outage; retain losses without retry')
     p.add_argument('--workflow-url', default='https://github.com/Osiris6900/osiris-eye/actions')
     p.add_argument('--attempt', type=int, default=1)
     p.add_argument('--evidence', type=Path)

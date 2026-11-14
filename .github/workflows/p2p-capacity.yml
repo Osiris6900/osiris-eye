@@ -8,6 +8,11 @@ on:
         required: false
         default: false
         type: boolean
+      traffic_during_outage:
+        description: "Keep sustained workload on during sink outage; retain actual losses (requires sustained_100)"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -27,6 +32,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 65
     steps:
+      - name: Validate requested outage workload
+        env:
+          SUSTAINED_100: ${{ inputs.sustained_100 }}
+          TRAFFIC_DURING_OUTAGE: ${{ inputs.traffic_during_outage }}
+        run: |
+          if [ "$TRAFFIC_DURING_OUTAGE" = "true" ] && [ "$SUSTAINED_100" != "true" ]; then
+            echo "traffic_during_outage requires sustained_100" >&2
+            exit 1
+          fi
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - name: Connect to private test overlay
@@ -99,8 +113,12 @@ jobs:
             --write-manifest "$dir/capacity-sha256.txt"
       - name: Run opt-in sustained 100-peer star soak (900s)
         if: ${{ inputs.sustained_100 }}
+        env:
+          TRAFFIC_DURING_OUTAGE: ${{ inputs.traffic_during_outage }}
         run: |
           set -euo pipefail
+          traffic_args=()
+          if [ "$TRAFFIC_DURING_OUTAGE" = "true" ]; then traffic_args+=(--traffic-during-outage); fi
           dir="$RUNNER_TEMP/osiris-capacity"
           b="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["ip"])' "$dir/host-b.json")"
           c="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["ip"])' "$dir/host-c.json")"
@@ -110,6 +128,7 @@ jobs:
             --ssh-target "runner@$b" --extra-host "host-c=runner@$c" \
             --host-b-ip "$b" --port 4001 --peers 100 \
             --messages 10000 --duration 900 \
+            "${traffic_args[@]}" \
             --workflow-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
             --attempt "${{ github.run_attempt }}" --evidence "$dir/sustained-100.json" \
             --ssh-option=-i --ssh-option="$dir/host-a" \

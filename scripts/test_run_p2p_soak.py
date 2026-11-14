@@ -9,10 +9,58 @@ import unittest
 from unittest.mock import patch
 from types import SimpleNamespace
 
-from run_p2p_soak import Agent, Controller, measurement_class, percentile
+from run_p2p_soak import Agent, Controller, measurement_class, percentile, workload_records
 
 
 class MeasurementTests(unittest.TestCase):
+    def test_workload_records_preserve_lost_late_and_duplicate_observations(self):
+        c = Controller()
+        c.command = lambda *args, **kwargs: None
+        with patch('run_p2p_soak.time.monotonic', side_effect=[11.0, 12.0, 14.0, 17.0]):
+            keys = [c.publish('host-a', 0, str(i)) for i in range(4)]
+        for digest, when in ((keys[0], 11.1), (keys[1], 14.0), (keys[1], 14.5)):
+            c.events.put(('host-b', {'kind': 'delivery', 'digest': digest}))
+            with patch('run_p2p_soak.time.monotonic', return_value=when):
+                c.drain()
+        records = workload_records(c, keys, 10, outage_start_ms=1500,
+                                   restart_ms=3500, recovered_ms=5500)
+        self.assertEqual([r['published_elapsed_ms'] for r in records], [1000, 2000, 4000, 7000])
+        self.assertEqual([r['during_outage'] for r in records], [False, True, True, False])
+        self.assertEqual([r['while_sink_stopped'] for r in records], [False, True, False, False])
+        self.assertEqual(records[1]['delivery_count'], 2)
+        self.assertEqual(records[1]['duplicate_deliveries'], 1)
+        self.assertEqual(records[1]['delivered_elapsed_ms'], 4000)
+        self.assertEqual(records[1]['latency_ms'], 2000)
+        self.assertTrue(records[1]['delivered_after_restart'])
+        self.assertTrue(records[1]['outage_publication_delivered_after_restart'])
+        self.assertFalse(records[0]['delivered_after_restart'])
+        self.assertEqual(records[2]['outcome'], 'lost')
+        self.assertIsNone(records[2]['latency_ms'])
+        self.assertEqual(records[2]['delivery_count'], 0)
+
+    def test_wrong_recipient_and_untracked_delivery_cannot_be_credited(self):
+        for host, digest, expected in (
+            ('host-c', 'tracked', 'unexpected_decryption_recipient'),
+            ('host-b', 'unknown', 'untracked_delivery_observation'),
+        ):
+            c = Controller()
+            c.sent = {'tracked': 1.0}
+            c.events.put((host, {'kind': 'delivery', 'digest': digest}))
+            with self.subTest(host=host), self.assertRaisesRegex(RuntimeError, expected):
+                c.drain()
+            self.assertEqual(c.deliveries, {})
+            self.assertEqual(c.delivery_counts, {})
+
+    def test_aborted_window_records_do_not_claim_permanent_loss(self):
+        c = Controller()
+        c.sent, c.sources = {'pending': 12.0}, {'pending': 'host-a'}
+        records = workload_records(c, ['pending'], 10, outage_start_ms=1500,
+                                   restart_ms=None, recovered_ms=None, complete=False)
+        self.assertEqual(records[0]['outcome'], 'pending_at_abort')
+        self.assertTrue(records[0]['during_outage'])
+        self.assertTrue(records[0]['while_sink_stopped'])
+        self.assertIsNone(records[0]['delivered_elapsed_ms'])
+
     def test_stale_subscriptions_cannot_release_restart_barrier(self):
         c = Controller()
         subscription = {'kind': 'subscription', 'node': 0, 'peer': 'sink'}
