@@ -37,6 +37,8 @@ jobs:
         run: |
           python scripts/test_verify_all.py
           python scripts/test_integration_ci_targets.py
+      - name: Reject incomplete release evidence and independent-review opt-outs
+        run: python -m unittest discover -s scripts -p 'test_check_release*.py' -v
       - name: Reject inconsistent retained receipt and paper evidence
         run: python scripts/test_verify_receipt_paper_artifact.py
       - name: Run Python tests
