@@ -16,6 +16,7 @@ from urllib.request import Request, urlopen
 from typing import Any
 
 _ALLOWED_GRANULARITIES = frozenset({60, 300, 900, 3600, 21600, 86400})
+MAX_PUBLIC_RESPONSE_BYTES = 2_097_152
 
 
 def _time_range(start: str, end: str) -> tuple[datetime, datetime]:
@@ -38,7 +39,10 @@ def _get(url: str, *, timeout: float = 8.0) -> bytes:
     })
     try:
         with urlopen(request, timeout=timeout) as response:
-            return response.read()
+            raw = response.read(MAX_PUBLIC_RESPONSE_BYTES + 1)
+            if len(raw) > MAX_PUBLIC_RESPONSE_BYTES:
+                raise ValueError("public_market_data_response_too_large")
+            return raw
     except (HTTPError, URLError, TimeoutError, OSError) as exc:
         raise RuntimeError("public_market_data_upstream_unavailable") from exc
 
@@ -192,6 +196,66 @@ class BinancePublicMarketDataAdapter:
                 raise ValueError("invalid_binance_kline_timestamp") from exc
             bars.append(bar)
         return bars
+
+
+class KrakenPublicMarketDataAdapter:
+    """Explicit BTC/USD and ETH/USD public minute candles, without credentials.
+
+    Kraken includes its current uncommitted candle. Only fully closed records
+    inside the requested interval are returned. No USD/USDT substitution occurs.
+    """
+
+    name = "Kraken public USD spot market data"
+    mode = "public"
+    PRODUCTS = {"BTC-USD": ("XBTUSD", "XXBTZUSD"), "ETH-USD": ("ETHUSD", "XETHZUSD")}
+
+    def __init__(self, *, timeout_seconds: float = 8.0):
+        if (type(timeout_seconds) not in (int, float) or not math.isfinite(timeout_seconds)
+                or not 1 <= timeout_seconds <= 30):
+            raise ValueError("invalid_http_timeout")
+        self.timeout_seconds = timeout_seconds
+
+    def fetch_bars(self, symbol: str, start: str, end: str) -> list[dict[str, Any]]:
+        if symbol not in self.PRODUCTS:
+            raise ValueError("unsupported_kraken_usd_product")
+        first, last = _time_range(start, end)
+        if (last - first).total_seconds() > 720 * 60:
+            raise ValueError("requested_range_exceeds_kraken_limit")
+        pair, result_key = self.PRODUCTS[symbol]
+        query = urlencode({"pair": pair, "interval": 1, "since": int(first.timestamp())})
+        try:
+            payload = json.loads(_get("https://api.kraken.com/0/public/OHLC?" + query,
+                                      timeout=self.timeout_seconds).decode("utf-8"))
+        except (UnicodeError, ValueError):
+            raise ValueError("invalid_kraken_response") from None
+        if (not isinstance(payload, dict) or payload.get("error") != []
+                or not isinstance(payload.get("result"), dict)
+                or set(payload["result"]) != {result_key, "last"}):
+            raise ValueError("invalid_kraken_response")
+        raw = payload["result"][result_key]
+        if not isinstance(raw, list) or len(raw) > 721:
+            raise ValueError("invalid_kraken_response")
+        received = datetime.now(timezone.utc)
+        bars, seen = [], set()
+        for row in raw:
+            if (not isinstance(row, list) or len(row) != 8
+                    or type(row[0]) is not int or row[0] % 60
+                    or type(row[7]) is not int or row[7] < 0):
+                raise ValueError("invalid_kraken_candle")
+            try:
+                opened = datetime.fromtimestamp(row[0], timezone.utc)
+                closed = opened + timedelta(minutes=1)
+            except (ValueError, OSError, OverflowError):
+                raise ValueError("invalid_kraken_candle") from None
+            if row[0] in seen:
+                raise ValueError("duplicate_kraken_candle")
+            seen.add(row[0])
+            bar = _bar(symbol, opened, received.isoformat(), row[1], row[2], row[3], row[4], row[6])
+            if opened < first or closed > last or closed > received:
+                continue
+            bar.update(candle_end_time=closed.isoformat(), is_closed=True)
+            bars.append(bar)
+        return sorted(bars, key=lambda row: row["event_time"])
 
 
 class StooqDailyMarketDataAdapter:

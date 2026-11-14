@@ -35,8 +35,13 @@ class EncryptedSecrets:
         item = self.db.get("secrets", name)
         if item is None:
             raise ValueError("secret_not_configured")
+        return self.open(name, item["value"])
+
+    def open(self, name: str, sealed: dict) -> str:
+        """Authenticate a stored value already read in the caller's transaction."""
+        name = identifier(name)
         try:
-            raw = base64.b64decode(item["value"]["sealed"], validate=True)
+            raw = base64.b64decode(sealed["sealed"], validate=True)
             return self.cipher.decrypt(raw[:12], raw[12:], name.encode()).decode()
         except Exception:
             raise ValueError("secret_decryption_failed") from None

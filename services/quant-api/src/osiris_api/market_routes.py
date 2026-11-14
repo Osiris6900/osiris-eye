@@ -14,7 +14,7 @@ from .provider_router import MultiProviderMarketDataRouter
 from .universal_aggregator import UniversalMarketDataAggregator
 from .public_market_data import (
     BinancePublicMarketDataAdapter, CoinbasePublicMarketDataAdapter,
-    StooqDailyMarketDataAdapter,
+    KrakenPublicMarketDataAdapter, StooqDailyMarketDataAdapter,
 )
 
 router = APIRouter(tags=["market-data"])
@@ -44,6 +44,13 @@ if os.getenv("OSIRIS_PUBLIC_STOOQ_ENABLED", "true").strip().lower() in {"1", "tr
         "stooq-daily", StooqDailyMarketDataAdapter(),
         supported_asset_classes=["equity"],
         entitlement_reference="public-data:stooq-daily",
+    )
+
+if os.getenv("OSIRIS_PUBLIC_KRAKEN_ENABLED", "true").strip().lower() in {"1", "true", "yes"}:
+    market_data_gateway.register_adapter(
+        "kraken-public", KrakenPublicMarketDataAdapter(),
+        supported_asset_classes=["crypto"],
+        entitlement_reference="public-data:kraken-usd-spot",
     )
 
 
@@ -140,6 +147,7 @@ def market_data_global_coverage():
         "implemented_public_connectors": [
             {"provider": "coinbase-public", "asset_classes": ["crypto"], "granularity": "configurable candles", "coverage": "Coinbase Exchange listed products"},
             {"provider": "binance-public", "asset_classes": ["crypto"], "granularity": os.getenv("OSIRIS_PUBLIC_BINANCE_INTERVAL", "1m"), "coverage": "Binance Spot listed pairs"},
+            {"provider": "kraken-public", "asset_classes": ["crypto"], "granularity": "1m closed candles", "coverage": "BTC-USD and ETH-USD only; explicit provider selection"},
             {"provider": "stooq-daily", "asset_classes": ["equity"], "granularity": "daily", "coverage": "Stooq-supported symbols with market suffix; verify symbol coverage per listing"},
             {"provider": "interactive_brokers", "asset_classes": ["equity", "fx", "future", "option", "index"], "granularity": "broker entitlement dependent", "coverage": "only when paper adapter is explicitly configured"},
         ],

@@ -1,4 +1,4 @@
-"""Public Coinbase candles -> momentum research -> independent risk -> paper ledger.
+"""Explicit keyless USD candles -> momentum -> independent risk -> paper ledger.
 
 One fixed-size proposal per strategy/symbol/closed minute. Paper fills use an
 explicit closed-candle price, optionally adjusted by bounded adverse fixed-bps
@@ -25,7 +25,7 @@ from . import paper_execution as execution
 from .market_gateway import MarketDataGateway, MarketDataUnavailable, parse_market_time
 from .paper_pipeline_status import record_pipeline_run
 from .paper_workflow import evaluate_paper_workflow
-from .public_market_data import CoinbasePublicMarketDataAdapter
+from .public_market_data import CoinbasePublicMarketDataAdapter, KrakenPublicMarketDataAdapter
 from .risk import RiskLimits
 
 router = APIRouter(prefix="/paper/pipeline", tags=["paper-pipeline"])
@@ -103,7 +103,7 @@ def _account_result(result: dict) -> dict:
 def run_paper_pipeline(
     *, symbol: str = "BTC-USD", quantity: Any = "0.001", fee: Any = "0",
     lookback: int = 3, threshold_bps: Any = "0", strategy_id: str = "momentum-v1",
-    slippage_bps: Any = "0", now: datetime | None = None,
+    slippage_bps: Any = "0", provider: str = "coinbase", now: datetime | None = None,
 ) -> dict[str, Any]:
     """Execute a bounded, public-data paper cycle against a configured account.
 
@@ -113,6 +113,10 @@ def run_paper_pipeline(
     """
     if os.getenv("OSIRIS_ENABLE_LIVE_EXECUTION"):
         raise ValueError("live_execution_disabled")
+    if not isinstance(provider, str) or provider not in {"coinbase", "kraken"}:
+        raise ValueError("unsupported_keyless_paper_provider")
+    if os.getenv(f"OSIRIS_PUBLIC_{provider.upper()}_ENABLED", "true").strip().lower() not in {"1", "true", "yes"}:
+        raise ValueError("keyless_paper_provider_disabled")
     if not isinstance(symbol, str) or not re.fullmatch(r"[A-Z0-9]{2,15}-USD", symbol):
         raise ValueError("pipeline_requires_coinbase_usd_symbol")
     if not isinstance(strategy_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", strategy_id):
@@ -134,11 +138,12 @@ def run_paper_pipeline(
     # contiguous window; persisted freshness limits still reject old data.
     start = end - timedelta(minutes=lookback + 4)
     gateway = MarketDataGateway(
-        adapters={"coinbase": CoinbasePublicMarketDataAdapter()},
-        entitlement_references={"coinbase": "public-data-no-broker-entitlement"},
-        supported_asset_classes={"coinbase": ["crypto"]},
+        adapters={provider: CoinbasePublicMarketDataAdapter() if provider == "coinbase"
+                  else KrakenPublicMarketDataAdapter()},
+        entitlement_references={provider: "public-data-no-broker-entitlement"},
+        supported_asset_classes={provider: ["crypto"]},
     )
-    response = gateway.fetch_bars("coinbase", symbol, start.isoformat(), end.isoformat(), "crypto")
+    response = gateway.fetch_bars(provider, symbol, start.isoformat(), end.isoformat(), "crypto")
     decision_time = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     bars = response["bars"]
     if len(bars) < lookback + 1:
@@ -191,6 +196,9 @@ def run_paper_pipeline(
         "bars_sha256": bars_hash, "lookback": lookback,
         "threshold_bps": str(threshold.normalize()), "quantity": str(qty.normalize()),
         "fee": str(cost.normalize()), "slippage_bps": str(slippage.normalize()),
+        # Preserve existing Coinbase fingerprints. Another venue may never
+        # silently replay or duplicate an existing strategy/candle decision.
+        **({"provider": provider} if provider != "coinbase" else {}),
     })
     prior = _decision(run_id, fingerprint)
     if prior is not None:
@@ -227,7 +235,7 @@ def run_paper_pipeline(
     )
     result = _account_result({
         "pipeline_run_id": run_id, "schema": "osiris.paper_pipeline.v1",
-        "symbol": symbol, "provider": "coinbase", "decision_time": decision_time.isoformat(),
+        "symbol": symbol, "provider": provider, "decision_time": decision_time.isoformat(),
         "market": {
             "event_time": bars[-1]["event_time"], "observed_at": observed.isoformat(),
             "price": price, "bars_sha256": bars_hash, "bars": candles,
@@ -262,6 +270,7 @@ class PipelineRequest(BaseModel):
     lookback: int = Field(default=3, ge=1, le=60)
     threshold_bps: str = "0"
     slippage_bps: str = "0"
+    provider: str = "coinbase"
 
 
 @router.post("/run")

@@ -17,6 +17,7 @@ DEFAULT = {"mode": "ghost", "data_provider": "coinbase-public", "broker": "none"
 PROVIDERS = (
     {"id": "coinbase-public", "label": "Coinbase public · crypto", "access": "keyless"},
     {"id": "binance-public", "label": "Binance public · crypto", "access": "keyless"},
+    {"id": "kraken-public", "label": "Kraken public · USD crypto", "access": "keyless"},
     {"id": "stooq-daily", "label": "Stooq public · daily equities", "access": "keyless"},
 )
 BROKERS = (

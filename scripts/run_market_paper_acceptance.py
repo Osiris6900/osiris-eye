@@ -165,11 +165,11 @@ def check_restart(report: dict) -> None:
     report["checks"].append("separate_process_restart_recovers_exact_ledger_state")
 
 
-def run_live(report: dict, symbol: str, quantity: str) -> None:
-    result = run_paper_pipeline(symbol=symbol, quantity=quantity)
+def run_live(report: dict, symbol: str, quantity: str, provider: str = "coinbase") -> None:
+    result = run_paper_pipeline(symbol=symbol, quantity=quantity, provider=provider)
     check_run(result)
     report["runs"].append(result)
-    report["checks"].extend(["real_coinbase_public_http_fetch", "closed_contiguous_market_history",
+    report["checks"].extend([f"real_{provider}_public_http_fetch", "closed_contiguous_market_history",
                               "market_strategy_risk_order_accounting_pipeline", "ledger_reconciliation"])
     report["observed_order_status"] = result["order"]["status"]
     report["observed_fill_count"] = result["account"]["fill_count"]
@@ -209,7 +209,10 @@ def main() -> int:
     parser.add_argument("--live-data", action="store_true")
     parser.add_argument("--symbol", default="BTC-USD")
     parser.add_argument("--quantity", default="0.001")
+    parser.add_argument("--provider", choices=["coinbase", "kraken"], default="coinbase")
     args = parser.parse_args()
+    if not args.live_data and args.provider != "coinbase":
+        parser.error("--provider kraken requires --live-data; offline fixtures use Coinbase format")
     report = {
         "schema": "osiris.market_paper_acceptance.v1", "passed": False,
         "mode": "live_public_data" if args.live_data else "offline_fixture",
@@ -227,7 +230,7 @@ def main() -> int:
         with tempfile.TemporaryDirectory(prefix="osiris-market-paper-acceptance-") as folder:
             with isolated_account(Path(folder) / "paper.sqlite3"):
                 if args.live_data:
-                    run_live(report, args.symbol, args.quantity)
+                    run_live(report, args.symbol, args.quantity, args.provider)
                 else:
                     run_offline(report)
                 report["final_account"] = snapshot()

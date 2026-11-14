@@ -626,14 +626,18 @@
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42494850551",
         "services/quant-api/src/osiris_api/authorized_feeds.py",
         "services/quant-api/src/osiris_api/instrument_master.py",
-        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md"
+        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md",
+        "docs/KEYLESS_FORWARD_RESEARCH.md",
+        "https://github.com/Osiris6900/osiris-eye/pull/445"
       ],
       "evidence_commits": [
         "30f5f2a4dd0d302548594f38f7740655241b9316",
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9"
       ],
-      "open_prs": [],
-      "blocker": "The integration candidate implements Alpaca, OANDA, Polygon and Twelve Data bar adapters with bounded pagination, normalization and declared entitlement checks. Authorized vendor credentials, genuine captures, instrument/corporate-action coverage and independent source-owner acceptance remain pending."
+      "open_prs": [
+        445
+      ],
+      "blocker": "The integration candidate implements Alpaca, OANDA, Polygon and Twelve Data bar adapters with bounded pagination, normalization and declared entitlement checks. Authorized vendor credentials, genuine captures, instrument/corporate-action coverage and independent source-owner acceptance remain pending. Explicit Kraken BTC/ETH USD bars are implemented on open #445; no USD/USDT substitution or automatic venue fallback is enabled."
     },
     {
       "id": "T08",
@@ -766,13 +770,17 @@
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42467036806",
         "services/quant-api/tests/test_walk_forward_178.py",
         "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md",
-        "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json"
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json",
+        "docs/KEYLESS_FORWARD_RESEARCH.md",
+        "https://github.com/Osiris6900/osiris-eye/pull/445"
       ],
       "evidence_commits": [
         "30f5f2a4dd0d302548594f38f7740655241b9316"
       ],
-      "open_prs": [],
-      "blocker": "Point-in-time features, ridge fitting, immutable experiment reproduction and a retained synthetic walk-forward archive are implemented. A frozen genuine candidate dataset/model/feature archive and independent lifecycle acceptance remain pending."
+      "open_prs": [
+        445
+      ],
+      "blocker": "Point-in-time features, ridge fitting, immutable experiment reproduction and a retained synthetic walk-forward archive are implemented. A frozen genuine candidate dataset/model/feature archive and independent lifecycle acceptance remain pending. Open #445 supplies a short forward-recorded genuine keyless archive with raw-response hashes, ridge holdout purging and offline reproduction. It is diagnostic evidence, not independent lifecycle acceptance."
     },
     {
       "id": "T12",
@@ -786,13 +794,17 @@
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42494850551",
         "services/quant-api/tests/test_walk_forward_178.py",
         "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md",
-        "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json"
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json",
+        "docs/KEYLESS_FORWARD_RESEARCH.md",
+        "https://github.com/Osiris6900/osiris-eye/pull/445"
       ],
       "evidence_commits": [
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9"
       ],
-      "open_prs": [],
-      "blocker": "Chronological holdout, cost-adjusted walk-forward and reproducible experiment checks are implemented for research. A genuine blinded holdout, independent leakage review and calibrated cost/turnover/impact/borrow sensitivity report remain pending."
+      "open_prs": [
+        445
+      ],
+      "blocker": "Chronological holdout, cost-adjusted walk-forward and reproducible experiment checks are implemented for research. A genuine blinded holdout, independent leakage review and calibrated cost/turnover/impact/borrow sensitivity report remain pending. Open #445 supplies short genuine-data reference-model walk-forward and 0/10/25 bps diagnostics. A blinded representative holdout and calibrated execution costs still need independent acceptance."
     },
     {
       "id": "T13",
@@ -809,14 +821,18 @@
         "services/quant-api/tests/test_paper_risk_acceptance_179.py",
         "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md",
         "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json",
-        "docs/release/VERIFIED_ARTIFACTS_2026_11_13.json"
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_13.json",
+        "docs/PAPER_DISPLAYED_DEPTH_EXECUTION.md",
+        "https://github.com/Osiris6900/osiris-eye/pull/445"
       ],
       "evidence_commits": [
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9",
         "43157b1bad5a93c8bc441a21a04b8572a9e736f5"
       ],
-      "open_prs": [],
-      "blocker": "Canonical pretrade limits, exact broker economics, stale-feed/kill-switch controls and receipt-bound risk decisions are implemented. Independent ownership/approval of budgets, limits, concentration, drawdown and exception governance remains pending."
+      "open_prs": [
+        445
+      ],
+      "blocker": "Canonical pretrade limits, exact broker economics, stale-feed/kill-switch controls and receipt-bound risk decisions are implemented. Independent ownership/approval of budgets, limits, concentration, drawdown and exception governance remains pending. Open #445 aligns the operator loss view with execution: realized plus adverse unrealized P&L, fresh-mark requirements and a single read-only reconciliation snapshot."
     },
     {
       "id": "T14",
@@ -1048,14 +1064,18 @@
         "services/quant-api/tests/test_durable_paper_ledger.py",
         "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md",
         "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json",
-        "docs/release/VERIFIED_ARTIFACTS_2026_11_13.json"
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_13.json",
+        "docs/PAPER_DISPLAYED_DEPTH_EXECUTION.md",
+        "https://github.com/Osiris6900/osiris-eye/pull/445"
       ],
       "evidence_commits": [
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9",
         "43157b1bad5a93c8bc441a21a04b8572a9e736f5"
       ],
-      "open_prs": [],
-      "blocker": "Canonical cash/positions, partial fills/cancellation, fee-inclusive realized/unrealized P&L and bounded adverse slippage are implemented and tested. Venue-calibrated liquidity/queue/impact, margin/borrow models and independent multi-asset execution comparison remain incomplete."
+      "open_prs": [
+        445
+      ],
+      "blocker": "Canonical cash/positions, partial fills/cancellation, fee-inclusive realized/unrealized P&L and bounded adverse slippage are implemented and tested. Venue-calibrated liquidity/queue/impact, margin/borrow models and independent multi-asset execution comparison remain incomplete. Open #445 adds atomic source-bound displayed-depth paper fills, limit/latency/freshness checks, fixed participation, no reuse of consumed volume, durable plan replay and final-close cash/P&L residual settlement for new accounts. The explicit assumptions remain uncalibrated; passive queues, leveraged margin, borrowing and independent multi-asset comparisons remain incomplete."
     },
     {
       "id": "T16",
@@ -1172,7 +1192,9 @@
         "https://github.com/Osiris6900/osiris-eye/pull/440",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/43495262061",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/43495262176",
-        "https://github.com/Osiris6900/osiris-eye/actions/runs/43495261981"
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/43495261981",
+        "docs/PAPER_DISPLAYED_DEPTH_EXECUTION.md",
+        "https://github.com/Osiris6900/osiris-eye/pull/445"
       ],
       "evidence_commits": [
         "0a610db74cac5381ebbb4abe358286a80a6e6298",
@@ -1184,9 +1206,10 @@
         "35fd514d06f7d897b1aa68be792f3b803abd69dc"
       ],
       "open_prs": [
-        308
+        308,
+        445
       ],
-      "blocker": "Authenticated canonical account/risk/feed/network/source views, actual Rust receipt metrics, role/MFA boundaries and Chromium navigation are implemented. Genuine source connections, sustained authenticated-node monitoring/alerts and independent operational acceptance remain pending. #438 merged as scaffolding at b57ff6bea6795cdb7d374721e2b99eec4a30862a (head 22c829c4795668fbcac486283dcbe2e5c041cc2b). CI 43486289288, Quant API CI 43486289127, audit 43486289381, 179 contract 43486289393, and 182 contract 43486289124 passed. The pull request says this is not accepted operations evidence, so T17 stays Partial. #440 merged as scaffolding at 35fd514d06f7d897b1aa68be792f3b803abd69dc (head b4a4130c530f2ddb2c0d42c74271553b73f970c0). CI 43495262061, Quant API CI 43495261981, audit 43495262176, 179 contract 43495262506, and 182 contract 43495262035 passed. The pull request says this does not move T17 to accepted operations evidence, so T17 stays Partial.",
+      "blocker": "Authenticated canonical account/risk/feed/network/source views, actual Rust receipt metrics, role/MFA boundaries and Chromium navigation are implemented. Genuine source connections, sustained authenticated-node monitoring/alerts and independent operational acceptance remain pending. #438 merged as scaffolding at b57ff6bea6795cdb7d374721e2b99eec4a30862a (head 22c829c4795668fbcac486283dcbe2e5c041cc2b). CI 43486289288, Quant API CI 43486289127, audit 43486289381, 179 contract 43486289393, and 182 contract 43486289124 passed. The pull request says this is not accepted operations evidence, so T17 stays Partial. #440 merged as scaffolding at 35fd514d06f7d897b1aa68be792f3b803abd69dc (head b4a4130c530f2ddb2c0d42c74271553b73f970c0). CI 43495262061, Quant API CI 43495261981, audit 43495262176, 179 contract 43495262506, and 182 contract 43495262035 passed. The pull request says this does not move T17 to accepted operations evidence, so T17 stays Partial. Open #445 corrects the operator daily-loss display so unrealized losses or unavailable marks cannot be reported as a clear gate.",
       "contributions": [
         {
           "pr": 308,

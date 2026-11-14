@@ -1,6 +1,7 @@
 """Depth evidence must stay atomic, exact and bound to its actual source."""
 
 import copy
+import hashlib
 import json
 import sqlite3
 import threading
@@ -14,7 +15,7 @@ from fastapi.testclient import TestClient
 
 from osiris_api.control_plane.api import router
 from osiris_api.control_plane.database import Database, digest
-from osiris_api.control_plane.depth import DepthService
+from osiris_api.control_plane.depth import MAX_RAW_DEPTH_LEVELS, DepthService
 
 
 class SnapshotTransport:
@@ -244,6 +245,46 @@ def test_retained_depth_truncation_is_reported_without_extrapolation(depth):
     assert result["filled_quantity"] == "1000"
     assert result["unfilled_quantity"] == "1"
     assert result["fills"][-1]["price"] == "1100"
+
+
+@pytest.mark.parametrize("invalid_tail,size", [(False, "1"), (True, "1"), (False, "0.123456789012345678901234567890")])
+def test_realistic_full_l2_size_validates_tail_before_retaining_best_levels(depth, invalid_tail, size):
+    service, db, _, transport = depth
+    # A genuine retained BTC capture had 23,482 ask levels within 992,068 bytes.
+    transport.snapshot["asks"] = [[str(price), size, 1] for price in range(101, 23583)]
+    if invalid_tail:
+        transport.snapshot["asks"][-1][0] = "-1"
+        with pytest.raises(ValueError):
+            service.capture("BTC-USD")
+        assert db.get("depth", "BTC-USD") is None
+    else:
+        book = service.capture("BTC-USD")
+        assert book["asks_truncated"] is True
+        assert len(book["asks"]) == 1000
+        assert book["asks"][0] == ["101", size]
+        assert book["asks"][-1] == ["1100", size]
+        source_body = json.dumps(transport.snapshot, sort_keys=True, separators=(",", ":")).encode()
+        assert book["raw_sha256"] == hashlib.sha256(source_body).hexdigest()
+        if size != "1":
+            assert len(source_body) > 1_048_576
+
+
+def test_raw_l2_size_remains_bounded(depth):
+    service, db, _, transport = depth
+    transport.snapshot["asks"] = [["101", "1", 1]] * (MAX_RAW_DEPTH_LEVELS + 1)
+    with pytest.raises(ValueError, match="invalid_depth_levels"):
+        service.capture("BTC-USD")
+    assert db.get("depth", "BTC-USD") is None
+
+
+def test_raw_l2_byte_limit_applies_before_any_snapshot_is_admitted(depth):
+    service, db, _, transport = depth
+    size = "0." + "1" * 60
+    transport.snapshot["asks"] = [[str(price), size, 1] for price in range(101, 30101)]
+    with pytest.raises(ValueError, match="depth_raw_response_too_large"):
+        service.capture("BTC-USD")
+    assert db.get("depth", "BTC-USD") is None
+    assert db.list("depth-history") == []
 
 
 def test_expired_refusal_persists_clock_and_rollback_cannot_revive_snapshot(depth):

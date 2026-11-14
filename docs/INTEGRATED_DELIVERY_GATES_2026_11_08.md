@@ -1,5 +1,19 @@
 # Integrated Delivery Gates — verified inventory 2026-11-08
 
+## 2026-11-13 source-depth and operations candidate
+
+The open [#445 candidate](https://github.com/Osiris6900/osiris-eye/pull/445)
+integrates #431's calendar, eligibility and identity-clock fixes with explicit
+Kraken USD paper data and frozen forward keyless research. It adds
+[source-bound displayed-depth fills and their execution probe](PAPER_DISPLAYED_DEPTH_EXECUTION.md),
+conservative virtual liquidity conservation, final-close P&L residual settlement
+for new accounts, and an operator loss view aligned with execution's adverse
+unrealized policy. These changes supply implementation and reproducible local
+evidence; they do not supply independent venue calibration, rights approval,
+external operational acceptance or release signoff. Counts remain
+**3 evidenced / 14 partial / 3 remaining**. The strict release check must refuse
+the seventeen unaccepted gates.
+
 ## 2026-11-13 non-broker verification hardening
 
 Ghost/keyless remains the default; actual external broker acceptance is deferred.

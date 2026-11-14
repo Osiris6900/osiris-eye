@@ -45,6 +45,22 @@ it('loads server choices with bearer read access but requires MFA to apply optio
   expect(screen.getByRole('button', { name: 'Apply connection options' })).toBeDisabled();
 });
 
+it('saves an explicitly selected keyless Kraken source while keeping Ghost and no broker', async () => {
+  const selected: typeof connectionDefaults = { ...connectionDefaults, data_provider: 'kraken-public' };
+  fetcher.mockResolvedValueOnce(response(status())).mockResolvedValueOnce(response(status(selected, 1)));
+  render(<TradingConnections authorization={auth}/>);
+  await click('Load connection status');
+  fireEvent.change(screen.getByLabelText('Keyless market data'), { target: { value: 'kraken-public' } });
+  await click('Apply connection options');
+  expect(fetcher).toHaveBeenLastCalledWith('/api/control-plane/connections', expect.objectContaining({
+    method: 'PUT', body: JSON.stringify({ preferences: selected, expected_version: 0 }),
+  }));
+  expect(screen.getByRole('radio', { name: 'Ghost / keyless' })).toBeChecked();
+  expect(screen.getByLabelText('Paper broker')).toHaveValue('none');
+  expect(screen.getByRole('button', { name: 'Test paper broker connection' })).toBeDisabled();
+  expect(fetcher).toHaveBeenCalledTimes(2);
+});
+
 it('applies actual versioned broker preferences without connecting or placing an order', async () => {
   fetcher.mockResolvedValueOnce(response(status())).mockResolvedValueOnce(response(status(broker as typeof connectionDefaults, 1, 'configured_unverified')));
   render(<TradingConnections authorization={auth}/>);

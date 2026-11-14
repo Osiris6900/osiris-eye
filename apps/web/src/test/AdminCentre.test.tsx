@@ -113,8 +113,8 @@ const OPERATIONS = {
     open_positions: [{ symbol: 'BTC-USD', quantity: '1', average_cost: '100' }],
     open_position_count: 1, positions_truncated: false, positions_reason: null,
     daily_loss_gate: {
-      basis: 'realized_pnl', state: 'limit_reached', reason: null,
-      realized_pnl: '-20', limit: '10', live_execution: false,
+      basis: 'realized_plus_adverse_unrealized', state: 'limit_reached', reason: null,
+      realized_pnl: '-20', unrealized_pnl: '-5', adverse_daily_pnl: '-25', limit: '10', live_execution: false,
     },
     live_trading_authorized: false,
   },
@@ -635,6 +635,10 @@ test('operations view shows node status, paper halt, positions and the daily los
   expect(screen.getByText(/last seen 2026-11-08T12:00:00\+00:00 · version Unavailable/)).toBeInTheDocument();
   expect(screen.getByText('Halted')).toBeInTheDocument();
   expect(screen.getByText('Limit reached')).toBeInTheDocument();
+  expect(screen.getByText('Unrealized P&L used for loss gate')).toBeInTheDocument();
+  expect(screen.getByText('-5')).toBeInTheDocument();
+  expect(screen.getByText('P&L used for loss gate')).toBeInTheDocument();
+  expect(screen.getByText('-25')).toBeInTheDocument();
   expect(screen.getByText('BTC-USD: 1 units · average cost 100')).toBeInTheDocument();
   expect(screen.getByText('Disabled')).toBeInTheDocument();
   expect(screen.getByText(/does not place orders, change ingestion, or change the paper halt/)).toBeInTheDocument();

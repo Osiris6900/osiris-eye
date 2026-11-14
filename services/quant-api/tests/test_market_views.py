@@ -188,6 +188,40 @@ def test_stale_and_expired_contracts_do_not_appear_as_current(service):
     assert service.read("options", "NIFTY")["reason"] == "stale_or_changed_source_policy"
 
 
+@pytest.mark.parametrize("excluded", ["changed_rights", "stale"])
+def test_result_limit_applies_after_source_policy_and_freshness(service, excluded):
+    eligible = record("news", key="eligible")
+    eligible["event_time"] = eligible["available_at"] = (NOW - timedelta(seconds=20)).isoformat()
+    service.ingest(eligible)
+    service.sources["other"] = deepcopy(service.sources["fixture"])
+    for index in range(3):
+        newer = record("news", key=f"excluded-{index}")
+        newer["source"] = "other"
+        newer["event_time"] = newer["available_at"] = (NOW - timedelta(seconds=index + 1)).isoformat()
+        service.ingest(newer)
+    if excluded == "changed_rights":
+        service.sources["other"]["rights_reference"] = "replaced-contract"
+    else:
+        service.sources["other"]["max_age_seconds"] = 1
+        service.clock = lambda: NOW + timedelta(seconds=1)
+    result = service.read("news", "GLOBAL", limit=1)
+    assert result["status"] == "available"
+    assert [row["id"] for row in result["records"]] == ["eligible"]
+
+
+def test_fresh_record_sharing_a_millisecond_with_expired_record_is_not_hidden(service):
+    service.sources["fixture"]["max_age_seconds"] = 1
+    for key, microseconds in [("aaa-expired", 100), ("zzz-eligible", 700)]:
+        item = record("news", key=key)
+        item["event_time"] = item["available_at"] = (
+            NOW - timedelta(seconds=1) + timedelta(microseconds=microseconds)
+        ).isoformat()
+        service.ingest(item)
+    service.clock = lambda: NOW + timedelta(microseconds=500)
+    result = service.read("news", "GLOBAL", limit=1)
+    assert [row["id"] for row in result["records"]] == ["zzz-eligible"]
+
+
 def test_stored_payload_tampering_fails_closed(service):
     service.ingest(record())
     with service.db.transaction() as db:

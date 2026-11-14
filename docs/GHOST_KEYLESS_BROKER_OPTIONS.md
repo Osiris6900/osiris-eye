@@ -5,11 +5,15 @@ broker** choices backed by the authenticated control plane.
 
 Ghost is the default: no broker is selected and saving/loading preferences
 never contacts a broker. Choose Coinbase public crypto, Binance public crypto,
-or Stooq daily equity data without vendor API credentials. The saved provider
+Kraken USD crypto, or Stooq daily equity data without vendor API credentials. The saved provider
 becomes the default for newly opened market charts, with native symbols and a
 30-day window for daily Stooq history. Public source availability and permitted
 use still apply. There is no invented coverage or automatic fallback to
 synthetic prices.
+
+See [keyless forward research](KEYLESS_FORWARD_RESEARCH.md) for actual public
+paper-pipeline exercises, the explicitly selected Kraken USD path and a frozen,
+reproducible genuine quote archive with fitted-model and cost-sensitivity checks.
 
 Ghost is a no-broker application profile, not a promise of anonymous Internet
 access. Public HTTPS providers can observe requests. Existing P2P node identity,

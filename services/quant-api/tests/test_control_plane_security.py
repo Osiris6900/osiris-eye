@@ -1,6 +1,7 @@
 import base64
 import json
 import time
+from contextlib import contextmanager
 
 import pytest
 from fastapi import FastAPI
@@ -50,6 +51,107 @@ def test_mfa_lockout_persists_across_restarts(tmp_path):
         restarted.verify("alice", totp(seed, int(now[0] // 30)))
     now[0] += 301
     restarted.verify("alice", totp(seed, int(now[0] // 30)))
+
+
+def test_expired_session_cannot_revive_after_clock_rollback_and_restart(tmp_path):
+    now = [1_800_000_000.0]
+    db = Database(str(tmp_path / "identity.db"))
+    identity = IdentityService(EncryptedSecrets(db, b"a" * 32), clock=lambda: now[0])
+    seed = identity.enroll("alice")
+    token = identity.login("alice", "analyst", totp(seed, int(now[0] // 30)), "config")
+    now[0] += 901
+    with pytest.raises(ValueError, match="invalid_session"):
+        identity.session(token, "config")
+    now[0] -= 900
+    restarted = IdentityService(EncryptedSecrets(Database(db.path), b"a" * 32),
+                                clock=lambda: now[0])
+    with pytest.raises(ValueError, match="clock_rollback"):
+        restarted.session(token, "config")
+
+
+def test_expired_enrollment_cannot_revive_after_refusal_and_clock_rollback(tmp_path):
+    now = [1_800_000_000.0]
+    db = Database(str(tmp_path / "identity.db"))
+    identity = IdentityService(EncryptedSecrets(db, b"a" * 32), clock=lambda: now[0])
+    seed = identity.enroll("alice")
+    now[0] += 601
+    with pytest.raises(ValueError, match="mfa_unavailable"):
+        identity.verify("alice", totp(seed, int(now[0] // 30)))
+    now[0] -= 600
+    restarted = IdentityService(EncryptedSecrets(Database(db.path), b"a" * 32),
+                                clock=lambda: now[0])
+    with pytest.raises(ValueError, match="identity_clock_rollback"):
+        restarted.login("alice", "analyst", totp(seed, int(now[0] // 30)), "config")
+    assert db.list("sessions") == []
+    assert db.get("mfa", "alice")["value"]["confirmed"] is False
+
+
+def test_refused_reenrollment_fences_expired_sessions_without_changing_seed(tmp_path):
+    now = [1_800_000_000.0]
+    db = Database(str(tmp_path / "identity.db"))
+    store = EncryptedSecrets(db, b"a" * 32)
+    identity = IdentityService(store, clock=lambda: now[0])
+    seed = identity.enroll("alice")
+    token = identity.login("alice", "analyst", totp(seed, int(now[0] // 30)), "config")
+    original = db.get("mfa", "alice")
+    now[0] += 901
+    with pytest.raises(ValueError, match="mfa_already_enrolled"):
+        identity.enroll("alice")
+    assert db.get("mfa", "alice") == original
+    assert store.get("totp:alice") == seed
+    now[0] -= 900
+    restarted = IdentityService(EncryptedSecrets(Database(db.path), b"a" * 32),
+                                clock=lambda: now[0])
+    with pytest.raises(ValueError, match="identity_clock_rollback"):
+        restarted.session(token, "config")
+
+
+def test_superseded_seed_cannot_confirm_replaced_enrollment(tmp_path, monkeypatch):
+    now = 1_800_000_000.0
+    db = Database(str(tmp_path / "identity.db"))
+    store = EncryptedSecrets(db, b"a" * 32)
+    identity = IdentityService(store, clock=lambda: now)
+    monkeypatch.setattr("osiris_api.control_plane.identity.secrets.token_bytes", lambda size: b"a" * size)
+    old_seed = identity.enroll("alice")
+    old_code = totp(old_seed, int(now // 30))
+    original_transaction = identity._timed_transaction
+    replacement = []
+
+    @contextmanager
+    def supersede_before_verification_lock():
+        # Re-enrollment wins immediately before verification acquires its lock.
+        # Reading the seed before that lock would confirm the new state with
+        # the superseded seed, even though seed and state were replaced together.
+        if not replacement:
+            replacement.append(None)
+            monkeypatch.setattr("osiris_api.control_plane.identity.secrets.token_bytes", lambda size: b"b" * size)
+            replacement[0] = identity.enroll("alice")
+        with original_transaction() as transaction:
+            yield transaction
+
+    monkeypatch.setattr(identity, "_timed_transaction", supersede_before_verification_lock)
+    with pytest.raises(ValueError, match="invalid_or_replayed_totp"):
+        identity.login("alice", "analyst", old_code, "config")
+    assert replacement[0] != old_seed
+    assert store.get("totp:alice") == replacement[0]
+    assert db.get("mfa", "alice")["value"]["confirmed"] is False
+    assert db.list("sessions") == []
+
+    restarted = IdentityService(EncryptedSecrets(Database(db.path), b"a" * 32), clock=lambda: now)
+    token = restarted.login("alice", "analyst", totp(replacement[0], int(now // 30)), "config")
+    assert restarted.session(token, "config")["actor"] == "alice"
+
+
+@pytest.mark.parametrize("invalid", [float("nan"), float("inf"), -1, "bad", True, 1e40])
+def test_invalid_identity_clock_never_accepts_session(tmp_path, invalid):
+    now = [1_800_000_000.0]
+    identity = IdentityService(EncryptedSecrets(Database(str(tmp_path / "identity.db")),
+                                                b"a" * 32), clock=lambda: now[0])
+    seed = identity.enroll("alice")
+    token = identity.login("alice", "analyst", totp(seed, int(now[0] // 30)), "config")
+    now[0] = invalid
+    with pytest.raises(ValueError, match="invalid_identity_clock"):
+        identity.session(token, "config")
 
 
 def test_secrets_are_encrypted_and_bound_to_name(tmp_path):

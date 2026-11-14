@@ -464,6 +464,8 @@ function PaperTradingOperations({ paper }: { paper: JsonObject | null }) {
         <div className="setting"><span>Paper execution halt</span><span>{halt ?? 'Unavailable'}</span></div>
         <div className="setting"><span>Daily loss gate</span><span>{gateState ?? 'Unavailable'}</span></div>
         <div className="setting"><span>Realized P&amp;L</span><span>{gate.realized_pnl == null ? 'Unavailable' : moneyText(gate.realized_pnl)}</span></div>
+        <div className="setting"><span>Unrealized P&amp;L used for loss gate</span><span>{gate.unrealized_pnl == null ? 'Unavailable without fresh marks' : moneyText(gate.unrealized_pnl)}</span></div>
+        <div className="setting"><span>P&amp;L used for loss gate</span><span>{gate.adverse_daily_pnl == null ? 'Unavailable' : moneyText(gate.adverse_daily_pnl)}</span></div>
         <div className="setting"><span>Daily loss limit</span><span>{gate.limit == null ? 'Unavailable' : moneyText(gate.limit)}</span></div>
       </>}
       <div className="setting"><span>Live trading authorized</span><span>{paper.live_trading_authorized === false ? 'false' : 'Unavailable'}</span></div>

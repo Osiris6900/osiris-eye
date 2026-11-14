@@ -2,6 +2,7 @@
 
 import sqlite3
 from decimal import Decimal
+from fractions import Fraction
 
 import pytest
 from fastapi import FastAPI
@@ -154,6 +155,7 @@ def test_small_exact_orders_survive_canonical_audit_replay(ledger_paths, quantit
     assert order(quantity=quantity, price="1")["state"] == "filled"
     state = execution.snapshot()
     assert state["fill_count"] == 1
+    assert Fraction(state["cash"]) == Fraction("1000") - Fraction(quantity)
     assert Decimal(state["positions"][0]["quantity"]) == Decimal(quantity)
     assert execution.reconcile()["passed"] is True
     assert order(quantity=quantity, price="1")["status"] == "idempotent_replay"
