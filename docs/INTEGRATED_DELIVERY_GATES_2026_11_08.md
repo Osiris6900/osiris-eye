@@ -1,5 +1,22 @@
 # Integrated Delivery Gates — verified inventory 2026-11-08
 
+## 2026-11-14 consolidated verified evidence and parallel acceptance
+
+PRs #445, #431 and #446 are merged into main `f38fa9a5757efed904e9b0967e3b6d3be5cc78f7`.
+The exact candidate/tree, seven passing workflows, downloaded-byte SBOM/receipt
+verification, genuine Coinbase/Kraken/depth/forward captures and the outstanding
+requirements for all seventeen gates are consolidated in
+[the verification report](release/VERIFICATION_2026_11_14.md) and
+[its machine-readable record](release/VERIFIED_ARTIFACTS_2026_11_14.json).
+Stale open-PR references to #308/#431/#445/#446 are removed from the JSON.
+Parallel follow-up code adds strict security-review intake, keyless BLS monthly
+macro capture, fitted-ridge cost/turnover diagnostics, traffic-on outage measurements,
+explicit Tokio worker allocation and actual local API service recovery. The
+engineering profile retains 31 checks. The failed 100-peer sustained run is
+recorded without weakening its memory policy.
+These are supporting implementation/evidence updates; no acceptance flag is
+promoted. Counts remain **3 evidenced / 14 partial / 3 remaining**.
+
 ## 2026-11-13 source-depth and operations candidate
 
 The open [#445 candidate](https://github.com/Osiris6900/osiris-eye/pull/445)

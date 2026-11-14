@@ -4,7 +4,7 @@
   "live_trading_authorized": false,
   "facts": {
     "mutable_action_uses": 0,
-    "pinned_action_uses": 122,
+    "pinned_action_uses": 123,
     "workflow_files": 19,
     "advisory_inputs_match_worktree": true,
     "advisory_source_commit": "2b685c2bc8689422724f1d9eb52ceef660ebb8a7",
@@ -45,7 +45,8 @@
         "https://github.com/Osiris6900/osiris-eye/pull/436",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/43416302724",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/43416302544",
-        "https://github.com/Osiris6900/osiris-eye/actions/runs/43416302491"
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/43416302491",
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_14.json"
       ],
       "evidence_commits": [
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9",
@@ -55,7 +56,8 @@
         "d47d14d0c9b429fbc5c6a7d9c8df6fc75bec961c",
         "8ef21a84846a0e525978d6589b458caf3afc75e4",
         "666a3e5599363f6347e671664b8135aeab0d38e6",
-        "9f9e27a3cf286cb3bb95cf33b5a245ec2b413118"
+        "9f9e27a3cf286cb3bb95cf33b5a245ec2b413118",
+        "2b42398cee77f2812979ab453bcdc597b189b46f"
       ],
       "open_prs": [],
       "contributions": [
@@ -368,7 +370,8 @@
         "capacity-report-42740964830-1 (downloaded ZIP SHA-256: 229553051305aabbc28c44af50bb58c4f6dfe9ec746ff3f2f85178333661d239)",
         "https://github.com/Osiris6900/osiris-eye/pull/280",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42677901050",
-        "https://github.com/Osiris6900/osiris-eye/actions/runs/42677901276"
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42677901276",
+        "docs/P2P_OUTAGE_LOAD_ACCEPTANCE.md"
       ],
       "evidence_commits": [
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9",
@@ -376,7 +379,7 @@
         "d42e422edaa928e907f519de055a766e8e7e14ce"
       ],
       "open_prs": [],
-      "blocker": "Operator-dispatched GitHub Actions run 42740964830 (main d9bb0a959faf5d9c7c97bd6502a143f9df9123d0) succeeded on three runner jobs. Retained artifact capacity-report-42740964830-1 (ZIP SHA-256 229553051305aabbc28c44af50bb58c4f6dfe9ec746ff3f2f85178333661d239) contains 10/50/100 peer sweeps: 200/200 delivered, zero lost in each, binary SHA-256 and self-reported distinct boot fingerprints. Scope is one private tailnet, recipient-bootstrap star, 35-49 seconds per sweep; workload paused during bootstrap outage. Raw host fingerprint independence is not independently attested, and sustained multi-host NAT, relay, open-mesh and production outage recovery are unproven. Partial evidence only; acceptance remains false. #280 merged at d42e422edaa928e907f519de055a766e8e7e14ce as local reconnect-tick backoff only. CI 42677901050 and Dependency Security Audit 42677901276 passed on that commit. #176 and #255 stay open because this is not multi-host evidence. Status stays Partial.",
+      "blocker": "Operator-dispatched GitHub Actions run 42740964830 (main d9bb0a959faf5d9c7c97bd6502a143f9df9123d0) succeeded on three runner jobs. Retained artifact capacity-report-42740964830-1 (ZIP SHA-256 229553051305aabbc28c44af50bb58c4f6dfe9ec746ff3f2f85178333661d239) contains 10/50/100 peer sweeps: 200/200 delivered, zero lost in each, binary SHA-256 and self-reported distinct boot fingerprints. Scope is one private tailnet, recipient-bootstrap star, 35-49 seconds per sweep; workload paused during bootstrap outage. Raw host fingerprint independence is not independently attested, and sustained multi-host NAT, relay, open-mesh and production outage recovery are unproven. Partial evidence only; acceptance remains false. #280 merged at d42e422edaa928e907f519de055a766e8e7e14ce as local reconnect-tick backoff only. CI 42677901050 and Dependency Security Audit 42677901276 passed on that commit. #176 and #255 stay open because this is not multi-host evidence. Status stays Partial. The actual 900-second/10,000-message run 43570579823 delivered 10,000/10,000 but failed the predeclared per-host aggregate-RSS limit. The new opt-in traffic-on harness and explicit bounded Tokio worker configuration retain actual loss/resource results and do not accept T04.",
       "contributions": [
         {
           "pr": 280,
@@ -512,14 +515,15 @@
         "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md",
         "https://github.com/Osiris6900/osiris-eye/pull/310",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42680025127",
-        "https://github.com/Osiris6900/osiris-eye/actions/runs/42680025148"
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42680025148",
+        "docs/security-reviewer-intake-checklist.md"
       ],
       "evidence_commits": [
         "c91b2c1c7d633229914234502925010e93bdd341",
         "a49b5ca6318088d6f7b885c5bf568999e0e3788f"
       ],
       "open_prs": [],
-      "blocker": "Independent crypto/operational-security intake and validation are implemented. No independently signed reviewer report, verified reviewer identity, remediation/retest and approval decision has been supplied; source tests cannot commission or approve that review. #310 is merged scaffolding for fail-closed crypto tests and recipient-hash retention. It is not an independent review. Head CI 42680025127 and audit 42680025148 passed. Status stays Remaining.",
+      "blocker": "Independent crypto/operational-security intake and validation are implemented. No independently signed reviewer report, verified reviewer identity, remediation/retest and approval decision has been supplied; source tests cannot commission or approve that review. #310 is merged scaffolding for fail-closed crypto tests and recipient-hash retention. It is not an independent review. Head CI 42680025127 and audit 42680025148 passed. Status stays Remaining. Approval intake now requires consistent independence/conflict attestations and a signed-report reference; unconditional approval refuses open critical/high findings. These declarations remain unverified and T06 is not accepted.",
       "contributions": [
         {
           "pr": 310,
@@ -628,16 +632,16 @@
         "services/quant-api/src/osiris_api/instrument_master.py",
         "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md",
         "docs/KEYLESS_FORWARD_RESEARCH.md",
-        "https://github.com/Osiris6900/osiris-eye/pull/445"
+        "https://github.com/Osiris6900/osiris-eye/pull/445",
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_14.json"
       ],
       "evidence_commits": [
         "30f5f2a4dd0d302548594f38f7740655241b9316",
-        "5176eae8843a1e5144ac903f37843fe9bb46cdd9"
+        "5176eae8843a1e5144ac903f37843fe9bb46cdd9",
+        "2b42398cee77f2812979ab453bcdc597b189b46f"
       ],
-      "open_prs": [
-        445
-      ],
-      "blocker": "The integration candidate implements Alpaca, OANDA, Polygon and Twelve Data bar adapters with bounded pagination, normalization and declared entitlement checks. Authorized vendor credentials, genuine captures, instrument/corporate-action coverage and independent source-owner acceptance remain pending. Explicit Kraken BTC/ETH USD bars are implemented on open #445; no USD/USDT substitution or automatic venue fallback is enabled."
+      "open_prs": [],
+      "blocker": "The integration candidate implements Alpaca, OANDA, Polygon and Twelve Data bar adapters with bounded pagination, normalization and declared entitlement checks. Authorized vendor credentials, genuine captures, instrument/corporate-action coverage and independent source-owner acceptance remain pending. Explicit Kraken BTC/ETH USD bars are implemented in merged #445; no USD/USDT substitution or automatic venue fallback is enabled."
     },
     {
       "id": "T08",
@@ -655,12 +659,14 @@
         "https://github.com/Osiris6900/osiris-eye/pull/309",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42679533894",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42679534042",
-        "https://github.com/Osiris6900/osiris-eye/actions/runs/42684177898"
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42684177898",
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_14.json"
       ],
       "evidence_commits": [
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9",
         "7d0599fea4a20b9c454ef437a1dc44c7b01f981e",
-        "2f616c2258eafa220b34895ae5d123a4d7ff1907"
+        "2f616c2258eafa220b34895ae5d123a4d7ff1907",
+        "2b42398cee77f2812979ab453bcdc597b189b46f"
       ],
       "open_prs": [],
       "blocker": "Feed quality, freshness, timestamp/availability checks, source-governed views and native offline capture paths are implemented and tested. Genuine sustained vendor streaming captures, corporate-action artifacts and independently verified time/source provenance remain pending. #309 merged as scaffolding at 2f616c2258eafa220b34895ae5d123a4d7ff1907 (head 7d0599fea4a20b9c454ef437a1dc44c7b01f981e). CI 42679533894 and audit 42679534042 passed on that head; merge CI 42684177898 and audit 42684177853 passed. Opened head bd85dac failed rust-audit 42676883926 on RUSTSEC-2026-0459; that was fixed before merge. Status unchanged.",
@@ -749,13 +755,14 @@
       "evidence": [
         "https://github.com/Osiris6900/osiris-eye/pull/261",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42494850551",
-        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md"
+        "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md",
+        "docs/BLS_MACRO_CAPTURE.md"
       ],
       "evidence_commits": [
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9"
       ],
       "open_prs": [],
-      "blocker": "Source-governed news/event intake, point-in-time storage and deduplication are implemented. Genuine authorized macro/event source integration, retained captures and independent provenance acceptance remain pending."
+      "blocker": "Source-governed news/event intake, point-in-time storage and deduplication are implemented. Genuine authorized macro/event source integration, retained captures and independent provenance acceptance remain pending. Explicit keyless BLS CPI/unemployment/payroll captures, trusted metadata anchoring, unavailable-month semantics and policy-gated immutable-vintage ingestion are implemented. Availability is actual receive time, never historical publication. Independent source-rights/provenance acceptance and broader genuine coverage remain pending."
     },
     {
       "id": "T11",
@@ -772,15 +779,16 @@
         "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md",
         "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json",
         "docs/KEYLESS_FORWARD_RESEARCH.md",
-        "https://github.com/Osiris6900/osiris-eye/pull/445"
+        "https://github.com/Osiris6900/osiris-eye/pull/445",
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_14.json",
+        "docs/RIDGE_OOS_COST_DIAGNOSTICS.md"
       ],
       "evidence_commits": [
-        "30f5f2a4dd0d302548594f38f7740655241b9316"
+        "30f5f2a4dd0d302548594f38f7740655241b9316",
+        "2b42398cee77f2812979ab453bcdc597b189b46f"
       ],
-      "open_prs": [
-        445
-      ],
-      "blocker": "Point-in-time features, ridge fitting, immutable experiment reproduction and a retained synthetic walk-forward archive are implemented. A frozen genuine candidate dataset/model/feature archive and independent lifecycle acceptance remain pending. Open #445 supplies a short forward-recorded genuine keyless archive with raw-response hashes, ridge holdout purging and offline reproduction. It is diagnostic evidence, not independent lifecycle acceptance."
+      "open_prs": [],
+      "blocker": "Point-in-time features, ridge fitting, immutable experiment reproduction and a retained synthetic walk-forward archive are implemented. A frozen genuine candidate dataset/model/feature archive and independent lifecycle acceptance remain pending. Merged #445 supplies a short forward-recorded genuine keyless archive with raw-response hashes, ridge holdout purging and offline reproduction. It is diagnostic evidence, not independent lifecycle acceptance. Separate fixed-policy fitted-ridge walk-forward diagnostics retain purged training, train-only normalization and model/source lineage without changing original archives. They are explicitly post-capture diagnostics, not blinded or independently approved lifecycle evidence."
     },
     {
       "id": "T12",
@@ -796,15 +804,16 @@
         "docs/workstreams/RELEASE_GATE_EXECUTION_2026_11_12.md",
         "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json",
         "docs/KEYLESS_FORWARD_RESEARCH.md",
-        "https://github.com/Osiris6900/osiris-eye/pull/445"
+        "https://github.com/Osiris6900/osiris-eye/pull/445",
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_14.json",
+        "docs/RIDGE_OOS_COST_DIAGNOSTICS.md"
       ],
       "evidence_commits": [
-        "5176eae8843a1e5144ac903f37843fe9bb46cdd9"
+        "5176eae8843a1e5144ac903f37843fe9bb46cdd9",
+        "2b42398cee77f2812979ab453bcdc597b189b46f"
       ],
-      "open_prs": [
-        445
-      ],
-      "blocker": "Chronological holdout, cost-adjusted walk-forward and reproducible experiment checks are implemented for research. A genuine blinded holdout, independent leakage review and calibrated cost/turnover/impact/borrow sensitivity report remain pending. Open #445 supplies short genuine-data reference-model walk-forward and 0/10/25 bps diagnostics. A blinded representative holdout and calibrated execution costs still need independent acceptance."
+      "open_prs": [],
+      "blocker": "Chronological holdout, cost-adjusted walk-forward and reproducible experiment checks are implemented for research. A genuine blinded holdout, independent leakage review and calibrated cost/turnover/impact/borrow sensitivity report remain pending. Merged #445 supplies short genuine-data reference-model walk-forward and 0/10/25 bps diagnostics. A blinded representative holdout and calibrated execution costs still need independent acceptance. Actual fitted-ridge predictions now have long/flat P&L, turnover and fixed-cost/observed-quote-spread sensitivities. The short sample remains nonrepresentative; independent leakage review, blinded holdout and calibrated execution costs are still required."
     },
     {
       "id": "T13",
@@ -823,16 +832,16 @@
         "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json",
         "docs/release/VERIFIED_ARTIFACTS_2026_11_13.json",
         "docs/PAPER_DISPLAYED_DEPTH_EXECUTION.md",
-        "https://github.com/Osiris6900/osiris-eye/pull/445"
+        "https://github.com/Osiris6900/osiris-eye/pull/445",
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_14.json"
       ],
       "evidence_commits": [
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9",
-        "43157b1bad5a93c8bc441a21a04b8572a9e736f5"
+        "43157b1bad5a93c8bc441a21a04b8572a9e736f5",
+        "2b42398cee77f2812979ab453bcdc597b189b46f"
       ],
-      "open_prs": [
-        445
-      ],
-      "blocker": "Canonical pretrade limits, exact broker economics, stale-feed/kill-switch controls and receipt-bound risk decisions are implemented. Independent ownership/approval of budgets, limits, concentration, drawdown and exception governance remains pending. Open #445 aligns the operator loss view with execution: realized plus adverse unrealized P&L, fresh-mark requirements and a single read-only reconciliation snapshot."
+      "open_prs": [],
+      "blocker": "Canonical pretrade limits, exact broker economics, stale-feed/kill-switch controls and receipt-bound risk decisions are implemented. Independent ownership/approval of budgets, limits, concentration, drawdown and exception governance remains pending. Merged #445 aligns the operator loss view with execution: realized plus adverse unrealized P&L, fresh-mark requirements and a single read-only reconciliation snapshot."
     },
     {
       "id": "T14",
@@ -864,7 +873,8 @@
         "https://github.com/Osiris6900/osiris-eye/actions/runs/43501436283",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/43501436218",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/43501436401",
-        "https://github.com/Osiris6900/osiris-eye/actions/runs/43502812090"
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/43502812090",
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_14.json"
       ],
       "evidence_commits": [
         "305ceb1d4d4c6f3d649cb58ee2c82eedb3818644",
@@ -877,7 +887,8 @@
         "906d53942a8ce682ecb6e7d0267b41016709a289",
         "71b3d4de0a85edd28bd1a6ec0f5457af58c14558",
         "f7ca859c576e2d5403e6c1c5f569aea6e01a5733",
-        "78818b92618e9e230f4a9fa4c7e42fe3be9fd553"
+        "78818b92618e9e230f4a9fa4c7e42fe3be9fd553",
+        "2b42398cee77f2812979ab453bcdc597b189b46f"
       ],
       "open_prs": [],
       "contributions": [
@@ -1066,16 +1077,16 @@
         "docs/release/VERIFIED_ARTIFACTS_2026_11_12.json",
         "docs/release/VERIFIED_ARTIFACTS_2026_11_13.json",
         "docs/PAPER_DISPLAYED_DEPTH_EXECUTION.md",
-        "https://github.com/Osiris6900/osiris-eye/pull/445"
+        "https://github.com/Osiris6900/osiris-eye/pull/445",
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_14.json"
       ],
       "evidence_commits": [
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9",
-        "43157b1bad5a93c8bc441a21a04b8572a9e736f5"
+        "43157b1bad5a93c8bc441a21a04b8572a9e736f5",
+        "2b42398cee77f2812979ab453bcdc597b189b46f"
       ],
-      "open_prs": [
-        445
-      ],
-      "blocker": "Canonical cash/positions, partial fills/cancellation, fee-inclusive realized/unrealized P&L and bounded adverse slippage are implemented and tested. Venue-calibrated liquidity/queue/impact, margin/borrow models and independent multi-asset execution comparison remain incomplete. Open #445 adds atomic source-bound displayed-depth paper fills, limit/latency/freshness checks, fixed participation, no reuse of consumed volume, durable plan replay and final-close cash/P&L residual settlement for new accounts. The explicit assumptions remain uncalibrated; passive queues, leveraged margin, borrowing and independent multi-asset comparisons remain incomplete."
+      "open_prs": [],
+      "blocker": "Canonical cash/positions, partial fills/cancellation, fee-inclusive realized/unrealized P&L and bounded adverse slippage are implemented and tested. Venue-calibrated liquidity/queue/impact, margin/borrow models and independent multi-asset execution comparison remain incomplete. Merged #445 adds atomic source-bound displayed-depth paper fills, limit/latency/freshness checks, fixed participation, no reuse of consumed volume, durable plan replay and final-close cash/P&L residual settlement for new accounts. The explicit assumptions remain uncalibrated; passive queues, leveraged margin, borrowing and independent multi-asset comparisons remain incomplete."
     },
     {
       "id": "T16",
@@ -1097,13 +1108,15 @@
         "https://github.com/Osiris6900/osiris-eye/pull/309",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42679533894",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42679534042",
-        "https://github.com/Osiris6900/osiris-eye/actions/runs/42684177898"
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42684177898",
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_14.json"
       ],
       "evidence_commits": [
         "0a610db74cac5381ebbb4abe358286a80a6e6298",
         "43157b1bad5a93c8bc441a21a04b8572a9e736f5",
         "7d0599fea4a20b9c454ef437a1dc44c7b01f981e",
-        "2f616c2258eafa220b34895ae5d123a4d7ff1907"
+        "2f616c2258eafa220b34895ae5d123a4d7ff1907",
+        "2b42398cee77f2812979ab453bcdc597b189b46f"
       ],
       "open_prs": [],
       "blocker": "Current risk/kill-switch/stale-feed tests, temporary-ledger fault injection and actual receipt-to-paper child-process loss/recovery are implemented. Independent service-outage acceptance and final-candidate external operational/risk review remain pending; local/CI synthetic checks do not accept this gate. #309 merged as scaffolding at 2f616c2258eafa220b34895ae5d123a4d7ff1907 (head 7d0599fea4a20b9c454ef437a1dc44c7b01f981e). CI 42679533894 and audit 42679534042 passed on that head; merge CI 42684177898 and audit 42684177853 passed. Opened head bd85dac failed rust-audit 42676883926 on RUSTSEC-2026-0459; that was fixed before merge. Status unchanged.",
@@ -1194,7 +1207,8 @@
         "https://github.com/Osiris6900/osiris-eye/actions/runs/43495262176",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/43495261981",
         "docs/PAPER_DISPLAYED_DEPTH_EXECUTION.md",
-        "https://github.com/Osiris6900/osiris-eye/pull/445"
+        "https://github.com/Osiris6900/osiris-eye/pull/445",
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_14.json"
       ],
       "evidence_commits": [
         "0a610db74cac5381ebbb4abe358286a80a6e6298",
@@ -1203,13 +1217,11 @@
         "22c829c4795668fbcac486283dcbe2e5c041cc2b",
         "b57ff6bea6795cdb7d374721e2b99eec4a30862a",
         "b4a4130c530f2ddb2c0d42c74271553b73f970c0",
-        "35fd514d06f7d897b1aa68be792f3b803abd69dc"
+        "35fd514d06f7d897b1aa68be792f3b803abd69dc",
+        "2b42398cee77f2812979ab453bcdc597b189b46f"
       ],
-      "open_prs": [
-        308,
-        445
-      ],
-      "blocker": "Authenticated canonical account/risk/feed/network/source views, actual Rust receipt metrics, role/MFA boundaries and Chromium navigation are implemented. Genuine source connections, sustained authenticated-node monitoring/alerts and independent operational acceptance remain pending. #438 merged as scaffolding at b57ff6bea6795cdb7d374721e2b99eec4a30862a (head 22c829c4795668fbcac486283dcbe2e5c041cc2b). CI 43486289288, Quant API CI 43486289127, audit 43486289381, 179 contract 43486289393, and 182 contract 43486289124 passed. The pull request says this is not accepted operations evidence, so T17 stays Partial. #440 merged as scaffolding at 35fd514d06f7d897b1aa68be792f3b803abd69dc (head b4a4130c530f2ddb2c0d42c74271553b73f970c0). CI 43495262061, Quant API CI 43495261981, audit 43495262176, 179 contract 43495262506, and 182 contract 43495262035 passed. The pull request says this does not move T17 to accepted operations evidence, so T17 stays Partial. Open #445 corrects the operator daily-loss display so unrealized losses or unavailable marks cannot be reported as a clear gate.",
+      "open_prs": [],
+      "blocker": "Authenticated canonical account/risk/feed/network/source views, actual Rust receipt metrics, role/MFA boundaries and Chromium navigation are implemented. Genuine source connections, sustained authenticated-node monitoring/alerts and independent operational acceptance remain pending. #438 merged as scaffolding at b57ff6bea6795cdb7d374721e2b99eec4a30862a (head 22c829c4795668fbcac486283dcbe2e5c041cc2b). CI 43486289288, Quant API CI 43486289127, audit 43486289381, 179 contract 43486289393, and 182 contract 43486289124 passed. The pull request says this is not accepted operations evidence, so T17 stays Partial. #440 merged as scaffolding at 35fd514d06f7d897b1aa68be792f3b803abd69dc (head b4a4130c530f2ddb2c0d42c74271553b73f970c0). CI 43495262061, Quant API CI 43495261981, audit 43495262176, 179 contract 43495262506, and 182 contract 43495262035 passed. The pull request says this does not move T17 to accepted operations evidence, so T17 stays Partial. Merged #445 corrects the operator daily-loss display so unrealized losses or unavailable marks cannot be reported as a clear gate.",
       "contributions": [
         {
           "pr": 308,
@@ -1371,7 +1383,8 @@
         "https://github.com/Osiris6900/osiris-eye/actions/runs/42685744834",
         "docs/evidence/deploy-recovery.schema.json",
         "https://github.com/Osiris6900/osiris-eye/pull/308",
-        "https://github.com/Osiris6900/osiris-eye/actions/runs/42679237031"
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42679237031",
+        "docs/PAPER_SERVICE_RECOVERY_ACCEPTANCE.md"
       ],
       "evidence_commits": [
         "0a610db74cac5381ebbb4abe358286a80a6e6298",
@@ -1379,10 +1392,8 @@
         "187f0c16a2afdb3a37bbe3950d841816d8fe5115",
         "3975e8561318a8bb9c360b01aff2d0c2b941861e"
       ],
-      "open_prs": [
-        308
-      ],
-      "blocker": "Actual temporary SQLite backup/restore/continuation, cross-runner integrity intake, authority fencing and rollout/rollback checks are implemented. Approved independent-host service DR with measured RTO/RPO, accepted custody/storage and operator signoff remain pending. #307 is scaffolding only (dry-run 42685744834 on merge 187f0c16). It does not implement this row. Next evidence: a real staging recovery drill artifact conforming to docs/evidence/deploy-recovery.schema.json.",
+      "open_prs": [],
+      "blocker": "Actual temporary SQLite backup/restore/continuation, cross-runner integrity intake, authority fencing and rollout/rollback checks are implemented. Approved independent-host service DR with measured RTO/RPO, accepted custody/storage and operator signoff remain pending. #307 is scaffolding only (dry-run 42685744834 on merge 187f0c16). It does not implement this row. Next evidence: a real staging recovery drill artifact conforming to docs/evidence/deploy-recovery.schema.json. An actual local authenticated FastAPI process drill now exercises online backup, acknowledged post-backup write, SIGKILL, different-path restore, credential rotation, exact journal/account recovery and stable-ID continuation. Local RTO and acknowledged-write loss are measured; this does not establish approved independent-host or production DR.",
       "contributions": [
         {
           "pr": 307,
@@ -1492,7 +1503,9 @@
         "https://github.com/Osiris6900/osiris-eye/actions/runs/43416302544",
         "https://github.com/Osiris6900/osiris-eye/actions/runs/43416302491",
         "docs/workstreams/NON_BROKER_EXECUTION_2026_11_13.md",
-        "https://github.com/Osiris6900/osiris-eye/actions/runs/42679453468"
+        "https://github.com/Osiris6900/osiris-eye/actions/runs/42679453468",
+        "docs/release/VERIFIED_ARTIFACTS_2026_11_14.json",
+        "docs/P2P_OUTAGE_LOAD_ACCEPTANCE.md"
       ],
       "evidence_commits": [
         "5176eae8843a1e5144ac903f37843fe9bb46cdd9",
@@ -1502,10 +1515,11 @@
         "187f0c16a2afdb3a37bbe3950d841816d8fe5115",
         "666a3e5599363f6347e671664b8135aeab0d38e6",
         "9f9e27a3cf286cb3bb95cf33b5a245ec2b413118",
-        "26fd658f9f49463fca36e8a0eedc0344881b046a"
+        "26fd658f9f49463fca36e8a0eedc0344881b046a",
+        "2b42398cee77f2812979ab453bcdc597b189b46f"
       ],
       "open_prs": [],
-      "blocker": "Short historical one-tailnet capacity evidence remains limited to the recorded topology. Source-bound local Rust E2EE receipt -> kernel-pinned Python durable ledger -> current risk -> canonical paper order/fill -> P&L -> forced process loss/new-process recovery is now implemented. Sustained independent-host capacity/failover, broader DR and final-candidate operational acceptance remain pending. #307 is scaffolding only (dry-run 42685744834 on merge 187f0c16). It does not implement this row. Next evidence: a real staging recovery drill artifact conforming to docs/evidence/deploy-recovery.schema.json. #436 is supporting evidence for engineering verification and the #182 contract. Head CI 43416302724 and 182 evidence-contract run 43416302491 passed. It does not accept independent-host capacity, failover, or recovery. Status stays Partial. Dependency Security Audit 42679453468 passed on 26fd658f9f49463fca36e8a0eedc0344881b046a, including rust-audit. Main CI 42679453672 was cancelled. This is supporting CI evidence and does not accept T19.",
+      "blocker": "Short historical one-tailnet capacity evidence remains limited to the recorded topology. Source-bound local Rust E2EE receipt -> kernel-pinned Python durable ledger -> current risk -> canonical paper order/fill -> P&L -> forced process loss/new-process recovery is now implemented. Sustained independent-host capacity/failover, broader DR and final-candidate operational acceptance remain pending. #307 is scaffolding only (dry-run 42685744834 on merge 187f0c16). It does not implement this row. Next evidence: a real staging recovery drill artifact conforming to docs/evidence/deploy-recovery.schema.json. #436 is supporting evidence for engineering verification and the #182 contract. Head CI 43416302724 and 182 evidence-contract run 43416302491 passed. It does not accept independent-host capacity, failover, or recovery. Status stays Partial. Dependency Security Audit 42679453468 passed on 26fd658f9f49463fca36e8a0eedc0344881b046a, including rust-audit. Main CI 42679453672 was cancelled. This is supporting CI evidence and does not accept T19. Sustained run 43570579823 is retained as a resource-policy failure despite zero delivery loss. Local service-recovery and new traffic-on/configuration diagnostics do not replace independent-host topology/failover acceptance.",
       "contributions": [
         {
           "pr": 307,

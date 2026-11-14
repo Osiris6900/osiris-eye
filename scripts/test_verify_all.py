@@ -26,7 +26,7 @@ class VerifyAllTests(unittest.TestCase):
         result = subprocess.run([sys.executable, str(SCRIPT), "--profile", "engineering"],
                                 cwd=ROOT, capture_output=True, text=True, check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
-        for name in ("rust-native", "native-process", "peer-receipts", "browser", "recovery-intakes"):
+        for name in ("rust-native", "native-process", "peer-receipts", "browser", "recovery-intakes", "local-paper-service-dr"):
             self.assertIn("PLAN " + name + ":", result.stdout)
         self.assertNotIn("PLAN release-strict:", result.stdout)
         for name in ("dependency-advisories", "python-lock", "license-provenance"):
@@ -77,6 +77,11 @@ class VerifyAllTests(unittest.TestCase):
         self.assertFalse(without_integrity["all_passed"])
         for gate in ("T13", "T14", "T15", "T16", "T19"):
             self.assertFalse(without_integrity["release_gates"][gate]["local_checks_passed"])
+        without_service_dr = module.engineering_report(
+            [row for row in passed if row["name"] != "local-paper-service-dr"], source, source)
+        self.assertFalse(without_service_dr["all_passed"])
+        self.assertFalse(without_service_dr["release_gates"]["T18"]["local_checks_passed"])
+        self.assertFalse(without_service_dr["workstreams"]["W18"]["engineering_checks_passed"])
         self.assertTrue(all(row["independent_acceptance"] == "pending" for row in report["workstreams"].values()))
         failed = module.engineering_report([row for row in passed if row["name"] != "native-process"], source, source)
         self.assertFalse(failed["all_passed"])

@@ -38,7 +38,9 @@ jobs:
           python scripts/test_verify_all.py
           python scripts/test_integration_ci_targets.py
       - name: Reject incomplete release evidence and independent-review opt-outs
-        run: python -m unittest discover -s scripts -p 'test_check_release*.py' -v
+        run: |
+          python -m unittest discover -s scripts -p 'test_check_release*.py' -v
+          python scripts/test_check_external_crypto_review_intake.py
       - name: Reject inconsistent retained receipt and paper evidence
         run: python scripts/test_verify_receipt_paper_artifact.py
       - name: Run Python tests
@@ -55,6 +57,16 @@ jobs:
           path: |
             ${{ runner.temp }}/market-paper-acceptance.json
             ${{ runner.temp }}/market-paper-acceptance.json.sha256
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Exercise actual paper API process loss and local service recovery
+        run: python scripts/run_paper_service_dr_exercise.py --output-dir "${{ runner.temp }}/paper-service-dr"
+      - name: Retain local paper service recovery evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: paper-service-dr-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/paper-service-dr/
           if-no-files-found: ignore
           retention-days: 14
       - name: Smoke-test bounded local tick benchmark
