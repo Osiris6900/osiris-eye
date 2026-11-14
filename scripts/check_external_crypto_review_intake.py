@@ -71,16 +71,35 @@ def check(data: object) -> dict:
             if item["kind"] not in ("signed_report", "finding_register", "reviewer_attestation"):
                 failures.append("invalid_artifact_kind")
     findings = data["findings"]
-    if not isinstance(findings, list) or any(
+    findings_valid = isinstance(findings, list) and not any(
         not isinstance(f, dict) or set(f) != {"id", "severity", "status"}
         or not isinstance(f["id"], str) or not f["id"].strip()
         or f["severity"] not in ("critical", "high", "medium", "low", "informational")
         or f["status"] not in ("open", "mitigated", "accepted")
         for f in findings
-    ):
+    )
+    if not findings_valid:
         failures.append("invalid_findings")
     if not isinstance(data["decision"], str) or data["decision"] not in DECISIONS:
         failures.append("invalid_decision")
+    if isinstance(data["decision"], str) and data["decision"] in {
+        "approved", "approved_with_remediation",
+    }:
+        # These are consistency checks on the reviewer's declarations, not
+        # authentication of their identity, signature or independence.
+        for field in ("independence_attested", "conflicts_disclosed"):
+            if not isinstance(reviewer, dict) or reviewer.get(field) is not True:
+                failures.append("approval_requires_" + field)
+        if not isinstance(artifacts, list) or not any(
+            isinstance(item, dict) and set(item) == {"url", "sha256", "kind"}
+            and item["kind"] == "signed_report" for item in artifacts
+        ):
+            failures.append("approval_requires_signed_report")
+    if data["decision"] == "approved" and findings_valid and any(
+        finding["severity"] in ("critical", "high") and finding["status"] == "open"
+        for finding in findings
+    ):
+        failures.append("approved_with_open_critical_high_findings")
     if data["paper_only"] is not True:
         failures.append("paper_only_required")
     return {
