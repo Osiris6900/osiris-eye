@@ -1,6 +1,7 @@
 """Fail-closed measurement and lifecycle regressions (no network needed)."""
 import json
 import os
+import shlex
 from pathlib import Path
 import subprocess
 import sys
@@ -9,10 +10,108 @@ import unittest
 from unittest.mock import patch
 from types import SimpleNamespace
 
-from run_p2p_soak import Agent, Controller, measurement_class, percentile
+from run_p2p_soak import Agent, Controller, measurement_class, percentile, workload_records, runtime_config, measure
 
 
 class MeasurementTests(unittest.TestCase):
+    def test_bounded_worker_setting_reaches_actual_node_environment(self):
+        for count in (None, 1, 2, 4):
+            with self.subTest(count=count), tempfile.TemporaryDirectory() as tmp:
+                args = SimpleNamespace(binary=Path('/bin/true'), port=0, controller_pid=None,
+                                       node_worker_threads=count)
+                with patch('run_p2p_soak.subprocess.Popen') as launch, \
+                     patch('run_p2p_soak.threading.Thread'), \
+                     patch.dict(os.environ, {'TOKIO_WORKER_THREADS': '37'}):
+                    agent = Agent(args, tmp)
+                    agent.start(1)
+                    environment = launch.call_args.kwargs['env']
+                    self.assertEqual(environment.get('TOKIO_WORKER_THREADS'),
+                                     None if count is None else str(count))
+                    self.assertEqual(agent.runtime['node_worker_threads_requested'], count)
+                    self.assertFalse(agent.runtime['observed_runtime_worker_count_verified'])
+        for invalid in (True, 0, 3, 8, '1', 1.0):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, 'worker_threads'):
+                runtime_config(invalid)
+
+    def test_controller_propagates_worker_setting_to_every_remote_agent(self):
+        for count in (None, 1, 2, 4):
+            controller, launched = Controller(), {}
+            args = SimpleNamespace(binary=Path('/bin/true'), remote_binary='/bin/true',
+                remote_script='/workspace/scripts/run_p2p_soak.py', extra_host=['host-c=runner@host-c'],
+                peers=6, port=4001, local_agents=False, ssh_target='runner@host-b',
+                ssh_option=[], node_worker_threads=count, traffic_during_outage=False)
+            with patch('run_p2p_soak.Controller', return_value=controller), \
+                 patch.object(controller, 'launch', side_effect=lambda host, command: launched.update({host: command})), \
+                 patch.object(controller, 'wait', side_effect=RuntimeError('stop_after_launch')), \
+                 patch.object(controller, 'cleanup'):
+                with self.assertRaisesRegex(RuntimeError, 'stop_after_launch'):
+                    measure(args)
+            self.assertEqual(set(launched), {'host-a', 'host-b', 'host-c'})
+            for host, command in launched.items():
+                parts = command if host == 'host-a' else shlex.split(command[-1])
+                with self.subTest(count=count, host=host):
+                    if count is None:
+                        self.assertNotIn('--node-worker-threads', parts)
+                    else:
+                        self.assertEqual(parts[parts.index('--node-worker-threads') + 1], str(count))
+
+    def test_cli_rejects_unbounded_worker_settings_before_starting_agents(self):
+        script = Path(__file__).with_name('run_p2p_soak.py')
+        for invalid in ('0', '3', '8', 'true'):
+            result = subprocess.run([sys.executable, str(script), '--agent', '--binary', '/bin/true',
+                                     '--node-worker-threads', invalid], capture_output=True, text=True)
+            with self.subTest(invalid=invalid):
+                self.assertEqual(result.returncode, 2)
+                self.assertIn('--node-worker-threads', result.stderr)
+
+    def test_workload_records_preserve_lost_late_and_duplicate_observations(self):
+        c = Controller()
+        c.command = lambda *args, **kwargs: None
+        with patch('run_p2p_soak.time.monotonic', side_effect=[11.0, 12.0, 14.0, 17.0]):
+            keys = [c.publish('host-a', 0, str(i)) for i in range(4)]
+        for digest, when in ((keys[0], 11.1), (keys[1], 14.0), (keys[1], 14.5)):
+            c.events.put(('host-b', {'kind': 'delivery', 'digest': digest}))
+            with patch('run_p2p_soak.time.monotonic', return_value=when):
+                c.drain()
+        records = workload_records(c, keys, 10, outage_start_ms=1500,
+                                   restart_ms=3500, recovered_ms=5500)
+        self.assertEqual([r['published_elapsed_ms'] for r in records], [1000, 2000, 4000, 7000])
+        self.assertEqual([r['during_outage'] for r in records], [False, True, True, False])
+        self.assertEqual([r['while_sink_stopped'] for r in records], [False, True, False, False])
+        self.assertEqual(records[1]['delivery_count'], 2)
+        self.assertEqual(records[1]['duplicate_deliveries'], 1)
+        self.assertEqual(records[1]['delivered_elapsed_ms'], 4000)
+        self.assertEqual(records[1]['latency_ms'], 2000)
+        self.assertTrue(records[1]['delivered_after_restart'])
+        self.assertTrue(records[1]['outage_publication_delivered_after_restart'])
+        self.assertFalse(records[0]['delivered_after_restart'])
+        self.assertEqual(records[2]['outcome'], 'lost')
+        self.assertIsNone(records[2]['latency_ms'])
+        self.assertEqual(records[2]['delivery_count'], 0)
+
+    def test_wrong_recipient_and_untracked_delivery_cannot_be_credited(self):
+        for host, digest, expected in (
+            ('host-c', 'tracked', 'unexpected_decryption_recipient'),
+            ('host-b', 'unknown', 'untracked_delivery_observation'),
+        ):
+            c = Controller()
+            c.sent = {'tracked': 1.0}
+            c.events.put((host, {'kind': 'delivery', 'digest': digest}))
+            with self.subTest(host=host), self.assertRaisesRegex(RuntimeError, expected):
+                c.drain()
+            self.assertEqual(c.deliveries, {})
+            self.assertEqual(c.delivery_counts, {})
+
+    def test_aborted_window_records_do_not_claim_permanent_loss(self):
+        c = Controller()
+        c.sent, c.sources = {'pending': 12.0}, {'pending': 'host-a'}
+        records = workload_records(c, ['pending'], 10, outage_start_ms=1500,
+                                   restart_ms=None, recovered_ms=None, complete=False)
+        self.assertEqual(records[0]['outcome'], 'pending_at_abort')
+        self.assertTrue(records[0]['during_outage'])
+        self.assertTrue(records[0]['while_sink_stopped'])
+        self.assertIsNone(records[0]['delivered_elapsed_ms'])
+
     def test_stale_subscriptions_cannot_release_restart_barrier(self):
         c = Controller()
         subscription = {'kind': 'subscription', 'node': 0, 'peer': 'sink'}
@@ -109,23 +208,29 @@ class MeasurementTests(unittest.TestCase):
             marker = Path(tmp) / 'child.json'
             node.write_text(f'#!{sys.executable}\nimport json,os,signal\n'
                             f'open({str(marker)!r}, "w").write(json.dumps('
-                            '{"pid":os.getpid(),"state":os.environ["OSIRIS_NODE_KEY"]}))\n'
+                            '{"pid":os.getpid(),"state":os.environ["OSIRIS_NODE_KEY"],"workers":os.environ.get("TOKIO_WORKER_THREADS")}))\n'
                             'print("peer_id=test-peer",flush=True)\n'
                             'while True: signal.pause()\n')
             node.chmod(0o700)
             agent = subprocess.Popen(
                 [sys.executable, str(Path(__file__).with_name('run_p2p_soak.py')),
-                 '--agent', '--binary', str(node), '--port', '19001'],
+                 '--agent', '--binary', str(node), '--port', '19001', '--node-worker-threads', '1'],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             )
             try:
                 agent.stdin.write('{"action":"sink"}\n')
                 agent.stdin.flush()
+                metadata = None
                 while True:
                     event = json.loads(agent.stdout.readline())
+                    if event['kind'] == 'metadata':
+                        metadata = event
                     if event['kind'] == 'peer':
                         break
                 child = json.loads(marker.read_text())
+                self.assertEqual(child['workers'], '1')
+                self.assertEqual(metadata['runtime_config']['node_worker_threads_requested'], 1)
+                self.assertEqual(metadata['runtime_config']['tokio_worker_threads_env'], '1')
                 agent.communicate(timeout=15)
                 self.assertEqual(agent.returncode, 0)
                 self.assertFalse(Path(child['state']).parent.exists())

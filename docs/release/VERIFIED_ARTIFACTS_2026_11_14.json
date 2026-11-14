@@ -1,0 +1,536 @@
+{
+  "schema": "osiris.downloaded-release-evidence.v1",
+  "verified_at": "2026-11-14T07:23:09.835519+00:00",
+  "baseline_commit": "f38fa9a5757efed904e9b0967e3b6d3be5cc78f7",
+  "baseline_tree": "bc854dea70c87765da7fc4b6c7047ade75b224f7",
+  "tested_candidate_commit": "2b42398cee77f2812979ab453bcdc597b189b46f",
+  "candidate_tree_matches_merged_main": true,
+  "release_gate_accepted": false,
+  "live_trading_authorized": false,
+  "previously_remaining_gates_accepted": 0,
+  "gate_counts": {
+    "Implemented with evidence": 3,
+    "Partial": 14,
+    "Remaining": 3
+  },
+  "workflows": [
+    {
+      "run_id": 43569109539,
+      "name": "182 evidence contract tests",
+      "conclusion": "success",
+      "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43569109539"
+    },
+    {
+      "run_id": 43569109478,
+      "name": "Release gate inventory",
+      "conclusion": "success",
+      "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43569109478"
+    },
+    {
+      "run_id": 43569109375,
+      "name": "Dependency Security Audit",
+      "conclusion": "success",
+      "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43569109375"
+    },
+    {
+      "run_id": 43569109250,
+      "name": "179 evidence contract tests",
+      "conclusion": "success",
+      "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43569109250"
+    },
+    {
+      "run_id": 43569109244,
+      "name": "New platform modules unit tests",
+      "conclusion": "success",
+      "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43569109244"
+    },
+    {
+      "run_id": 43569109279,
+      "name": "Quant API CI",
+      "conclusion": "success",
+      "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43569109279"
+    },
+    {
+      "run_id": 43569109257,
+      "name": "CI",
+      "conclusion": "success",
+      "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43569109257"
+    }
+  ],
+  "jobs": [
+    {
+      "run": 43569109539,
+      "name": "182 evidence contract tests",
+      "jobs": [
+        {
+          "name": "evidence-contract",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "run": 43569109478,
+      "name": "Release gate inventory",
+      "jobs": [
+        {
+          "name": "inventory",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "strict-acceptance",
+          "status": "completed",
+          "conclusion": "skipped"
+        }
+      ]
+    },
+    {
+      "run": 43569109375,
+      "name": "Dependency Security Audit",
+      "jobs": [
+        {
+          "name": "python-audit",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "dependency-inventory",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "rust-audit",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "npm-audit",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "run": 43569109250,
+      "name": "179 evidence contract tests",
+      "jobs": [
+        {
+          "name": "evidence-contract",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "run": 43569109257,
+      "name": "CI",
+      "jobs": [
+        {
+          "name": "web",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "rust",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "python",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "run": 43569109244,
+      "name": "New platform modules unit tests",
+      "jobs": [
+        {
+          "name": "offline-module-tests",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "run": 43569109279,
+      "name": "Quant API CI",
+      "jobs": [
+        {
+          "name": "test",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    }
+  ],
+  "artifacts": [
+    {
+      "artifact_id": 14103314781,
+      "name": "dependency-sbom-43569109375-1",
+      "run_id": 43569109375,
+      "run_attempt": 1,
+      "candidate_commit": "2b42398cee77f2812979ab453bcdc597b189b46f",
+      "checkout_commit": "a8175b9f29b6865933117fe1fedd1083b2059709",
+      "expires_at": "2026-11-28T07:01:37Z",
+      "size_in_bytes": 87022,
+      "zip_sha256": "5bec458d48145673710abe8ada654b159cfc5670ff7a008d26254b27dbbd4a7d",
+      "downloaded_bytes_verified": true,
+      "verification": {
+        "archive_sha256": "5bec458d48145673710abe8ada654b159cfc5670ff7a008d26254b27dbbd4a7d",
+        "candidate_commit": "2b42398cee77f2812979ab453bcdc597b189b46f",
+        "candidate_tree_matches_checkout": true,
+        "checkout_commit": "a8175b9f29b6865933117fe1fedd1083b2059709",
+        "checkout_tree": "bc854dea70c87765da7fc4b6c7047ade75b224f7",
+        "ci_identity_authenticated": false,
+        "ci_run_attempt": "1",
+        "ci_run_id": "43569109375",
+        "component_count": 613,
+        "files_sha256": {
+          "dependency-sbom-provenance.json": "d9bcca6308130dea1a6e921fdf262a4821bbfabc9b4f0e58c09743ba03bd962d",
+          "dependency-sbom.json": "75bf80041097973cf25d91822978a04e4a2b32ed31e3c394cc3a8fe031c4d7ac",
+          "dependency-sbom.json.sha256": "b32a04c8e26910412e64fbe68aa3b0e5251260cced7a715ee829680410d6dd03"
+        },
+        "independent_review_verified": false,
+        "input_sha256": {
+          "apps/web/package-lock.json": "fc7b7c0a8bc7216c037feea96eeae9003d32a059d2f34a538de8313136f21c49",
+          "crates/native-feed/Cargo.lock": "a3245172f873236cbe927b02085f8c02c1b07a6a1d66166c54e8370524eec938",
+          "crates/risk-kernel/Cargo.lock": "4323ac3971f58ff86b58615597d6fb3522b0adcd9d34368bf434d7fe4d065f0c",
+          "services/p2p-node/Cargo.lock": "29ae2856e7576c3e8474ad55478992166d73ddf586e17f7c7622af200287e07c",
+          "services/quant-api/pyproject.toml": "cc09246e40902345e7b7eac605e9b528e36c7bbc7df7d35c2229c1dee7676050",
+          "services/quant-api/requirements-lock.txt": "ff5e5ece6f90c6f97786e3cb3f199d06c57cef282b7daa057485277cf5b77ae5"
+        },
+        "live_trading_authorized": false,
+        "passed": true,
+        "release_gate_accepted": false,
+        "schema": "osiris.sbom-artifact-verification.v1"
+      }
+    },
+    {
+      "artifact_id": 14104106278,
+      "name": "receipt-paper-43569109257-1",
+      "run_id": 43569109257,
+      "run_attempt": 1,
+      "candidate_commit": "2b42398cee77f2812979ab453bcdc597b189b46f",
+      "checkout_commit": "a8175b9f29b6865933117fe1fedd1083b2059709",
+      "expires_at": "2026-11-28T07:07:42Z",
+      "size_in_bytes": 45805,
+      "zip_sha256": "f45a7e4a753356c16c691ed14aacd35fe44ea479ef1efb11bbf53f3aae65c6ca",
+      "downloaded_bytes_verified": true,
+      "verification": {
+        "archive_sha256": "f45a7e4a753356c16c691ed14aacd35fe44ea479ef1efb11bbf53f3aae65c6ca",
+        "audit_rows_verified": 10,
+        "binary_reproduced": false,
+        "binary_sha256": "ec7aeffaccf927098b6797d7b143e0dac722373bcb56b9471a0e2696f65f4faf",
+        "checkout_commit": "a8175b9f29b6865933117fe1fedd1083b2059709",
+        "checkout_tree": "bc854dea70c87765da7fc4b6c7047ade75b224f7",
+        "checks": [
+          "actual_child_loss_after_fill_commit",
+          "actual_rust_e2ee_and_recipient_receipt",
+          "canonical_admin_account_matches",
+          "current_kill_switch_and_revocation_guard",
+          "exact_fee_inclusive_round_trip_pnl",
+          "kernel_pinned_event_persisted",
+          "new_process_idempotent_recovery",
+          "no_paper_execution_before_acknowledgement",
+          "receipt_to_risk_decision_to_fill_trace",
+          "replay_and_changed_economics_guard"
+        ],
+        "ci_identity_authenticated": false,
+        "files_sha256": {
+          "receipt-paper.json": "c14e130c113562717876864811a84c2ed33d5e816987d46396730a8412f7ac44",
+          "receipt-paper.json.sha256": "0004644c98adf73fc9e6973de94e6fb2a529e7f24871939a06d27d0a3dd38bc6"
+        },
+        "independent_hosts_verified": false,
+        "independent_review_verified": false,
+        "live_trading_authorized": false,
+        "passed": true,
+        "receipt_origin_recomputed": false,
+        "receipt_signature_reverified": false,
+        "release_gate_accepted": false,
+        "run_truth_independently_verified": false,
+        "schema": "osiris.receipt-paper-artifact-verification.v1",
+        "scope": "two-local-rust-nodes-and-independent-local-python-processes",
+        "source_files_verified": 826,
+        "traces_verified": 2,
+        "worktree_sha256": "71ba2eed7603cbe8e5595ee3dad58403bb5f925a646ca9301c9cf3408d0cc349"
+      }
+    }
+  ],
+  "local_tests": {
+    "backend": {
+      "passed": 2187,
+      "skipped": 2,
+      "subtests_passed": 26,
+      "skips": [
+        {
+          "name": "test_node_process_does_not_remint_a_tracked_envelope",
+          "reason": "osiris-p2p-node binary is not built"
+        },
+        {
+          "name": "test_rust_verifier_persists_to_python_ledger",
+          "reason": "cargo is required to build the Rust verifier"
+        }
+      ]
+    },
+    "frontend": {
+      "passed": 119,
+      "typecheck": true,
+      "build": true
+    }
+  },
+  "genuine_exercises": [
+    {
+      "kind": "genuine_public_market_to_paper",
+      "provider": "coinbase",
+      "candidate_commit": "2b42398cee77f2812979ab453bcdc597b189b46f",
+      "passed": true,
+      "report_file_sha256": "39d21caefb5a3f2b05a58fda9b3bd90f9e05bda7852a2f1633337a6eb9834e6f",
+      "observed_order_status": "not_submitted",
+      "observed_fill_count": 0,
+      "checks": [
+        "real_coinbase_public_http_fetch",
+        "closed_contiguous_market_history",
+        "market_strategy_risk_order_accounting_pipeline",
+        "ledger_reconciliation",
+        "separate_process_restart_recovers_exact_ledger_state"
+      ],
+      "release_gate_accepted": false
+    },
+    {
+      "kind": "genuine_public_market_to_paper",
+      "provider": "kraken",
+      "candidate_commit": "2b42398cee77f2812979ab453bcdc597b189b46f",
+      "passed": true,
+      "report_file_sha256": "9351e2e2bd9f1b0e9aee2506dba8f520cb3a96cc4727c8906102b36d2704d344",
+      "observed_order_status": "not_submitted",
+      "observed_fill_count": 0,
+      "checks": [
+        "real_kraken_public_http_fetch",
+        "closed_contiguous_market_history",
+        "market_strategy_risk_order_accounting_pipeline",
+        "ledger_reconciliation",
+        "separate_process_restart_recovers_exact_ledger_state"
+      ],
+      "release_gate_accepted": false
+    },
+    {
+      "kind": "genuine_public_depth_diagnostic",
+      "candidate_commit": "2b42398cee77f2812979ab453bcdc597b189b46f",
+      "passed": true,
+      "report_file_sha256": "c7a81583234f67143c2368bee20e4dfe70226e541617912c8bde9edfc9ab0179",
+      "orders": 4,
+      "fills": 5,
+      "flat_after_round_trips": true,
+      "crash_rollback_verified": true,
+      "new_process_replay_verified": true,
+      "execution_calibrated": false,
+      "release_gate_accepted": false
+    },
+    {
+      "kind": "genuine_forward_research",
+      "candidate_commit": "2b42398cee77f2812979ab453bcdc597b189b46f",
+      "passed": true,
+      "samples": 32,
+      "folds": 5,
+      "canonical_archive_sha256": "0296c6bca858e56dc1f76f7d672c7829cef4184d6c22a094613d62b1e43a0549",
+      "archive_file_sha256": "05340625c63cb8f9456d99954597025735c31c102292bde44cd30da8aa406700",
+      "offline_reproduced": true,
+      "independent_model_reviewed": false,
+      "source_origin_independently_attested": false,
+      "vendor_rights_verified": false,
+      "release_gate_accepted": false
+    }
+  ],
+  "private_evidence_archive_sha256": "5f613d43e3a6abe91c7848a87b63168c9083a482d49d7a37703e220a95a8774c",
+  "custody": "Original bytes retained privately in the task evidence bundle; raw licensed/source data is not published here. This is not independently approved custody.",
+  "remaining_requirements": [
+    {
+      "gate": "T01",
+      "criterion": "Remediate OSV dependencies (#171) and resolve Python lock/provenance gate",
+      "inventory_status": "Partial",
+      "acceptance_satisfied": false,
+      "remaining_requirement": "RUSTSEC-2026-0459 is cleared: rusqlite 0.41.1 and libsqlite3-sys 0.39.1 are the only copies, and the lock ratchet floor is libsqlite3-sys >= 0.39.0. #302 merged at 8ef21a84846a0e525978d6589b458caf3afc75e4 (head d47d14d0c9b429fbc5c6a7d9c8df6fc75bec961c). CI 42677260186 and Dependency Security Audit 42677259943 passed on that head, including rust-audit. #306's lock bump is the same fix and is superseded; its only unique merged change is fetch-depth 0. T01 stays Partial because paste 1.0.15 (RUSTSEC-2024-0436) remains. The SBOM generator no longer marks Python resolution unresolved, and Dependency Security Audit already runs scripts/check_license_provenance.py. Accepted final-candidate audit, SBOM, and provenance artifacts, plus a reviewed paste disposition, are still required. facts.cargo_versions and facts.advisory_source_commit still match the worktree (source 2b685c2bc8689422724f1d9eb52ceef660ebb8a7). #302's advisory file recorded source 2501a07441c7a3e124a7494f2384903c85f5b6ca; later refreshes replaced that file. #436 merged at 9f9e27a3cf286cb3bb95cf33b5a245ec2b413118 (head 666a3e5599363f6347e671664b8135aeab0d38e6). Dependency Security Audit 43416302544 passed. The retained scan covers all locked roots and still leaves paste 1.0.15. Final-candidate audit, SBOM, and provenance acceptance remain open. Status stays Partial."
+    },
+    {
+      "gate": "T04",
+      "criterion": "Run sustained multi-host outage/load/relay/NAT acceptance",
+      "inventory_status": "Partial",
+      "acceptance_satisfied": false,
+      "remaining_requirement": "Operator-dispatched GitHub Actions run 42740964830 (main d9bb0a959faf5d9c7c97bd6502a143f9df9123d0) succeeded on three runner jobs. Retained artifact capacity-report-42740964830-1 (ZIP SHA-256 229553051305aabbc28c44af50bb58c4f6dfe9ec746ff3f2f85178333661d239) contains 10/50/100 peer sweeps: 200/200 delivered, zero lost in each, binary SHA-256 and self-reported distinct boot fingerprints. Scope is one private tailnet, recipient-bootstrap star, 35-49 seconds per sweep; workload paused during bootstrap outage. Raw host fingerprint independence is not independently attested, and sustained multi-host NAT, relay, open-mesh and production outage recovery are unproven. Partial evidence only; acceptance remains false. #280 merged at d42e422edaa928e907f519de055a766e8e7e14ce as local reconnect-tick backoff only. CI 42677901050 and Dependency Security Audit 42677901276 passed on that commit. #176 and #255 stay open because this is not multi-host evidence. Status stays Partial."
+    },
+    {
+      "gate": "T06",
+      "criterion": "Commission independent cryptography and operational security review",
+      "inventory_status": "Remaining",
+      "acceptance_satisfied": false,
+      "remaining_requirement": "Independent crypto/operational-security intake and validation are implemented. No independently signed reviewer report, verified reviewer identity, remediation/retest and approval decision has been supplied; source tests cannot commission or approve that review. #310 is merged scaffolding for fail-closed crypto tests and recipient-hash retention. It is not an independent review. Head CI 42680025127 and audit 42680025148 passed. Status stays Remaining."
+    },
+    {
+      "gate": "T07",
+      "criterion": "Build authorized multi-asset vendor adapters and instrument master",
+      "inventory_status": "Partial",
+      "acceptance_satisfied": false,
+      "remaining_requirement": "The integration candidate implements Alpaca, OANDA, Polygon and Twelve Data bar adapters with bounded pagination, normalization and declared entitlement checks. Authorized vendor credentials, genuine captures, instrument/corporate-action coverage and independent source-owner acceptance remain pending. Explicit Kraken BTC/ETH USD bars are implemented in merged #445; no USD/USDT substitution or automatic venue fallback is enabled."
+    },
+    {
+      "gate": "T08",
+      "criterion": "Implement streaming, point-in-time normalization, feed freshness and corporate actions",
+      "inventory_status": "Partial",
+      "acceptance_satisfied": false,
+      "remaining_requirement": "Feed quality, freshness, timestamp/availability checks, source-governed views and native offline capture paths are implemented and tested. Genuine sustained vendor streaming captures, corporate-action artifacts and independently verified time/source provenance remain pending. #309 merged as scaffolding at 2f616c2258eafa220b34895ae5d123a4d7ff1907 (head 7d0599fea4a20b9c454ef437a1dc44c7b01f981e). CI 42679533894 and audit 42679534042 passed on that head; merge CI 42684177898 and audit 42684177853 passed. Opened head bd85dac failed rust-audit 42676883926 on RUSTSEC-2026-0459; that was fixed before merge. Status unchanged."
+    },
+    {
+      "gate": "T09",
+      "criterion": "Verify feed entitlements and redistribution rights",
+      "inventory_status": "Remaining",
+      "acceptance_satisfied": false,
+      "remaining_requirement": "Vendor entitlement intake, expiry/revocation checks and feed-policy enforcement are implemented. Original source-owner licences, permitted-use/redistribution terms and independent rights approval have not been supplied."
+    },
+    {
+      "gate": "T10",
+      "criterion": "Integrate global event and macro feeds with source provenance",
+      "inventory_status": "Partial",
+      "acceptance_satisfied": false,
+      "remaining_requirement": "Source-governed news/event intake, point-in-time storage and deduplication are implemented. Genuine authorized macro/event source integration, retained captures and independent provenance acceptance remain pending."
+    },
+    {
+      "gate": "T11",
+      "criterion": "Implement reproducible feature/model lifecycle and walk-forward gates",
+      "inventory_status": "Partial",
+      "acceptance_satisfied": false,
+      "remaining_requirement": "Point-in-time features, ridge fitting, immutable experiment reproduction and a retained synthetic walk-forward archive are implemented. A frozen genuine candidate dataset/model/feature archive and independent lifecycle acceptance remain pending. Merged #445 supplies a short forward-recorded genuine keyless archive with raw-response hashes, ridge holdout purging and offline reproduction. It is diagnostic evidence, not independent lifecycle acceptance."
+    },
+    {
+      "gate": "T12",
+      "criterion": "Validate strategies out of sample after all costs and leakage checks",
+      "inventory_status": "Partial",
+      "acceptance_satisfied": false,
+      "remaining_requirement": "Chronological holdout, cost-adjusted walk-forward and reproducible experiment checks are implemented for research. A genuine blinded holdout, independent leakage review and calibrated cost/turnover/impact/borrow sensitivity report remain pending. Merged #445 supplies short genuine-data reference-model walk-forward and 0/10/25 bps diagnostics. A blinded representative holdout and calibrated execution costs still need independent acceptance."
+    },
+    {
+      "gate": "T13",
+      "criterion": "Build independent portfolio risk budgets and strategy governance",
+      "inventory_status": "Partial",
+      "acceptance_satisfied": false,
+      "remaining_requirement": "Canonical pretrade limits, exact broker economics, stale-feed/kill-switch controls and receipt-bound risk decisions are implemented. Independent ownership/approval of budgets, limits, concentration, drawdown and exception governance remains pending. Merged #445 aligns the operator loss view with execution: realized plus adverse unrealized P&L, fresh-mark requirements and a single read-only reconciliation snapshot."
+    },
+    {
+      "gate": "T14",
+      "criterion": "Implement broker sandbox adapters, OMS state machine, idempotency and reconciliation",
+      "inventory_status": "Partial",
+      "acceptance_satisfied": false,
+      "remaining_requirement": "#305 merged as scaffolding at deed94692cd92096d84d8657e3d12034691d8466 (opened at fe90bae1778b7e30a17a5e991c9a585a71718b60, head cb83b019ab5a897938623d052458c6b6d6f706a5). It follows #277 and does not close T14. Quant API CI 42683473725 and dependency audit 42683473791 passed on that merge commit; main CI 42683473981 on that merge was cancelled and could not be re-run. CI 42748111800 on 3a126f9a04e384229ade0313675c20ab90b44b49 is the substitute run for cancelled main CI 42683473981. paper_execution.py is unchanged since #305's merge on that commit. No broker-sandbox match. The daily-loss gate includes adverse unrealized loss and fails closed when another holding has no fresh mark. Unrealized gains do not offset realized losses. Live execution stays disabled. #439 merged as scaffolding at 71b3d4de0a85edd28bd1a6ec0f5457af58c14558 (head 906d53942a8ce682ecb6e7d0267b41016709a289). Head CI 43493100907 passed python, rust, and web. Audit 43493101800 passed rust-audit. Quant API CI 43493102241 and 179 evidence contract 43493100925 passed. Merge CI 43494481576 passed python, rust, and web. That closes the earlier gap where unrealized loss was not an input to the daily-loss gate. T14 stays Partial because there is no broker-sandbox match. #442 merged as scaffolding at 78818b92618e9e230f4a9fa4c7e42fe3be9fd553 (head f7ca859c576e2d5403e6c1c5f569aea6e01a5733). Head CI 43501436283 passed python, rust, and web. Audit 43501436218 passed rust-audit. Quant API CI 43501436401 passed. Buys project exposure at a fresh higher mark. T14 stays Partial because there is no broker-sandbox match. Merge CI 43502812090 passed python, rust, and web on 78818b92618e9e230f4a9fa4c7e42fe3be9fd553."
+    },
+    {
+      "gate": "T15",
+      "criterion": "Add realistic paper fills, positions, cash, margin and P&L accounting",
+      "inventory_status": "Partial",
+      "acceptance_satisfied": false,
+      "remaining_requirement": "Canonical cash/positions, partial fills/cancellation, fee-inclusive realized/unrealized P&L and bounded adverse slippage are implemented and tested. Venue-calibrated liquidity/queue/impact, margin/borrow models and independent multi-asset execution comparison remain incomplete. Merged #445 adds atomic source-bound displayed-depth paper fills, limit/latency/freshness checks, fixed participation, no reuse of consumed volume, durable plan replay and final-close cash/P&L residual settlement for new accounts. The explicit assumptions remain uncalibrated; passive queues, leveraged margin, borrowing and independent multi-asset comparisons remain incomplete."
+    },
+    {
+      "gate": "T16",
+      "criterion": "Prove kill-switch and stale-feed fail-closed behavior",
+      "inventory_status": "Partial",
+      "acceptance_satisfied": false,
+      "remaining_requirement": "Current risk/kill-switch/stale-feed tests, temporary-ledger fault injection and actual receipt-to-paper child-process loss/recovery are implemented. Independent service-outage acceptance and final-candidate external operational/risk review remain pending; local/CI synthetic checks do not accept this gate. #309 merged as scaffolding at 2f616c2258eafa220b34895ae5d123a4d7ff1907 (head 7d0599fea4a20b9c454ef437a1dc44c7b01f981e). CI 42679533894 and audit 42679534042 passed on that head; merge CI 42684177898 and audit 42684177853 passed. Opened head bd85dac failed rust-audit 42676883926 on RUSTSEC-2026-0459; that was fixed before merge. Status unchanged."
+    },
+    {
+      "gate": "T17",
+      "criterion": "Build authenticated operator dashboard for peers, feeds, orders, risk and audit",
+      "inventory_status": "Partial",
+      "acceptance_satisfied": false,
+      "remaining_requirement": "Authenticated canonical account/risk/feed/network/source views, actual Rust receipt metrics, role/MFA boundaries and Chromium navigation are implemented. Genuine source connections, sustained authenticated-node monitoring/alerts and independent operational acceptance remain pending. #438 merged as scaffolding at b57ff6bea6795cdb7d374721e2b99eec4a30862a (head 22c829c4795668fbcac486283dcbe2e5c041cc2b). CI 43486289288, Quant API CI 43486289127, audit 43486289381, 179 contract 43486289393, and 182 contract 43486289124 passed. The pull request says this is not accepted operations evidence, so T17 stays Partial. #440 merged as scaffolding at 35fd514d06f7d897b1aa68be792f3b803abd69dc (head b4a4130c530f2ddb2c0d42c74271553b73f970c0). CI 43495262061, Quant API CI 43495261981, audit 43495262176, 179 contract 43495262506, and 182 contract 43495262035 passed. The pull request says this does not move T17 to accepted operations evidence, so T17 stays Partial. Merged #445 corrects the operator daily-loss display so unrealized losses or unavailable marks cannot be reported as a clear gate."
+    },
+    {
+      "gate": "T18",
+      "criterion": "Add metrics, alerts, distributed persistence, backups and disaster recovery",
+      "inventory_status": "Partial",
+      "acceptance_satisfied": false,
+      "remaining_requirement": "Actual temporary SQLite backup/restore/continuation, cross-runner integrity intake, authority fencing and rollout/rollback checks are implemented. Approved independent-host service DR with measured RTO/RPO, accepted custody/storage and operator signoff remain pending. #307 is scaffolding only (dry-run 42685744834 on merge 187f0c16). It does not implement this row. Next evidence: a real staging recovery drill artifact conforming to docs/evidence/deploy-recovery.schema.json."
+    },
+    {
+      "gate": "T19",
+      "criterion": "Run capacity/failover and CI release gates with traceable artifacts",
+      "inventory_status": "Partial",
+      "acceptance_satisfied": false,
+      "remaining_requirement": "Short historical one-tailnet capacity evidence remains limited to the recorded topology. Source-bound local Rust E2EE receipt -> kernel-pinned Python durable ledger -> current risk -> canonical paper order/fill -> P&L -> forced process loss/new-process recovery is now implemented. Sustained independent-host capacity/failover, broader DR and final-candidate operational acceptance remain pending. #307 is scaffolding only (dry-run 42685744834 on merge 187f0c16). It does not implement this row. Next evidence: a real staging recovery drill artifact conforming to docs/evidence/deploy-recovery.schema.json. #436 is supporting evidence for engineering verification and the #182 contract. Head CI 43416302724 and 182 evidence-contract run 43416302491 passed. It does not accept independent-host capacity, failover, or recovery. Status stays Partial. Dependency Security Audit 42679453468 passed on 26fd658f9f49463fca36e8a0eedc0344881b046a, including rust-audit. Main CI 42679453672 was cancelled. This is supporting CI evidence and does not accept T19."
+    },
+    {
+      "gate": "T20",
+      "criterion": "Perform compliance, model-risk and security signoff for paper-only release",
+      "inventory_status": "Remaining",
+      "acceptance_satisfied": false,
+      "remaining_requirement": "The paper-only signoff worksheet and external security/vendor intake paths are implemented. Actual independent security/model-risk/licensing decisions and authorized operator release approval remain pending. Paper-only scope is unchanged and live execution remains unauthorized."
+    }
+  ],
+  "sustained_capacity_run": {
+    "id": 43570579823,
+    "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43570579823",
+    "event": "workflow_dispatch",
+    "commit": "f38fa9a5757efed904e9b0967e3b6d3be5cc78f7",
+    "run_attempt": 1,
+    "conclusion": "failure",
+    "artifact_id": 14105161605,
+    "artifact_name": "capacity-report-43570579823-1",
+    "expires_at": "2026-11-28T07:46:43Z",
+    "downloaded_bytes_verified": true,
+    "archive_sha256": "1063451d951d4c7d57d303829fa14f1f3ff3e5ed1a5ce4c7e1b4d576a4dbaa8a",
+    "members_sha256": {
+      "capacity-10.json": "8bb15f10513ad01bf5e3b211f6f13f55c7bf36b7716fcab4b1ef0b4029a2fa6d",
+      "capacity-100.json": "63d37dd7512689922b74678e8108408d65ad1d848644ad36c4a7261c0577c220",
+      "capacity-50.json": "a328cc2aa3512352a2848c32996a577750223ac2d146a20062e3321773bffd3b",
+      "capacity-sha256.txt": "5038444a004acfa435c0e801fbf9df062af682ef92b718851f69e579292a7d7f",
+      "sustained-100.json": "a38f5e4ba3cea833bb95551b8b3e38e068d1d9689721b122d8d48c6481185030",
+      "sustained-review.json": "c10963e4c316ef2141cce8bffc007f02f15d953ea146e029d2480ea9ebeb24f8"
+    },
+    "workload": {
+      "peers": 100,
+      "messages": 10000,
+      "fanout": 1,
+      "duration_seconds": 949.595142
+    },
+    "delivery": {
+      "sent": 10000,
+      "delivered": 10000,
+      "lost": 0,
+      "rejected": 0,
+      "pending": 0
+    },
+    "latency_ms": {
+      "count": 10000,
+      "p50": 68.72825900018142,
+      "p95": 82.32489500005613,
+      "p99": 83.54794900003526,
+      "max": 224.54945800018322
+    },
+    "hosts": [
+      {
+        "host_id": "host-a",
+        "rss_peak_bytes": 566468608,
+        "cpu_percent": 7.466195143990007
+      },
+      {
+        "host_id": "host-b",
+        "rss_peak_bytes": 578875392,
+        "cpu_percent": 8.718726460029186
+      },
+      {
+        "host_id": "host-c",
+        "rss_peak_bytes": 538537984,
+        "cpu_percent": 7.962470258021477
+      }
+    ],
+    "failed_policy_fields": [
+      "maximum_rss_bytes_per_host:host-a",
+      "maximum_rss_bytes_per_host:host-b",
+      "maximum_rss_bytes_per_host:host-c"
+    ],
+    "policy_sha256": "31372d1ef2509b2a9c867ec290836fca84496803ce0d2880d6adc1d3ff1f4d06",
+    "evidence_boundary": "one-tailnet recipient star; traffic paused during outage; host identity not independently attested",
+    "release_gate_accepted": false
+  }
+}

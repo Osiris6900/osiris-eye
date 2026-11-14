@@ -153,3 +153,71 @@ subscriptions, and avoids rewriting byte-identical verified key bindings.
 Signature, epoch, rollback and corrupt-index checks remain enforced. Distribution
 to four runners changes the declared topology, not the numerical policy. Exact
 source/binary hashes and the new run result are still required before promotion.
+
+
+## Traffic-on outage diagnostic
+
+The default soak deliberately drains delivery before restarting the sink and
+pauses its scheduled workload until every publisher recovers. Historical results
+retain that mode. They do not measure delivery of traffic submitted during an outage.
+
+For a new controlled run, `run_p2p_soak.py --traffic-during-outage` continues its
+scheduled workload while the recipient is stopped and reconnecting. It neither
+drains before the stop nor retries or replaces submitted observations. Every
+workload record retains its controller monotonic publish time, observed delivery
+time/count, loss at the observation cutoff and duplicate deliveries observed
+before that cutoff. The controller stops consuming events after every agent
+reports finished; later or undrained events are not claimed. Post-restart delivery
+of outage publications is counted separately from ordinary post-restart traffic.
+The scheduler is best effort: stop acknowledgement and event processing can delay
+its nominal cadence. Elapsed duration alone does not establish uniform publication
+cadence; the retained per-message times must be assessed separately. Only intended
+Host B decryption events for a tracked digest can count as a delivery. The report binds publication counts to the actual sink-stop, restart and full
+publisher-recovery windows. An aborted exercise retains pending-at-abort records
+rather than declaring their permanent loss.
+
+The existing capacity workflow exposes this only as an explicit manual option:
+
+```bash
+gh workflow run p2p-capacity.yml --repo Osiris6900/osiris-eye --ref REVIEWED_BRANCH \
+  -f sustained_100=true -f traffic_during_outage=true
+```
+
+The command needs normal authorized GitHub Actions access and the already
+configured private test-overlay secret. It does not provision independent
+staging hosts. `traffic_during_outage=true` without `sustained_100=true` is refused.
+The three short baseline sweeps retain their drained-restart behavior.
+
+The predeclared zero-loss and latency limits are unchanged. This diagnostic may
+fail them: disconnected Gossipsub publication is not a durable resend mechanism.
+Failures and partial measurements remain retained by the workflow. Passing
+reference/schema checks cannot certify host independence, NAT traversal, open
+mesh, production DR or T04/T19 acceptance; those decisions still need independent
+evidence and review.
+
+
+## Explicit node worker allocation
+
+`run_p2p_soak.py --node-worker-threads 1` (also `2` or `4`) sets the standard
+`TOKIO_WORKER_THREADS` environment variable on every spawned node, across all
+local/SSH agents. Omitting the option leaves this variable unset and clears any
+inherited value, preserving the historical default allocation by available CPU
+cores. The locked Tokio 1.54.1 runtime reads this variable in
+[`loom::sys::num_cpus`](https://github.com/tokio-rs/tokio/blob/tokio-1.54.1/tokio/src/loom/std/mod.rs);
+the node's bare `#[tokio::main]` has no explicit worker-count override.
+
+The workflow choice `node_worker_threads` accepts `default`, `1`, `2` or `4`
+and applies to both the short baseline sweeps and optional sustained run:
+
+```bash
+gh workflow run p2p-capacity.yml --repo Osiris6900/osiris-eye --ref REVIEWED_BRANCH \
+  -f sustained_100=true -f node_worker_threads=1
+```
+
+This changes real runtime allocation when many node processes share each host.
+It does not relabel aggregate process RSS as PSS or increase the predeclared
+512 MiB host budget. Requested settings and exact node environment configuration
+are recorded per host and in the report; actual runtime thread counts are not
+claimed independently measured. Different runtime settings require a new retained
+run, with the same memory, latency, delivery and recovery policy. No memory-budget
+pass or release acceptance is inferred from selecting one worker.
