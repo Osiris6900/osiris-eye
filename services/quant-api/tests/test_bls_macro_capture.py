@@ -17,6 +17,7 @@ from osiris_api.data_store import ResearchStore
 
 NOW = datetime(2026, 11, 14, 12, tzinfo=UTC)
 COMMIT = "a" * 40
+TRUSTED_CAPTURES = {}
 
 
 def response():
@@ -43,12 +44,16 @@ def capture(tmp_path, data=None, *, name="capture", now=NOW, status=200, **kwarg
         clock=lambda: now,
         **kwargs,
     )
+    TRUSTED_CAPTURES[directory] = result["capture_sha256"]
     return directory, result, hashlib.sha256(raw).hexdigest()
 
 
 def verify(directory, digest):
     return macro.verify_bls_capture(
-        directory, expected_commit=COMMIT, expected_response_sha256=digest
+        directory,
+        expected_commit=COMMIT,
+        expected_response_sha256=digest,
+        expected_capture_sha256=TRUSTED_CAPTURES[directory],
     )
 
 
@@ -76,6 +81,7 @@ def ingest(store, directory, digest, now=NOW, **kwargs):
         directory,
         expected_commit=COMMIT,
         expected_response_sha256=digest,
+        expected_capture_sha256=TRUSTED_CAPTURES[directory],
         policy=kwargs.pop("policy", policy()),
         now=now,
         **kwargs,
@@ -101,6 +107,35 @@ def test_capture_reproduces_three_monthly_series_without_backdating(tmp_path):
     )
     assert result["vendor_rights_verified"] is False
     assert result["release_gate_accepted"] is False
+
+
+def test_explicit_unavailable_statistic_retains_absence_not_numeric_fill(tmp_path, monkeypatch):
+    data = response()
+    for group in data["Results"]["series"]:
+        if group["seriesID"] in {"CUUR0000SA0", "LNS14000000"}:
+            row = next(r for r in group["data"] if r["year"] == "2025" and r["period"] == "M10")
+            row.update(
+                value="-",
+                footnotes=[
+                    {
+                        "code": "X",
+                        "text": "Data unavailable due to the 2025 lapse in appropriations",
+                    }
+                ],
+            )
+    directory, result, digest = capture(tmp_path, data)
+    assert result["passed"] is True
+    assert result["numeric_feed_complete"] is False
+    assert (result["available_values"], result["unavailable_values"]) == (64, 2)
+    rows = json.loads((directory / "observations.json").read_bytes())
+    missing = [row for row in rows if row["payload"]["value_status"] == "unavailable"]
+    assert len(missing) == 2
+    assert all(row["payload"]["value"] is None and row["payload"]["footnotes"] for row in missing)
+    monkeypatch.setenv("OSIRIS_P2P_INGEST_ENABLED", "1")
+    accepted = ingest(ResearchStore(str(tmp_path / "research.sqlite3")), directory, digest)
+    assert accepted["numeric_records_ingested"] == 64
+    assert accepted["unavailable_records_ingested"] == 2
+    assert accepted["numeric_feed_complete"] is False
 
 
 def test_ingestion_is_point_in_time_idempotent_and_revision_preserving(tmp_path, monkeypatch):
@@ -299,6 +334,16 @@ def test_oversized_capture_and_duplicate_json_fail_closed(tmp_path):
     assert result["passed"] is False
 
 
+def test_capture_verification_refuses_symlinked_evidence(tmp_path):
+    directory, _, digest = capture(tmp_path)
+    original = directory / "response.bin"
+    moved = tmp_path / "original-response.bin"
+    original.rename(moved)
+    original.symlink_to(moved)
+    with pytest.raises(ValueError, match="must_be_regular"):
+        verify(directory, digest)
+
+
 def test_http_transport_uses_only_fixed_post_and_refuses_redirects(monkeypatch):
     from io import BytesIO
     from urllib.error import HTTPError
@@ -339,6 +384,8 @@ def test_cli_refusal_does_not_provision_a_database(tmp_path, monkeypatch):
             COMMIT,
             "--response-sha256",
             digest,
+            "--capture-sha256",
+            TRUSTED_CAPTURES[directory],
             "--database",
             str(database),
             "--policy-json",

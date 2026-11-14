@@ -12,6 +12,7 @@ import json
 import math
 import os
 import re
+import stat
 from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -103,7 +104,15 @@ def _write(path: Path, value, *, raw=False) -> None:
 
 
 def _read(path: Path, limit=MAX_RESPONSE_BYTES) -> bytes:
-    with path.open("rb") as file:
+    if path.is_symlink():
+        raise ValueError("bls_evidence_file_must_be_regular")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    with os.fdopen(os.open(path, flags), "rb") as file:
+        metadata = os.fstat(file.fileno())
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ValueError("bls_evidence_file_must_be_regular")
+        if metadata.st_size > limit:
+            raise ValueError("bls_evidence_file_too_large")
         raw = file.read(limit + 1)
     if len(raw) > limit:
         raise ValueError("bls_evidence_file_too_large")
@@ -203,14 +212,6 @@ def _normalize(raw: bytes, plan: dict, received: datetime) -> list[dict]:
                 raise ValueError("bls_future_reference_period")
             latest = max(latest or reference, reference)
             value = row.get("value")
-            if not isinstance(value, str) or not re.fullmatch(r"[0-9]{1,12}(\.[0-9]{1,6})?", value):
-                raise ValueError("bls_value_invalid")
-            amount = Decimal(value)
-            if (series_id == "LNS14000000" and amount > 100) or (
-                series_id != "LNS14000000" and amount <= 0
-            ):
-                raise ValueError("bls_value_out_of_range")
-            value = format(amount, "f").rstrip("0").rstrip(".") if "." in value else value
             notes = row.get("footnotes")
             if not isinstance(notes, list) or len(notes) > 5:
                 raise ValueError("bls_footnotes_invalid")
@@ -232,11 +233,28 @@ def _normalize(raw: bytes, plan: dict, received: datetime) -> list[dict]:
                             normalized[field] = item
                 if normalized:
                     footnotes.append(normalized)
+            if value == "-" and any(note.get("text") for note in footnotes):
+                # BLS explicitly marks unavailable periods (including the 2025
+                # lapse in appropriations). Preserve absence, never impute it.
+                value, value_status = None, "unavailable"
+            else:
+                if not isinstance(value, str) or not re.fullmatch(
+                    r"[0-9]{1,12}(\.[0-9]{1,6})?", value
+                ):
+                    raise ValueError("bls_value_invalid")
+                amount = Decimal(value)
+                if (series_id == "LNS14000000" and amount > 100) or (
+                    series_id != "LNS14000000" and amount <= 0
+                ):
+                    raise ValueError("bls_value_out_of_range")
+                value = format(amount, "f").rstrip("0").rstrip(".") if "." in value else value
+                value_status = "reported"
             semantic = {
                 "series_id": series_id,
                 "year": year,
                 "period": period,
                 "value": value,
+                "value_status": value_status,
                 "footnotes": footnotes,
                 **SERIES[series_id],
             }
@@ -302,6 +320,7 @@ def capture_bls(
         "request_sha256": _digest(body),
         "source_url": ENDPOINT,
         "vendor_rights_verified": False,
+        "independent_provenance_verified": False,
         "release_gate_accepted": False,
         "live_trading_authorized": False,
     }
@@ -326,15 +345,30 @@ def capture_bls(
         ):
             raise ValueError("bls_source_changed_during_capture")
         _write(directory / "observations.json", observations)
-        result.update(passed=True, observations=len(observations), series=len(plan["series"]))
+        result.update(
+            passed=True,
+            observations=len(observations),
+            series=len(plan["series"]),
+            observations_sha256=_digest(_canonical(observations)),
+            available_values=sum(r["payload"]["value_status"] == "reported" for r in observations),
+            unavailable_values=sum(
+                r["payload"]["value_status"] == "unavailable" for r in observations
+            ),
+        )
+        result["numeric_feed_complete"] = result["unavailable_values"] == 0
     except (OSError, ValueError, TypeError) as error:
         result["error"] = {"type": type(error).__name__, "message": str(error)}
+    result["capture_sha256"] = _digest(_canonical(result))
     _write(directory / "capture.json", result)
     return result
 
 
 def verify_bls_capture(
-    directory: Path, *, expected_commit: str, expected_response_sha256: str
+    directory: Path,
+    *,
+    expected_commit: str,
+    expected_response_sha256: str,
+    expected_capture_sha256: str,
 ) -> dict:
     directory = Path(directory)
     if not isinstance(expected_response_sha256, str) or not re.fullmatch(
@@ -343,6 +377,17 @@ def verify_bls_capture(
         raise ValueError("bls_trusted_response_digest_required")
     plan = _json(_read(directory / "plan.json"))
     result = _json(_read(directory / "capture.json"))
+    if not isinstance(expected_capture_sha256, str) or not re.fullmatch(
+        "[0-9a-f]{64}", expected_capture_sha256
+    ):
+        raise ValueError("bls_trusted_capture_digest_required")
+    if (
+        not isinstance(result, dict)
+        or result.get("capture_sha256") != expected_capture_sha256
+        or _digest(_canonical({k: v for k, v in result.items() if k != "capture_sha256"}))
+        != expected_capture_sha256
+    ):
+        raise ValueError("bls_capture_digest_mismatch")
     started = _utc(datetime.fromisoformat(plan["requested_at"]))
     if plan != _plan(expected_commit, plan["series"], started):
         raise ValueError("bls_plan_or_source_mismatch")
@@ -361,15 +406,26 @@ def verify_bls_capture(
         or _read(directory / "request.json") != _request_body(plan)
         or any(
             result.get(k) is not False
-            for k in ("vendor_rights_verified", "release_gate_accepted", "live_trading_authorized")
+            for k in (
+                "vendor_rights_verified",
+                "independent_provenance_verified",
+                "release_gate_accepted",
+                "live_trading_authorized",
+            )
         )
     ):
         raise ValueError("bls_capture_binding_mismatch")
     observations = _normalize(raw, plan, received)
     if (
         observations != _json(_read(directory / "observations.json"))
+        or result.get("observations_sha256") != _digest(_canonical(observations))
         or result.get("observations") != len(observations)
         or result.get("series") != len(plan["series"])
+        or result.get("available_values")
+        != sum(r["payload"]["value_status"] == "reported" for r in observations)
+        or result.get("unavailable_values")
+        != sum(r["payload"]["value_status"] == "unavailable" for r in observations)
+        or result.get("numeric_feed_complete") is not (result["unavailable_values"] == 0)
     ):
         raise ValueError("bls_normalization_mismatch")
     return {
@@ -377,6 +433,11 @@ def verify_bls_capture(
         "candidate_commit": expected_commit,
         "observations": len(observations),
         "response_sha256": expected_response_sha256,
+        "capture_sha256": expected_capture_sha256,
+        "available_values": result["available_values"],
+        "unavailable_values": result["unavailable_values"],
+        "numeric_feed_complete": result["numeric_feed_complete"],
+        "independent_provenance_verified": False,
         "vendor_rights_verified": False,
         "release_gate_accepted": False,
         "live_trading_authorized": False,
@@ -388,6 +449,7 @@ def preflight_bls_ingestion(
     *,
     expected_commit: str,
     expected_response_sha256: str,
+    expected_capture_sha256: str,
     policy: dict,
     now: datetime,
     max_age_seconds: float = 300,
@@ -405,6 +467,7 @@ def preflight_bls_ingestion(
         directory,
         expected_commit=expected_commit,
         expected_response_sha256=expected_response_sha256,
+        expected_capture_sha256=expected_capture_sha256,
     )
     rows = _json(_read(Path(directory) / "observations.json"))
     current = _utc(now)
@@ -422,6 +485,7 @@ def ingest_bls_capture(
     *,
     expected_commit: str,
     expected_response_sha256: str,
+    expected_capture_sha256: str,
     policy: dict,
     now: datetime,
     max_age_seconds: float = 300,
@@ -434,11 +498,12 @@ def ingest_bls_capture(
         directory,
         expected_commit=expected_commit,
         expected_response_sha256=expected_response_sha256,
+        expected_capture_sha256=expected_capture_sha256,
         policy=policy,
         now=now,
         max_age_seconds=max_age_seconds,
     )
-    added = duplicates = revisions = 0
+    added = duplicates = revisions = unavailable_added = 0
     with store.transaction() as connection:
         for row in rows:
             prefix = row["record_key"].rsplit(":", 1)[0] + ":%"
@@ -488,4 +553,12 @@ def ingest_bls_capture(
                 payload=payload,
             )
             added += 1
-    return {**verified, "ingested": added, "duplicates_skipped": duplicates, "revisions": revisions}
+            unavailable_added += row["payload"]["value_status"] == "unavailable"
+    return {
+        **verified,
+        "ingested": added,
+        "duplicates_skipped": duplicates,
+        "revisions": revisions,
+        "numeric_records_ingested": added - unavailable_added,
+        "unavailable_records_ingested": unavailable_added,
+    }

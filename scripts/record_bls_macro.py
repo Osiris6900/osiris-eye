@@ -34,6 +34,7 @@ def main() -> int:
         command.add_argument("--capture-dir", required=True, type=Path)
         command.add_argument("--commit", required=True)
         command.add_argument("--response-sha256", required=True)
+        command.add_argument("--capture-sha256", required=True)
         if name == "ingest":
             command.add_argument("--database", required=True, type=Path)
             command.add_argument("--policy-json", required=True, type=Path)
@@ -70,6 +71,7 @@ def main() -> int:
                 args.capture_dir,
                 expected_commit=args.commit,
                 expected_response_sha256=args.response_sha256,
+                expected_capture_sha256=args.capture_sha256,
             )
         else:
             policy = json.loads(args.policy_json.read_bytes())
@@ -78,6 +80,7 @@ def main() -> int:
                 args.capture_dir,
                 expected_commit=args.commit,
                 expected_response_sha256=args.response_sha256,
+                expected_capture_sha256=args.capture_sha256,
                 policy=policy,
                 now=current,
             )
@@ -86,6 +89,7 @@ def main() -> int:
                 args.capture_dir,
                 expected_commit=args.commit,
                 expected_response_sha256=args.response_sha256,
+                expected_capture_sha256=args.capture_sha256,
                 policy=policy,
                 now=current,
             )

@@ -13,7 +13,8 @@ From a clean committed checkout:
 python scripts/record_bls_macro.py capture --output-dir /tmp/bls-capture-unique \
   --series CUUR0000SA0 LNS14000000 CES0000000001
 python scripts/record_bls_macro.py verify --capture-dir /tmp/bls-capture-unique \
-  --commit FULL_CAPTURE_COMMIT --response-sha256 PRINTED_RESPONSE_DIGEST
+  --commit FULL_CAPTURE_COMMIT --response-sha256 PRINTED_RESPONSE_DIGEST \
+  --capture-sha256 PRINTED_CAPTURE_DIGEST
 ```
 
 The private, exclusive capture directory contains the frozen plan and exact
@@ -24,12 +25,24 @@ latest periods, future periods, unbounded responses and clock rollback fail
 closed. A failed parse retains its bounded original response. No synthetic
 replacement is generated when BLS is unavailable.
 
+Keep the printed capture digest separately. It anchors the frozen plan, request,
+response hash, received-time metadata and reproduced observations. A response
+digest alone cannot detect a consistently rewritten capture timestamp. Hashes
+still do not independently attest the source or collector clock.
+
 The statistical event date is the exclusive end of the reference month. It is
 **not a BLS publication timestamp**. Every observation's availability is the
 actual HTTP receive time, including historical or revised values returned by
 the latest-vintage API. This cannot reconstruct what BLS published in the past,
 serve as an advance release calendar or establish a profitable macro signal.
 Preliminary/revision footnotes are retained. Annual averages are excluded.
+Explicit BLS unavailable values (`-` with explanatory footnotes, including
+October 2025 shutdown gaps) remain `null` with `value_status=unavailable`.
+They are never converted to zero, interpolated or treated as a numeric signal.
+The report separates numeric and unavailable counts and sets
+`numeric_feed_complete=false` when an official period has no statistic. Optional
+ingestion retains unavailable records as metadata with explicit null/status;
+its numeric ingestion count excludes them.
 
 Optional research-store ingestion requires an existing genuine operator feed
 policy, provider `bls-public-monthly`, instruments `MACRO:BLS:<series ID>`, and
@@ -41,6 +54,7 @@ and current-capture freshness checks run before database creation/writes:
 OSIRIS_P2P_INGEST_ENABLED=1 python scripts/record_bls_macro.py ingest \
   --capture-dir /tmp/bls-capture-unique --commit FULL_CAPTURE_COMMIT \
   --response-sha256 PRINTED_RESPONSE_DIGEST \
+  --capture-sha256 PRINTED_CAPTURE_DIGEST \
   --policy-json /private/operator-feed-policy.json --database /private/research.sqlite3
 ```
 
