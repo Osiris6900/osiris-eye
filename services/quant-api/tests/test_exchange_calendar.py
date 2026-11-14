@@ -120,9 +120,24 @@ def test_status_does_not_trust_ambiguous_legacy_session(tmp_path):
 
 
 @pytest.mark.parametrize("clock", ["09:30Z", "09:30+01:00"])
-def test_session_wall_times_cannot_override_venue_timezone(clock):
+@pytest.mark.parametrize("field", ["open", "close"])
+def test_session_wall_times_cannot_override_venue_timezone(clock, field):
+    session = {"open": "09:30", "close": "16:00", field: clock}
     with pytest.raises(ValueError, match="local_wall_times"):
-        normalize_record(record(sessions=[{"open": clock, "close": "16:00"}]))
+        normalize_record(record(sessions=[session]))
+
+
+@pytest.mark.parametrize("field", ["open", "close"])
+def test_status_refuses_offset_legacy_session_before_comparison(tmp_path, field):
+    import json
+
+    store = ExchangeCalendarStore(str(tmp_path / "calendar.sqlite"))
+    store.put(record(), "2026-01-01T00:00:00Z")
+    session = {"open": "09:30", "close": "16:00", field: "16:00+01:00"}
+    with store._connect() as db:
+        db.execute("UPDATE calendar_versions SET sessions_json=?", (json.dumps([session]),))
+    with pytest.raises(ValueError, match="local_wall_times"):
+        store.status("XNYS", "2026-11-03T15:00:00Z")
 
 
 @pytest.mark.parametrize("zone", ["/etc/passwd", "../UTC", ""])

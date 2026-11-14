@@ -76,6 +76,8 @@ def normalize_record(record: dict[str, Any]) -> dict[str, Any]:
             end = time.fromisoformat(item.get("close", ""))
         except (TypeError, ValueError) as exc:
             raise ValueError("session_open_close_must_be_hh_mm") from exc
+        if start.tzinfo is not None or end.tzinfo is not None:
+            raise ValueError("session_times_must_be_local_wall_times")
         if start.second or start.microsecond or end.second or end.microsecond:
             raise ValueError("session_times_must_use_minute_precision")
         start_local = _local_datetime(day, start, zone)
@@ -186,8 +188,10 @@ class ExchangeCalendarStore:
                     continue
                 for session in item["sessions"]:
                     open_time = time.fromisoformat(session["open"])
-                    start = _local_datetime(local_day, open_time, zone)
                     close_time = time.fromisoformat(session["close"])
+                    if open_time.tzinfo is not None or close_time.tzinfo is not None:
+                        raise ValueError("session_times_must_be_local_wall_times")
+                    start = _local_datetime(local_day, open_time, zone)
                     end_day = local_day + timedelta(days=1) if close_time <= open_time else local_day
                     end = _local_datetime(end_day, close_time, zone)
                     start_utc, end_utc = start.astimezone(timezone.utc), end.astimezone(timezone.utc)

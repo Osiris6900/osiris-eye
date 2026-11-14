@@ -127,8 +127,19 @@ def _number(value: Any, *, positive: bool = False) -> Decimal:
     return number
 
 
+def _ledger_decimal(number: Decimal) -> Decimal:
+    # Aggregate balances can contain more digits than any one accepted input:
+    # 1000 - 1e-300 must remain exact. External values still enter via _number.
+    parts = number.as_tuple()
+    if (not number.is_finite() or len(parts.digits) > 4096
+            or abs(parts.exponent) > 2000
+            or max(number.adjusted() + 1, 1) + max(-parts.exponent, 0) > 8190):
+        raise ValueError("decimal_precision_out_of_range")
+    return number
+
+
 def _canonical(number: Decimal) -> str:
-    text = format(validate_decimal_bounds(number), "f")
+    text = format(_ledger_decimal(number), "f")
     if "." in text:
         text = text.rstrip("0").rstrip(".")
     return text or "0"
@@ -149,7 +160,7 @@ def _risk_exposures_as_floats(side, qty, price, position, gross):
         # the exact held notional separately can be one ULP smaller. The
         # Decimal veto and reserved-share checks still enforce actual coverage;
         # no rejected risk decision is overridden.
-        exact_notional = qty * price
+        exact_notional = Fraction(qty) * Fraction(price)
         float_notional = _as_float(qty) * _as_float(price)
         if exact_notional <= position:
             position_float = max(position_float, float_notional)
@@ -330,7 +341,22 @@ def _verify_audit(conn: sqlite3.Connection) -> None:
 
 def _apply(
     cash: Decimal, held: Decimal, avg: Decimal, side: str, qty: Decimal, px: Decimal, fee: Decimal,
+    *, exact: bool = False,
 ) -> tuple[Decimal, Decimal, Decimal, Decimal] | None:
+    if exact:
+        cash_f, held_f, avg_f = Fraction(cash), Fraction(held), Fraction(avg)
+        qty_f, price_f, fee_f = Fraction(qty), Fraction(px), Fraction(fee)
+        notional = qty_f * price_f
+        if side == "BUY":
+            total, new_qty = notional + fee_f, held_f + qty_f
+            if total > cash_f:
+                return None
+            return (_finite_decimal(cash_f - total), _finite_decimal(new_qty),
+                    _average_cost_decimal((held_f * avg_f + total) / new_qty), Decimal("0"))
+        if qty_f > held_f or notional < fee_f:
+            return None
+        return (_finite_decimal(cash_f + notional - fee_f), _finite_decimal(held_f - qty_f),
+                avg, _finite_decimal(qty_f * (price_f - avg_f) - fee_f))
     if side == "BUY":
         total = qty * px + fee
         if total > cash:
@@ -363,7 +389,20 @@ def _finite_decimal(value: Fraction) -> Decimal:
     # Do not round a closing residual using the ambient Decimal context.
     with localcontext(Context(prec=4096)) as context:
         context.traps[Inexact] = True
-        return validate_decimal_bounds(Decimal(value.numerator) / Decimal(value.denominator))
+        return _ledger_decimal(Decimal(value.numerator) / Decimal(value.denominator))
+
+
+def _average_cost_decimal(value: Fraction) -> Decimal:
+    # Keep finite costs exactly. Only a repeating average needs the historical
+    # 28-digit display allocation, under an explicit, reproducible context.
+    denominator = value.denominator
+    for factor in (2, 5):
+        while denominator % factor == 0:
+            denominator //= factor
+    if denominator == 1:
+        return _finite_decimal(value)
+    with localcontext(Context(prec=28)):
+        return _ledger_decimal(Decimal(value.numerator) / Decimal(value.denominator))
 
 
 def _fill_cashflow(side: str, qty: Decimal, px: Decimal, fee: Decimal) -> Fraction:
@@ -394,7 +433,7 @@ def _recompute(conn: sqlite3.Connection) -> tuple[Decimal, Decimal, dict[str, tu
         held, avg = positions.get(fill["symbol"], (Decimal("0"), Decimal("0")))
         applied = _apply(
             cash, held, avg, fill["side"], Decimal(fill["quantity"]),
-            Decimal(fill["price"]), Decimal(fill["fee"]),
+            Decimal(fill["price"]), Decimal(fill["fee"]), exact=settle,
         )
         if applied is None:
             raise ValueError("reconciliation_break")
@@ -428,6 +467,7 @@ def _marks(conn: sqlite3.Connection) -> dict[str, Decimal]:
 
 def _expected_unrealized(
     positions: dict[str, tuple[Decimal, Decimal]], marks: dict[str, Decimal],
+    *, exact: bool = False,
 ) -> tuple[Decimal, list[str]]:
     """Mark long paper inventory. An unmarked name contributes zero and is listed."""
     total = Decimal("0")
@@ -436,7 +476,10 @@ def _expected_unrealized(
         if symbol not in marks:
             unmarked.append(symbol)
             continue
-        total += qty * (marks[symbol] - avg)
+        if exact:
+            total = _finite_decimal(Fraction(total) + Fraction(qty) * (Fraction(marks[symbol]) - Fraction(avg)))
+        else:
+            total += qty * (marks[symbol] - avg)
     return total, unmarked
 
 
@@ -489,8 +532,8 @@ def _raise_buy_exposure(
     if exposure == price:
         return position, gross
     held, _average = _position(conn, symbol)
-    uplift = (held + added_qty) * (exposure - price)
-    return position + uplift, gross + uplift
+    uplift = (Fraction(held) + Fraction(added_qty)) * (Fraction(exposure) - Fraction(price))
+    return _finite_decimal(Fraction(position) + uplift), _finite_decimal(Fraction(gross) + uplift)
 
 
 def _adverse_daily_pnl(
@@ -519,18 +562,19 @@ def _adverse_daily_pnl(
             marks[held] = observed
         elif held in fresh:
             marks[held] = fresh[held]
-    unrealized, unmarked = _expected_unrealized(positions, marks)
+    unrealized, unmarked = _expected_unrealized(positions, marks, exact=_closing_settlement_enabled(conn))
     if unmarked:
         if realized <= -limit:
             return realized, "daily_loss_limit_reached"
         return None, "unrealized_pnl_unavailable"
-    adverse = realized + (unrealized if unrealized < 0 else Decimal("0"))
+    adverse = _finite_decimal(Fraction(realized) + min(Fraction(unrealized), Fraction(0)))
     if adverse <= -limit:
         return adverse, "daily_loss_limit_reached"
     return adverse, None
 
 
 def _order_breaks(conn: sqlite3.Connection) -> list[str]:
+    exact = _closing_settlement_enabled(conn)
     breaks: list[str] = []
     filled_by_order: dict[str, Decimal] = {}
     fee_by_order: dict[str, Decimal] = {}
@@ -542,12 +586,12 @@ def _order_breaks(conn: sqlite3.Connection) -> list[str]:
         if qty <= 0 or price <= 0 or fee < 0:
             breaks.append(f"fill_economics:{fill['client_fill_id']}")
         seen_orders.add(fill["client_order_id"])
+        prior_qty = filled_by_order.get(fill["client_order_id"], Decimal("0"))
+        prior_fee = fee_by_order.get(fill["client_order_id"], Decimal("0"))
         filled_by_order[fill["client_order_id"]] = (
-            filled_by_order.get(fill["client_order_id"], Decimal("0")) + qty
-        )
+            _finite_decimal(Fraction(prior_qty) + Fraction(qty)) if exact else prior_qty + qty)
         fee_by_order[fill["client_order_id"]] = (
-            fee_by_order.get(fill["client_order_id"], Decimal("0")) + fee
-        )
+            _finite_decimal(Fraction(prior_fee) + Fraction(fee)) if exact else prior_fee + fee)
     known: set[str] = set()
     for order in conn.execute("SELECT * FROM paper_exec_orders"):
         key = order["client_order_id"]
@@ -568,7 +612,8 @@ def _order_breaks(conn: sqlite3.Connection) -> list[str]:
         elif state == "accepted" and (filled != 0 or leaves != qty):
             breaks.append(f"accepted_residue:{key}")
         elif state == "partially_filled" and (
-            filled <= 0 or leaves <= 0 or filled + leaves != qty
+            filled <= 0 or leaves <= 0 or (
+                Fraction(filled) + Fraction(leaves) != Fraction(qty) if exact else filled + leaves != qty)
         ):
             breaks.append(f"partial_residue:{key}")
         elif state == "filled" and (leaves != 0 or filled != qty):
@@ -616,7 +661,8 @@ def _reconcile_breaks(conn: sqlite3.Connection) -> list[str]:
     for symbol, (qty, avg) in positions.items():
         if stored.get(symbol) != (qty, avg):
             breaks.append(f"position:{symbol}")
-    expected_unrealized, _unmarked = _expected_unrealized(positions, _marks(conn))
+    expected_unrealized, _unmarked = _expected_unrealized(
+        positions, _marks(conn), exact=_closing_settlement_enabled(conn))
     recorded_unrealized = Decimal(account["unrealized_pnl"]) if "unrealized_pnl" in account.keys() else Decimal("0")
     if recorded_unrealized != expected_unrealized:
         breaks.append("unrealized_pnl")
@@ -643,6 +689,7 @@ def _journal_projection_breaks(conn: sqlite3.Connection) -> list[str]:
     """
     if _journal_schema(conn) != JOURNAL_SCHEMA:
         return []
+    exact = _closing_settlement_enabled(conn)
     try:
         rows = conn.execute("SELECT * FROM paper_exec_audit ORDER BY seq").fetchall()
         initial = json.loads(rows[0]["payload"])
@@ -696,12 +743,15 @@ def _journal_projection_breaks(conn: sqlite3.Connection) -> list[str]:
                         raise ValueError("invalid_immediate_fill")
                     target = "filled"
                 else:
-                    leaves = Decimal(order["leaves_quantity"]) - qty
+                    leaves = (_finite_decimal(Fraction(order["leaves_quantity"]) - Fraction(qty))
+                              if exact else Decimal(order["leaves_quantity"]) - qty)
                     if leaves < 0:
                         raise ValueError("journal_overfill")
                     target = "filled" if leaves == 0 else "partially_filled"
                     order_transition(order["state"], target)
-                    order["filled_quantity"] = _canonical(Decimal(order["filled_quantity"]) + qty)
+                    filled = (_finite_decimal(Fraction(order["filled_quantity"]) + Fraction(qty))
+                              if exact else Decimal(order["filled_quantity"]) + qty)
+                    order["filled_quantity"] = _canonical(filled)
                     order["leaves_quantity"] = _canonical(leaves)
                 if payload["state"] != target:
                     raise ValueError("journal_fill_state_mismatch")
@@ -769,9 +819,9 @@ def _book(conn: sqlite3.Connection, symbol: str, price: Decimal) -> tuple[Decima
         mark = price if row["symbol"] == symbol else marks.get(
             row["symbol"], Decimal(row["average_cost"])
         )
-        gross += abs(qty * mark)
+        gross = _finite_decimal(Fraction(gross) + abs(Fraction(qty) * Fraction(mark)))
         if row["symbol"] == symbol:
-            symbol_notional = qty * price
+            symbol_notional = _finite_decimal(Fraction(qty) * Fraction(price))
     return symbol_notional, gross
 
 
@@ -811,11 +861,13 @@ def _position(conn: sqlite3.Connection, symbol: str) -> tuple[Decimal, Decimal]:
 
 
 def _charged_fee(conn: sqlite3.Connection, client_order_id: str) -> Decimal:
+    exact = _closing_settlement_enabled(conn)
     total = Decimal("0")
     for row in conn.execute(
         "SELECT fee FROM paper_exec_fills WHERE client_order_id=?", (client_order_id,)
     ):
-        total += Decimal(row["fee"])
+        total = (_finite_decimal(Fraction(total) + Fraction(row["fee"]))
+                 if exact else total + Decimal(row["fee"]))
     return total
 
 
@@ -829,13 +881,13 @@ def _reserved(conn: sqlite3.Connection) -> tuple[Decimal, dict[str, Decimal]]:
     )
     for row in rows:
         leaves = Decimal(row["leaves_quantity"])
-        remaining_fee = Decimal(row["fee"]) - _charged_fee(conn, row["client_order_id"])
+        remaining_fee = _finite_decimal(Fraction(row["fee"]) - Fraction(_charged_fee(conn, row["client_order_id"])))
         if remaining_fee < 0:
             remaining_fee = Decimal("0")
         if row["side"] == "BUY":
-            cash += leaves * Decimal(row["price"]) + remaining_fee
+            cash = _finite_decimal(Fraction(cash) + Fraction(leaves) * Fraction(row["price"]) + Fraction(remaining_fee))
         else:
-            sells[row["symbol"]] = sells.get(row["symbol"], Decimal("0")) + leaves
+            sells[row["symbol"]] = _finite_decimal(Fraction(sells.get(row["symbol"], Decimal("0"))) + Fraction(leaves))
     return cash, sells
 
 
@@ -847,10 +899,10 @@ def _open_buy_exposure(conn: sqlite3.Connection, symbol: str) -> tuple[Decimal, 
            WHERE state IN ('accepted', 'partially_filled') AND side='BUY'"""
     )
     for row in rows:
-        notion = Decimal(row["leaves_quantity"]) * Decimal(row["price"])
-        gross += notion
+        notion = Fraction(row["leaves_quantity"]) * Fraction(row["price"])
+        gross = _finite_decimal(Fraction(gross) + notion)
         if row["symbol"] == symbol:
-            symbol_notional += notion
+            symbol_notional = _finite_decimal(Fraction(symbol_notional) + notion)
     return symbol_notional, gross
 
 
@@ -876,8 +928,8 @@ def execution_context(
             position, gross = _book(conn, normalized, px)
             if side.upper() == "BUY":
                 pending_position, pending_gross = _open_buy_exposure(conn, normalized)
-                position += pending_position
-                gross += pending_gross
+                position = _finite_decimal(Fraction(position) + Fraction(pending_position))
+                gross = _finite_decimal(Fraction(gross) + Fraction(pending_gross))
                 position, gross = _raise_buy_exposure(
                     conn, account, normalized, px, position, gross, Decimal("0"), now,
                 )
@@ -923,9 +975,9 @@ def _fill_risk_reason(
     if order["side"] == "BUY":
         pending_position, pending_gross = _open_buy_exposure(conn, order["symbol"])
         # Replace this fill's reservation with its actual execution notional.
-        released = quantity * Decimal(order["price"])
-        position += pending_position - released
-        gross += pending_gross - released
+        released = Fraction(quantity) * Fraction(order["price"])
+        position = _finite_decimal(Fraction(position) + Fraction(pending_position) - released)
+        gross = _finite_decimal(Fraction(gross) + Fraction(pending_gross) - released)
         position, gross = _raise_buy_exposure(
             conn, account, order["symbol"], price, position, gross, quantity, now,
         )
@@ -961,18 +1013,18 @@ def _decimal_risk_reason(
     of that exact check. Buy notionals passed here already use a higher fresh
     mark when one exists. A missing mark on another holding fails closed.
     """
-    notional = qty * price
-    if notional > Decimal(account["max_order_notional"]):
+    notional = Fraction(qty) * Fraction(price)
+    if notional > Fraction(account["max_order_notional"]):
         return "max_order_notional_exceeded"
     if side == "BUY":
-        if position + notional > Decimal(account["max_position_notional"]):
+        if Fraction(position) + notional > Fraction(account["max_position_notional"]):
             return "max_position_notional_exceeded"
         _adverse, loss_reason = _adverse_daily_pnl(
             conn, account, symbol=symbol, price=price, now=now,
         )
         if loss_reason is not None:
             return loss_reason
-        if gross + notional > Decimal(account["max_gross_exposure"]):
+        if Fraction(gross) + notional > Fraction(account["max_gross_exposure"]):
             return "exposure_budget_exceeded"
     elif notional > position or notional > gross:
         return "invalid_order_or_position"
@@ -984,7 +1036,7 @@ def _refresh_unrealized(conn: sqlite3.Connection) -> None:
         row["symbol"]: (Decimal(row["quantity"]), Decimal(row["average_cost"]))
         for row in conn.execute("SELECT symbol, quantity, average_cost FROM paper_exec_positions")
     }
-    expected, _unmarked = _expected_unrealized(positions, _marks(conn))
+    expected, _unmarked = _expected_unrealized(positions, _marks(conn), exact=_closing_settlement_enabled(conn))
     conn.execute(
         "UPDATE paper_exec_meta SET unrealized_pnl=? WHERE id=1", (_canonical(expected),)
     )
@@ -995,11 +1047,12 @@ def _persist_application(
     qty: Decimal, px: Decimal, fee: Decimal,
 ) -> Decimal | None:
     held, avg = _position(conn, symbol)
-    applied = _apply(Decimal(account["cash"]), held, avg, side, qty, px, fee)
+    settle = _closing_settlement_enabled(conn)
+    applied = _apply(Decimal(account["cash"]), held, avg, side, qty, px, fee, exact=settle)
     if applied is None:
         return None
     new_cash, new_qty, new_avg, realized_delta = applied
-    if _closing_settlement_enabled(conn):
+    if settle:
         if new_qty == 0:
             realized_delta = _closing_delta(conn, symbol, qty, px, fee)
         new_realized = _finite_decimal(Fraction(Decimal(account["realized_pnl"])) + Fraction(realized_delta))
@@ -1120,7 +1173,7 @@ def _fresh(account: sqlite3.Row, observed_at: object, now: object) -> bool:
 def _execution_reject(side: str, qty: Decimal, px: Decimal, cost: Decimal, held: Decimal) -> str:
     if side == "BUY":
         return "insufficient_paper_cash"
-    if qty <= held and qty * px - cost < 0:
+    if qty <= held and Fraction(qty) * Fraction(px) < Fraction(cost):
         return "fee_exceeds_sell_proceeds"
     return "insufficient_paper_position"
 
@@ -1138,8 +1191,8 @@ def _submit_new_order(
     filled_notional, filled_gross = _book(conn, symbol, px)
     if side == "BUY":
         extra_symbol, extra_gross = _open_buy_exposure(conn, symbol)
-        position_notional = filled_notional + extra_symbol
-        gross = filled_gross + extra_gross
+        position_notional = _finite_decimal(Fraction(filled_notional) + Fraction(extra_symbol))
+        gross = _finite_decimal(Fraction(filled_gross) + Fraction(extra_gross))
         position_notional, gross = _raise_buy_exposure(
             conn, account, symbol, px, position_notional, gross, qty, now,
         )
@@ -1174,12 +1227,12 @@ def _submit_new_order(
     else:
         reserved_cash, reserved_sell = _reserved(conn)
         held, _avg = _position(conn, symbol)
-        available_cash = Decimal(account["cash"]) - reserved_cash
-        available_qty = held - reserved_sell.get(symbol, Decimal("0"))
+        available_cash = Fraction(account["cash"]) - Fraction(reserved_cash)
+        available_qty = Fraction(held) - Fraction(reserved_sell.get(symbol, Decimal("0")))
         blocked = False
-        if side == "BUY" and qty * px + cost > available_cash:
+        if side == "BUY" and Fraction(qty) * Fraction(px) + Fraction(cost) > available_cash:
             blocked = True
-        elif side == "SELL" and (qty > available_qty or qty * px - cost < 0):
+        elif side == "SELL" and (qty > available_qty or Fraction(qty) * Fraction(px) < Fraction(cost)):
             blocked = True
         if blocked:
             status = "execution_rejected"
@@ -1348,15 +1401,18 @@ def _text_id(value: Any, error: str) -> str:
     return value.strip()
 
 
-def _allocated_fee(order_fee: Decimal, leaves: Decimal, fill_qty: Decimal, charged: Decimal) -> Decimal:
-    remaining = order_fee - charged
+def _allocated_fee(order_fee: Decimal, leaves: Decimal, fill_qty: Decimal, charged: Decimal,
+                   *, exact: bool = True) -> Decimal:
+    remaining = (_finite_decimal(Fraction(order_fee) - Fraction(charged))
+                 if exact else order_fee - charged)
     if remaining < 0:
         raise ValueError("fill_fee_exceeds_order")
     if fill_qty == leaves:
         return remaining
     if leaves <= 0:
         raise ValueError("invalid_fill_quantity")
-    return remaining * fill_qty / leaves
+    return (_average_cost_decimal(Fraction(remaining) * Fraction(fill_qty) / Fraction(leaves))
+            if exact else remaining * fill_qty / leaves)
 
 
 def _reject_fill(conn: sqlite3.Connection, key: str, event: str, payload: dict[str, Any]) -> None:
@@ -1458,13 +1514,14 @@ def _apply_paper_fill(
                     error = "idempotency_key_conflict"
             else:
                 account = conn.execute("SELECT * FROM paper_exec_meta WHERE id=1").fetchone()
+                exact = _closing_settlement_enabled(conn)
                 leaves = Decimal(order["leaves_quantity"])
                 limit = Decimal(order["price"])
                 fill_px = limit if explicit_price is None else explicit_price
                 charged = _charged_fee(conn, key)
                 try:
                     fill_fee = (
-                        _allocated_fee(Decimal(order["fee"]), leaves, fill_qty, charged)
+                        _allocated_fee(Decimal(order["fee"]), leaves, fill_qty, charged, exact=exact)
                         if explicit_fee is None else explicit_fee
                     )
                 except ValueError as exc:
@@ -1473,7 +1530,8 @@ def _apply_paper_fill(
                 else:
                     problem = None
                 if problem is None and explicit_fee is not None:
-                    remaining_fee = Decimal(order["fee"]) - charged
+                    remaining_fee = (_finite_decimal(Fraction(order["fee"]) - Fraction(charged))
+                                     if exact else Decimal(order["fee"]) - charged)
                     if explicit_fee > remaining_fee:
                         problem = "fill_fee_exceeds_order"
                 worse = (
@@ -1505,7 +1563,8 @@ def _apply_paper_fill(
                     error = problem
                 else:
                     try:
-                        new_leaves = leaves - fill_qty
+                        new_leaves = (_finite_decimal(Fraction(leaves) - Fraction(fill_qty))
+                                      if exact else leaves - fill_qty)
                         target = "filled" if new_leaves == 0 else "partially_filled"
                         order_transition(order["state"], target)
                     except ValueError:
@@ -1531,7 +1590,8 @@ def _apply_paper_fill(
                             })
                             error = reason
                         else:
-                            new_filled = Decimal(order["filled_quantity"]) + fill_qty
+                            new_filled = (_finite_decimal(Fraction(order["filled_quantity"]) + Fraction(fill_qty))
+                                          if exact else Decimal(order["filled_quantity"]) + fill_qty)
                             previous = conn.execute(
                                 "SELECT seq FROM paper_exec_audit ORDER BY seq DESC LIMIT 1"
                             ).fetchone()
@@ -1743,7 +1803,8 @@ def _build_reconciliation_report(conn: sqlite3.Connection, account: sqlite3.Row)
     try:
         cash, realized, positions = _recompute(conn)
         unmarked: list[str] = []
-        expected_unrealized, unmarked = _expected_unrealized(positions, _marks(conn))
+        expected_unrealized, unmarked = _expected_unrealized(
+            positions, _marks(conn), exact=_closing_settlement_enabled(conn))
     except ValueError:
         cash = realized = expected_unrealized = None
         positions = {}
@@ -2065,11 +2126,12 @@ def daily_loss_gate(*, now: object = None) -> dict[str, Any]:
         realized, limit = Decimal(account["realized_pnl"]), Decimal(account["max_daily_loss"])
         unrealized, unmarked = _expected_unrealized(
             _open_positions(connection), _fresh_mark_prices(connection, account, now),
+            exact=_closing_settlement_enabled(connection),
         )
         if unmarked and realized > -limit:
             blank["reason"] = "unrealized_pnl_unavailable"
             return blank
-        adverse = realized + (min(unrealized, Decimal("0")) if not unmarked else Decimal("0"))
+        adverse = _finite_decimal(Fraction(realized) + (min(Fraction(unrealized), Fraction(0)) if not unmarked else Fraction(0)))
         return {
             "basis": DAILY_LOSS_BASIS,
             "state": "limit_reached" if adverse <= -limit else "clear",
@@ -2215,7 +2277,7 @@ def account_valuation(
         if not -max_future_skew_seconds <= age <= max_age_seconds:
             warnings.append(f"stale_mark:{symbol}")
             continue
-        market_value += quantity * Decimal(marks[symbol]["price"])
+        market_value = _finite_decimal(Fraction(market_value) + Fraction(quantity) * Fraction(marks[symbol]["price"]))
         times.append(marked_at)
     complete = not warnings
     return {
@@ -2223,7 +2285,7 @@ def account_valuation(
         "pnl": {
             "realized": account["realized_pnl"],
             "unrealized": account["unrealized_pnl"] if complete else None,
-            "equity": _canonical(Decimal(account["cash"]) + market_value) if complete else None,
+            "equity": _canonical(_finite_decimal(Fraction(account["cash"]) + Fraction(market_value))) if complete else None,
         },
         "valuation_warnings": warnings,
         "valuation_as_of": min(times).isoformat() if times and complete else None,

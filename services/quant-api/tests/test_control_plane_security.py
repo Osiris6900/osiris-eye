@@ -1,6 +1,7 @@
 import base64
 import json
 import time
+from contextlib import contextmanager
 
 import pytest
 from fastapi import FastAPI
@@ -103,6 +104,42 @@ def test_refused_reenrollment_fences_expired_sessions_without_changing_seed(tmp_
                                 clock=lambda: now[0])
     with pytest.raises(ValueError, match="identity_clock_rollback"):
         restarted.session(token, "config")
+
+
+def test_superseded_seed_cannot_confirm_replaced_enrollment(tmp_path, monkeypatch):
+    now = 1_800_000_000.0
+    db = Database(str(tmp_path / "identity.db"))
+    store = EncryptedSecrets(db, b"a" * 32)
+    identity = IdentityService(store, clock=lambda: now)
+    monkeypatch.setattr("osiris_api.control_plane.identity.secrets.token_bytes", lambda size: b"a" * size)
+    old_seed = identity.enroll("alice")
+    old_code = totp(old_seed, int(now // 30))
+    original_transaction = identity._timed_transaction
+    replacement = []
+
+    @contextmanager
+    def supersede_before_verification_lock():
+        # Re-enrollment wins immediately before verification acquires its lock.
+        # Reading the seed before that lock would confirm the new state with
+        # the superseded seed, even though seed and state were replaced together.
+        if not replacement:
+            replacement.append(None)
+            monkeypatch.setattr("osiris_api.control_plane.identity.secrets.token_bytes", lambda size: b"b" * size)
+            replacement[0] = identity.enroll("alice")
+        with original_transaction() as transaction:
+            yield transaction
+
+    monkeypatch.setattr(identity, "_timed_transaction", supersede_before_verification_lock)
+    with pytest.raises(ValueError, match="invalid_or_replayed_totp"):
+        identity.login("alice", "analyst", old_code, "config")
+    assert replacement[0] != old_seed
+    assert store.get("totp:alice") == replacement[0]
+    assert db.get("mfa", "alice")["value"]["confirmed"] is False
+    assert db.list("sessions") == []
+
+    restarted = IdentityService(EncryptedSecrets(Database(db.path), b"a" * 32), clock=lambda: now)
+    token = restarted.login("alice", "analyst", totp(replacement[0], int(now // 30)), "config")
+    assert restarted.session(token, "config")["actor"] == "alice"
 
 
 @pytest.mark.parametrize("invalid", [float("nan"), float("inf"), -1, "bad", True, 1e40])

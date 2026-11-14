@@ -21,6 +21,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 CHECKS = [
     ("python-tests", ["python", "-m", "pytest", "-q", "services/quant-api/tests"], None),
+    ("release-evidence-contracts", ["python", "-m", "unittest", "discover", "-s", "scripts", "-p", "test_check_release*.py"], None),
     ("release-inventory", ["python", "scripts/check_release_gate_status.py"], None),
     ("release-strict", ["python", "scripts/check_release_gate_status.py", "--strict"], None),
     ("p2p-workflows", ["python", "scripts/check_p2p_workflows.py"], None),
@@ -35,6 +36,7 @@ CHECKS = [
 # default strict release profile, vendor rights or independent-host acceptance.
 ENGINEERING_CHECKS = [
     ("release-inventory", ["python", "scripts/check_release_gate_status.py"], None),
+    ("release-evidence-contracts", ["python", "-m", "unittest", "discover", "-s", "scripts", "-p", "test_check_release*.py"], None),
     ("dependency-advisories", ["python", "scripts/scan_dependency_advisories.py", "--check", "docs/P2P_DEPENDENCY_ADVISORIES.json", "--fail-on-vulnerability"], None),
     ("python-lock", ["python", "scripts/check_python_lock.py"], None),
     ("license-provenance", ["python", "scripts/check_license_provenance.py"], None),
@@ -93,7 +95,7 @@ RELEASE_GATE_CHECKS = {
     "T17": ["browser", "peer-receipts", "python-tests"],
     "T18": ["local-paper-dr", "local-dr-integrity", "portable-recovery", "recovery-intakes"],
     "T19": ["receipt-paper", "receipt-artifact-integrity", "market-paper", "peer-receipts", "paper-failures"],
-    "T20": ["release-inventory", "security-intake", "vendor-intake"],
+    "T20": ["release-inventory", "release-evidence-contracts", "security-intake", "vendor-intake"],
 }
 
 

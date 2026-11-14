@@ -96,7 +96,6 @@ class IdentityService:
 
     def verify(self, actor: str, code: str) -> float:
         actor = identifier(actor)
-        seed = self.secrets.get("totp:" + actor)
         if not isinstance(code, str) or len(code) != 6 or not code.isascii() or not code.isdigit():
             code = "invalid"
         rejected = False
@@ -111,6 +110,15 @@ class IdentityService:
                 not state["confirmed"] and state["enroll_until"] < now
             ):
                 raise ValueError("mfa_unavailable")
+            # Enrollment replaces the seed and state atomically. Read both
+            # under this lock so a superseded seed cannot confirm new state.
+            secret = conn.execute(
+                "SELECT body FROM cp_documents WHERE collection='secrets' AND id=?",
+                ("totp:" + actor,),
+            ).fetchone()
+            if secret is None:
+                raise ValueError("secret_not_configured")
+            seed = self.secrets.open("totp:" + actor, json.loads(secret["body"]))
             current = int(now // 30)
             matched = next(
                 (

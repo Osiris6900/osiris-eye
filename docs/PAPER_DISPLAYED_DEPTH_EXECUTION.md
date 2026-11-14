@@ -33,9 +33,14 @@ market impact calibration and live venue execution remain outside this model.
 New accounts record `closing-cash-conservation-v1` in their initialization event.
 When an instrument becomes flat, its closing fill settles cumulative fee-inclusive
 cash flows less previously allocated realized P&L. This eliminates a repeating
-average-cost rounding residue. Partial inventory retains the existing Decimal
-average-cost display. Journals without this accounting marker preserve their
-original allocations; historical economics are not rewritten.
+average-cost rounding residue. New-account cash, quantities, fees, reservations,
+exposure and adverse-loss arithmetic retain exact bounded decimal economics.
+Finite average costs stay exact; repeating averages use an explicit 28-digit
+allocation until final-close settlement. Internal aggregates have a separate
+4,096-digit precision bound so valid tiny inputs do not disappear from cash;
+external order inputs retain their existing 256-digit coefficient bound.
+Journals without this accounting marker preserve their original allocations,
+including partial-fill fee and quantity replay; historical economics are not rewritten.
 Covered fractional SELLs also provide internally consistent float notionals to
 the independent risk gate. Otherwise a one-ULP multiplication difference can
 reject a complete exit of a genuine fractional crypto holding. Exact Decimal
