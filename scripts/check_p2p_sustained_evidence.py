@@ -182,6 +182,23 @@ def validate(data: object, *, commit: str, run_url: str, attempt: int, policy: d
                 errors.append("binary_digest_invalid")
         if ids != _HOSTS or len(commitments) != 3:
             errors.append("distinct_three_hosts_not_reported")
+    if "runtime_config" in data:
+        runtime = data["runtime_config"]
+        if not isinstance(runtime, dict):
+            errors.append("runtime_configuration_invalid")
+        else:
+            workers = runtime.get("node_worker_threads_requested")
+            if ((workers is not None and (type(workers) is not int or workers not in (1, 2, 4)))
+                    or runtime.get("tokio_worker_threads_env") != (None if workers is None else str(workers))
+                    or runtime.get("observed_runtime_worker_count_verified") is not False):
+                errors.append("runtime_configuration_invalid")
+            if not isinstance(hosts, list) or any(
+                not isinstance(host, dict) or host.get("runtime_config") != runtime
+                or type(host["runtime_config"].get("node_worker_threads_requested")) is not type(workers)
+                or host["runtime_config"].get("observed_runtime_worker_count_verified") is not False
+                for host in hosts
+            ):
+                errors.append("host_runtime_configuration_mismatch")
     notes = data.get("measurement_notes")
     traffic_on = isinstance(notes, dict) and notes.get("traffic_during_outage") is True
     if not isinstance(notes, dict) or (

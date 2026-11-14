@@ -194,3 +194,30 @@ Failures and partial measurements remain retained by the workflow. Passing
 reference/schema checks cannot certify host independence, NAT traversal, open
 mesh, production DR or T04/T19 acceptance; those decisions still need independent
 evidence and review.
+
+
+## Explicit node worker allocation
+
+`run_p2p_soak.py --node-worker-threads 1` (also `2` or `4`) sets the standard
+`TOKIO_WORKER_THREADS` environment variable on every spawned node, across all
+local/SSH agents. Omitting the option leaves this variable unset and clears any
+inherited value, preserving the historical default allocation by available CPU
+cores. The locked Tokio 1.54.1 runtime reads this variable in
+[`loom::sys::num_cpus`](https://github.com/tokio-rs/tokio/blob/tokio-1.54.1/tokio/src/loom/std/mod.rs);
+the node's bare `#[tokio::main]` has no explicit worker-count override.
+
+The workflow choice `node_worker_threads` accepts `default`, `1`, `2` or `4`
+and applies to both the short baseline sweeps and optional sustained run:
+
+```bash
+gh workflow run p2p-capacity.yml --repo Osiris6900/osiris-eye --ref REVIEWED_BRANCH \
+  -f sustained_100=true -f node_worker_threads=1
+```
+
+This changes real runtime allocation when many node processes share each host.
+It does not relabel aggregate process RSS as PSS or increase the predeclared
+512 MiB host budget. Requested settings and exact node environment configuration
+are recorded per host and in the report; actual runtime thread counts are not
+claimed independently measured. Different runtime settings require a new retained
+run, with the same memory, latency, delivery and recovery policy. No memory-budget
+pass or release acceptance is inferred from selecting one worker.

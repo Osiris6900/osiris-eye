@@ -81,6 +81,38 @@ def review(data, *, commit=SHA, url=URL, attempt=1):
 
 
 class SustainedCapacityReviewTests(unittest.TestCase):
+    def test_requested_runtime_is_consistent_across_all_hosts(self):
+        for count in (None, 1, 2, 4):
+            data = report()
+            runtime = {'node_worker_threads_requested': count,
+                       'tokio_worker_threads_env': None if count is None else str(count),
+                       'observed_runtime_worker_count_verified': False}
+            data['runtime_config'] = runtime
+            for host in data['hosts']:
+                host['runtime_config'] = dict(runtime)
+            with self.subTest(count=count):
+                self.assertTrue(review(data)['passed_offline_consistency'])
+            data['hosts'][0]['runtime_config'] = {'node_worker_threads_requested': 3}
+            self.assertIn('host_runtime_configuration_mismatch', review(data)['errors'])
+        data = report()
+        runtime = {'node_worker_threads_requested': 1, 'tokio_worker_threads_env': '1',
+                   'observed_runtime_worker_count_verified': False}
+        data['runtime_config'] = runtime
+        for host in data['hosts']:
+            host['runtime_config'] = dict(runtime)
+        data['hosts'][0]['runtime_config']['node_worker_threads_requested'] = True
+        self.assertIn('host_runtime_configuration_mismatch', review(data)['errors'])
+        for invalid in (True, 0, 3, 8, '1'):
+            data = report()
+            runtime = {'node_worker_threads_requested': invalid,
+                       'tokio_worker_threads_env': str(invalid),
+                       'observed_runtime_worker_count_verified': False}
+            data['runtime_config'] = runtime
+            for host in data['hosts']:
+                host['runtime_config'] = runtime
+            with self.subTest(invalid=invalid):
+                self.assertIn('runtime_configuration_invalid', review(data)['errors'])
+
     def test_traffic_on_windows_are_checked_without_promoting_acceptance(self):
         result = review(traffic_report())
         self.assertTrue(result['passed_offline_consistency'], result['errors'])

@@ -87,9 +87,22 @@ def measurement_class(metadata, local_agents):
             else 'single_host_process_regression')
 
 
+
+def runtime_config(worker_threads):
+    """Bound the requested node runtime without weakening resource policy."""
+    if worker_threads is not None and (type(worker_threads) is not int or worker_threads not in (1, 2, 4)):
+        raise ValueError('node_worker_threads_must_be_1_2_or_4')
+    return {
+        'node_worker_threads_requested': worker_threads,
+        'tokio_worker_threads_env': str(worker_threads) if worker_threads is not None else None,
+        'observed_runtime_worker_count_verified': False,
+    }
+
+
 class Agent:
     def __init__(self, args, state):
         self.args, self.state = args, Path(state)
+        self.runtime = runtime_config(getattr(args, 'node_worker_threads', None))
         self.nodes = {}
         self.lock = threading.Lock()
         self.done = threading.Event()
@@ -112,6 +125,10 @@ class Agent:
         directory = self.state / str(index)
         directory.mkdir(mode=0o700, exist_ok=True)
         env = {k: v for k, v in os.environ.items() if not k.startswith('OSIRIS_')}
+        # The default is deliberately unset, not an inherited unrecorded value.
+        env.pop('TOKIO_WORKER_THREADS', None)
+        if self.runtime['tokio_worker_threads_env'] is not None:
+            env['TOKIO_WORKER_THREADS'] = self.runtime['tokio_worker_threads_env']
         env.update({
             'OSIRIS_NODE_KEY': str(directory / 'identity'),
             'OSIRIS_TRANSPORT_KEY': str(directory / 'transport'),
@@ -260,7 +277,8 @@ class Agent:
         commit, clean = revision()
         self.emit('metadata', commit_sha=commit, clean_worktree=clean,
                   binary_sha256=digest_file(self.args.binary),
-                  host_fingerprint=digest_file('/proc/sys/kernel/random/boot_id'))
+                  host_fingerprint=digest_file('/proc/sys/kernel/random/boot_id'),
+                  runtime_config=self.runtime)
         def interrupted(_signum, _frame):
             raise SystemExit(1)
         signal.signal(signal.SIGTERM, interrupted)
@@ -470,7 +488,10 @@ def workload_records(controller, workload, start, *, outage_start_ms, restart_ms
 
 def measure(args):
     c = Controller()
-    base = [sys.executable, str(Path(__file__).resolve()), '--agent', '--binary', str(args.binary)]
+    runtime = runtime_config(args.node_worker_threads)
+    worker_args = ([] if args.node_worker_threads is None
+                   else ['--node-worker-threads', str(args.node_worker_threads)])
+    base = [sys.executable, str(Path(__file__).resolve()), '--agent', '--binary', str(args.binary), *worker_args]
     extra_hosts = {}
     for specification in args.extra_host:
         host, target = specification.split('=', 1)
@@ -483,7 +504,8 @@ def measure(args):
     local_count = args.peers // host_count
     c.launch('host-a', base + ['--count', str(local_count), '--controller-pid', str(os.getpid())])
     remote_args = ['python3', args.remote_script, '--agent', '--binary', args.remote_binary,
-                   '--count', str(args.peers - local_count * (host_count-1)), '--port', str(args.port)]
+                   '--count', str(args.peers - local_count * (host_count-1)), '--port', str(args.port),
+                   *worker_args]
     if args.local_agents:
         remote_args = [sys.executable, str(Path(__file__).resolve()), *remote_args[2:]]
         c.launch('host-b', remote_args)
@@ -492,7 +514,7 @@ def measure(args):
                             shlex.join(remote_args)])
     for host, target in extra_hosts.items():
         peer_args = ['python3', args.remote_script, '--agent', '--binary', args.remote_binary,
-                     '--count', str(local_count)]
+                     '--count', str(local_count), *worker_args]
         if args.local_agents:
             c.launch(host, [sys.executable, str(Path(__file__).resolve()), *peer_args[2:]])
         else:
@@ -500,6 +522,11 @@ def measure(args):
     workload, start, outage_start, restart_ms, recovered_ms = [], None, None, None, None
     try:
         c.wait(lambda: len(c.metadata) == host_count, stage='agent_metadata')
+        if any(metadata.get('runtime_config') != runtime
+               or type(metadata['runtime_config'].get('node_worker_threads_requested')) is not type(args.node_worker_threads)
+               or metadata['runtime_config'].get('observed_runtime_worker_count_verified') is not False
+               for metadata in c.metadata.values()):
+            raise RuntimeError('agents_require_same_requested_runtime')
         commit, clean = revision()
         if any(m['commit_sha'] != commit or not m['clean_worktree'] for m in c.metadata.values()):
             if not args.local_agents:
@@ -616,6 +643,7 @@ def measure(args):
             ).hexdigest()
             host_records.append({
                 'host_id': host,
+                'runtime_config': metadata['runtime_config'],
                 'binary_sha256': metadata['binary_sha256'],
                 'host_fingerprint_commitment': fingerprint_commitment,
                 **{k: metrics[k] for k in ('rss_peak_bytes', 'cpu_percent', 'disk_growth_bytes')},
@@ -625,6 +653,7 @@ def measure(args):
                                    restart_ms=restart_ms, recovered_ms=recovered_ms)
         evidence = {
             'schema': 'osiris.p2p_load_acceptance.v1',
+            'runtime_config': runtime,
             'measurement_class': measurement_class(c.metadata, args.local_agents),
             'commit_sha': commit, 'clean_worktree': clean,
             'workflow_url': args.workflow_url, 'attempt': args.attempt, 'operator': 'github-actions',
@@ -670,7 +699,7 @@ def measure(args):
         return evidence
     except Exception:
         args.partial = {
-            'stage': c.stage,
+            'stage': c.stage, 'runtime_config': runtime,
             'metadata': c.metadata, 'host_metrics': c.metrics,
             'observed_peer_count': len(c.peers), 'known_delivery_count': len(c.deliveries),
             'submitted_including_warmup_and_probes': len(c.sent),
@@ -701,6 +730,8 @@ def main():
     p.add_argument('--agent', action='store_true')
     p.add_argument('--binary', type=Path, required=True)
     p.add_argument('--count', type=int, default=2)
+    p.add_argument('--node-worker-threads', type=int, choices=(1, 2, 4),
+                   help='explicit TOKIO_WORKER_THREADS on every node; default unsets it')
     p.add_argument('--controller-pid', type=int)
     p.add_argument('--port', type=int, default=0)
     p.add_argument('--ssh-target')

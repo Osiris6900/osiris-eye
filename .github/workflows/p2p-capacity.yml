@@ -14,6 +14,17 @@ on:
         default: false
         type: boolean
 
+      node_worker_threads:
+        description: "Tokio worker threads per node; default leaves the runtime setting unset"
+        required: false
+        default: default
+        type: choice
+        options:
+          - default
+          - '1'
+          - '2'
+          - '4'
+
 permissions:
   contents: read
   actions: read
@@ -81,8 +92,12 @@ jobs:
           name: capacity-c-endpoint-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/osiris-capacity
       - name: Pin SSH keys and run real three-host 10/50/100-peer capacity sweeps
+        env:
+          NODE_WORKER_THREADS: ${{ inputs.node_worker_threads }}
         run: |
           set -euo pipefail
+          worker_args=()
+          if [ "$NODE_WORKER_THREADS" != "default" ]; then worker_args+=(--node-worker-threads "$NODE_WORKER_THREADS"); fi
           dir="$RUNNER_TEMP/osiris-capacity"
           b="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["ip"])' "$dir/host-b.json")"
           c="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["ip"])' "$dir/host-c.json")"
@@ -94,6 +109,7 @@ jobs:
               --ssh-target "runner@$b" --extra-host "host-c=runner@$c" \
               --host-b-ip "$b" --port 4001 --peers "$peers" \
               --messages 200 --duration 30 \
+              "${worker_args[@]}" \
               --workflow-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
               --attempt "${{ github.run_attempt }}" --evidence "$dir/capacity-$peers.json" \
               --ssh-option=-i --ssh-option="$dir/host-a" \
@@ -115,8 +131,11 @@ jobs:
         if: ${{ inputs.sustained_100 }}
         env:
           TRAFFIC_DURING_OUTAGE: ${{ inputs.traffic_during_outage }}
+          NODE_WORKER_THREADS: ${{ inputs.node_worker_threads }}
         run: |
           set -euo pipefail
+          worker_args=()
+          if [ "$NODE_WORKER_THREADS" != "default" ]; then worker_args+=(--node-worker-threads "$NODE_WORKER_THREADS"); fi
           traffic_args=()
           if [ "$TRAFFIC_DURING_OUTAGE" = "true" ]; then traffic_args+=(--traffic-during-outage); fi
           dir="$RUNNER_TEMP/osiris-capacity"
@@ -128,7 +147,7 @@ jobs:
             --ssh-target "runner@$b" --extra-host "host-c=runner@$c" \
             --host-b-ip "$b" --port 4001 --peers 100 \
             --messages 10000 --duration 900 \
-            "${traffic_args[@]}" \
+            "${traffic_args[@]}" "${worker_args[@]}" \
             --workflow-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
             --attempt "${{ github.run_attempt }}" --evidence "$dir/sustained-100.json" \
             --ssh-option=-i --ssh-option="$dir/host-a" \
