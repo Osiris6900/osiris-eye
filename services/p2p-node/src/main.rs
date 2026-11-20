@@ -9,12 +9,12 @@ mod announcement;
 
 use revocation::{apply_synced_revocation, RevocationRegistry, RevocationSyncMessage, SyncedRevocation};
 use rejection_log::RejectionLogThrottle;
-use e2ee::{create_key_binding, decrypt_for_recipient, encrypt_for_recipient, verify_key_binding, EncryptedEnvelope, KeyBindingRecord, TransportKeyPair};
+use e2ee::{create_key_binding, decrypt_for_recipient, encrypt_for_recipient, verify_envelope_for_forwarding, verify_key_binding, EncryptedEnvelope, KeyBindingRecord, TransportKeyPair};
 use peer_auth::{deny_peer, is_peer_allowed, parse_revoked_peers, parse_trusted_peers, read_peer_setting, run_if_peer_allowed};
 use peer_cache::{CachedPeer, PeerCache};
 use peer_key_store::PeerKeyStore;
 use osiris_p2p_node::delivery_receipt::{
-    create_receipt, AdmissionPolicy, DeliveryReceipt, PendingReceipts, MAX_RECEIPT_BYTES, RECEIPT_TOPIC,
+    create_receipt, verify_receipt_for_forwarding, AdmissionPolicy, DeliveryReceipt, PendingReceipts, MAX_RECEIPT_BYTES, RECEIPT_TOPIC,
 };
 use osiris_p2p_node::verified_receipt_bridge::VerifiedReceiptBridge;
 use std::{collections::{HashMap, HashSet}, env, error::Error, fs::{self, OpenOptions}, io::{BufRead, BufReader as StdBufReader, Write}, net::SocketAddr, path::PathBuf, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
@@ -252,6 +252,337 @@ fn admit_decrypted_observation(
         .map_err(EncryptedObservationError::Storage)? {
         true => Ok(observation),
         false => Err(EncryptedObservationError::Replay),
+    }
+}
+
+fn gossip_config() -> Result<gossipsub::Config, gossipsub::ConfigBuilderError> {
+    gossipsub::ConfigBuilder::default()
+        .heartbeat_interval(Duration::from_secs(1))
+        // A wide lazy-gossip cohort lets key announcements converge without
+        // requiring a full mesh. Application admission must precede forwarding.
+        .gossip_lazy(25)
+        .max_transmit_size(2 * 1024 * 1024)
+        .validation_mode(gossipsub::ValidationMode::Strict)
+        .validate_messages()
+        .build()
+}
+
+#[derive(Debug, PartialEq)]
+struct GossipRejection {
+    reason: &'static str,
+    detail: Option<&'static str>,
+}
+
+impl From<&'static str> for GossipRejection {
+    fn from(reason: &'static str) -> Self { Self { reason, detail: None } }
+}
+
+struct GossipAdmission<'a> {
+    local_peer: &'a PeerId,
+    trusted_peers: &'a Option<HashSet<PeerId>>,
+    revoked_peers: &'a Option<HashSet<PeerId>>,
+    peer_key_store: &'a PeerKeyStore,
+    revocation_registry: Option<&'a RevocationRegistry>,
+    e2ee_enabled: bool,
+    transport_key_epoch: u64,
+    transport_key: &'a TransportKeyPair,
+    max_observation_age: Option<u64>,
+    now: u64,
+}
+
+fn gossip_sender_binding(
+    admission: &GossipAdmission<'_>, source: &PeerId, minimum_epoch: u64,
+) -> Result<e2ee::VerifiedKeyBinding, GossipRejection> {
+    let record = admission.peer_key_store.get(&source.to_string())
+        .map_err(|_| "sender_key_store_unavailable")?
+        .ok_or("sender_key_binding_missing")?;
+    let binding = verify_key_binding(&record, admission.now, minimum_epoch)?;
+    if binding.peer_id != *source { return Err("sender_key_binding_mismatch".into()); }
+    Ok(binding)
+}
+
+fn valid_gossip_peer(value: &str) -> bool {
+    value.len() <= 128 && value.parse::<PeerId>()
+        .is_ok_and(|peer| peer.to_string() == value)
+}
+
+fn validate_revocation_gossip(
+    data: &[u8], source: &PeerId, registry: Option<&RevocationRegistry>,
+) -> Result<(), GossipRejection> {
+    let message: RevocationSyncMessage = serde_json::from_slice(data)
+        .map_err(|_| "invalid_revocation_message")?;
+    let valid_cursor = |cursor: &Option<String>| cursor.as_deref().is_none_or(valid_gossip_peer);
+    let valid_request = |request: &str| request.len() == 64
+        && request.bytes().all(|byte| byte.is_ascii_hexdigit());
+    let records = match &message {
+        RevocationSyncMessage::SyncRequest => return Ok(()),
+        RevocationSyncMessage::SyncRequestPage { after_peer_id } => {
+            return if valid_cursor(after_peer_id) { Ok(()) }
+                   else { Err("invalid_revocation_cursor".into()) };
+        }
+        RevocationSyncMessage::SyncRequestPageV2 { request_id, requester_peer_id, after_peer_id } => {
+            return if valid_request(request_id) && requester_peer_id == &source.to_string()
+                && valid_cursor(after_peer_id) { Ok(()) }
+                else { Err("invalid_revocation_request_binding".into()) };
+        }
+        RevocationSyncMessage::Record(record) => std::slice::from_ref(record),
+        RevocationSyncMessage::Snapshot(records) if records.len() <= 16_384 => records.as_slice(),
+        RevocationSyncMessage::SnapshotPage { records, next_cursor }
+            if records.len() <= REVOCATION_SYNC_PAGE_SIZE && valid_cursor(next_cursor) => records.as_slice(),
+        RevocationSyncMessage::SnapshotPageV2 {
+            request_id, requester_peer_id, responder_peer_id, records, next_cursor,
+        } if valid_request(request_id) && valid_gossip_peer(requester_peer_id)
+            && responder_peer_id == &source.to_string()
+            && records.len() <= REVOCATION_SYNC_PAGE_SIZE && valid_cursor(next_cursor) => records.as_slice(),
+        _ => return Err("invalid_revocation_page".into()),
+    };
+    let registry = registry.ok_or("revocation_authority_not_configured")?;
+    for record in records {
+        registry.verify_for_forwarding(record).map_err(|_| "invalid_revocation_record")?;
+    }
+    Ok(())
+}
+
+/// Validate before GossipSub can forward. Transit ciphertext has public
+/// signature/time checks only; its plaintext is validated by its recipient.
+/// Local receipt/paging correlation stays in the application handlers below.
+fn validate_gossip_for_forwarding(
+    message: &gossipsub::Message, propagation_source: &PeerId, admission: &GossipAdmission<'_>,
+) -> Result<(), GossipRejection> {
+    let source = message.source.as_ref().ok_or("signed_publisher_required")?;
+    if !is_peer_allowed(source, admission.trusted_peers, admission.revoked_peers)
+        || !is_peer_allowed(propagation_source, admission.trusted_peers, admission.revoked_peers) {
+        return Err("peer_not_allowed".into());
+    }
+    if message.data.len() > 2 * 1024 * 1024 { return Err("gossip_message_too_large".into()); }
+    match message.topic.as_str() {
+        TOPIC_NAME => {
+            if admission.e2ee_enabled { return Err("e2ee_required".into()); }
+            parse_observation(&message.data, admission.max_observation_age)?;
+        }
+        KEY_BINDING_TOPIC_NAME => {
+            let record: KeyBindingRecord = serde_json::from_slice(&message.data)
+                .map_err(|_| "invalid_key_binding_record")?;
+            let previous = admission.peer_key_store.get(&source.to_string())
+                .map_err(|_| "sender_key_store_unavailable")?;
+            let minimum_epoch = previous.as_ref().map_or(1, |record| record.key_epoch);
+            let verified = verify_key_binding(&record, admission.now, minimum_epoch)?;
+            if verified.peer_id != *source { return Err("key_binding_publisher_mismatch".into()); }
+            if let Some(previous) = previous.filter(|previous| previous.key_epoch == record.key_epoch) {
+                if previous.identity_public_key != record.identity_public_key
+                    || previous.transport_public_key != record.transport_public_key
+                    || previous.issued_at > record.issued_at {
+                    return Err("key_binding_conflict_or_rollback".into());
+                }
+            }
+        }
+        ENCRYPTED_TOPIC_NAME => {
+            let envelope: EncryptedEnvelope = serde_json::from_slice(&message.data)
+                .map_err(|_| "invalid_encrypted_envelope")?;
+            let binding = gossip_sender_binding(admission, source, envelope.sender_key_epoch)?;
+            verify_envelope_for_forwarding(&envelope, &binding, admission.now)?;
+            let recipient: PeerId = envelope.recipient_peer_id.parse()
+                .map_err(|_| "invalid_encrypted_recipient")?;
+            if admission.revoked_peers.as_ref().is_some_and(|peers| peers.contains(&recipient)) {
+                return Err("encrypted_recipient_revoked".into());
+            }
+            if recipient == *admission.local_peer {
+                if !admission.e2ee_enabled { return Err("local_e2ee_disabled".into()); }
+                let plaintext = decrypt_for_recipient(
+                    &envelope, &binding, admission.local_peer, admission.transport_key_epoch,
+                    admission.transport_key.private_key(), admission.now,
+                )?;
+                parse_observation(&plaintext, admission.max_observation_age)
+                    .map_err(|detail| GossipRejection { reason: "invalid_plaintext_observation", detail: Some(detail) })?;
+            }
+        }
+        RECEIPT_TOPIC => {
+            if message.data.len() > MAX_RECEIPT_BYTES { return Err("receipt_too_large".into()); }
+            let receipt: DeliveryReceipt = serde_json::from_slice(&message.data)
+                .map_err(|_| "invalid_receipt_json")?;
+            let binding = gossip_sender_binding(admission, source, 1)?;
+            verify_receipt_for_forwarding(&receipt, source, &binding.identity_public_key, admission.now)?;
+        }
+        REVOCATION_TOPIC_NAME => validate_revocation_gossip(
+            &message.data, source, admission.revocation_registry,
+        )?,
+        _ => return Err("unknown_gossip_topic".into()),
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod gossip_forwarding_tests {
+    use super::*;
+    use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
+
+    struct Fixture {
+        directory: PathBuf,
+        local: PeerId,
+        transport: TransportKeyPair,
+        sender: identity::Keypair,
+        store: PeerKeyStore,
+        trusted: Option<HashSet<PeerId>>,
+        revoked: Option<HashSet<PeerId>>,
+        now: u64,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            let directory = env::temp_dir().join(format!("osiris-gossip-gate-{}-{}",
+                std::process::id(), PeerId::random()));
+            fs::create_dir_all(&directory).unwrap();
+            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+            let sender = identity::Keypair::generate_ed25519();
+            let sender_transport = TransportKeyPair::generate();
+            let mut store = PeerKeyStore::open(directory.join("bindings.sqlite3")).unwrap();
+            let record = create_key_binding(&sender, &sender_transport.public_key, 1, now - 10, now + 600).unwrap();
+            store.upsert_verified(&record).unwrap();
+            Self { directory, local: PeerId::random(), transport: TransportKeyPair::generate(),
+                sender, store, trusted: None, revoked: None, now }
+        }
+
+        fn admission(&self) -> GossipAdmission<'_> {
+            GossipAdmission { local_peer: &self.local, trusted_peers: &self.trusted,
+                revoked_peers: &self.revoked, peer_key_store: &self.store,
+                revocation_registry: None, e2ee_enabled: false, transport_key_epoch: 1,
+                transport_key: &self.transport, max_observation_age: None, now: self.now }
+        }
+
+        fn source(&self) -> PeerId { PeerId::from(self.sender.public()) }
+
+        fn message(&self, topic: &str, data: Vec<u8>) -> gossipsub::Message {
+            gossipsub::Message { source: Some(self.source()), data, sequence_number: Some(1),
+                topic: gossipsub::IdentTopic::new(topic).hash() }
+        }
+
+        fn observation(&self) -> ObservationEnvelope {
+            ObservationEnvelope { schema: "osiris.observation.v1".into(), instrument: "GATE-TEST".into(),
+                provider: "synthetic-gate-test".into(), observed_at: "1970-01-01T00:00:00Z".into(),
+                payload: "payload".into(), payload_sha256: format!("{:x}", Sha256::digest(b"payload")) }
+        }
+
+        fn encrypted(&self, recipient: PeerId, plaintext: &[u8]) -> EncryptedEnvelope {
+            encrypt_for_recipient(&self.sender, 1, &recipient.to_string(), &self.transport.public_key,
+                1, plaintext, self.now - 1, self.now + 60).unwrap()
+        }
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) { let _ = fs::remove_dir_all(&self.directory); }
+    }
+
+    #[test]
+    fn actual_gossip_config_requires_manual_admission() {
+        assert!(gossip_config().unwrap().validate_messages());
+    }
+
+    #[test]
+    fn both_signed_publisher_and_forwarder_must_be_allowed() {
+        let mut fixture = Fixture::new();
+        let source = fixture.source();
+        let relay = PeerId::random();
+        let mut message = fixture.message(TOPIC_NAME, serde_json::to_vec(&fixture.observation()).unwrap());
+        fixture.trusted = Some(HashSet::from([source, relay]));
+        assert!(validate_gossip_for_forwarding(&message, &relay, &fixture.admission()).is_ok());
+        fixture.trusted = Some(HashSet::from([source]));
+        assert_eq!(validate_gossip_for_forwarding(&message, &relay, &fixture.admission()).unwrap_err().reason,
+            "peer_not_allowed");
+        fixture.trusted = Some(HashSet::from([relay]));
+        assert_eq!(validate_gossip_for_forwarding(&message, &relay, &fixture.admission()).unwrap_err().reason,
+            "peer_not_allowed");
+        fixture.trusted = Some(HashSet::from([source, relay]));
+        for revoked in [source, relay] {
+            fixture.revoked = Some(HashSet::from([revoked]));
+            assert_eq!(validate_gossip_for_forwarding(&message, &relay, &fixture.admission()).unwrap_err().reason,
+                "peer_not_allowed");
+        }
+        message.source = None;
+        assert_eq!(validate_gossip_for_forwarding(&message, &relay, &fixture.admission()).unwrap_err().reason,
+            "signed_publisher_required");
+    }
+
+    #[test]
+    fn malformed_stale_plaintext_and_plaintext_in_e2ee_mode_do_not_forward() {
+        let fixture = Fixture::new();
+        let mut observation = fixture.observation();
+        observation.payload_sha256 = "0".repeat(64);
+        let message = fixture.message(TOPIC_NAME, serde_json::to_vec(&observation).unwrap());
+        assert_eq!(validate_gossip_for_forwarding(&message, &fixture.source(), &fixture.admission()).unwrap_err().reason,
+            "payload_hash_mismatch");
+        let message = fixture.message(TOPIC_NAME, serde_json::to_vec(&fixture.observation()).unwrap());
+        let mut admission = fixture.admission();
+        admission.max_observation_age = Some(300);
+        assert_eq!(validate_gossip_for_forwarding(&message, &fixture.source(), &admission).unwrap_err().reason,
+            "stale_observation");
+        admission.e2ee_enabled = true;
+        assert_eq!(validate_gossip_for_forwarding(&message, &fixture.source(), &admission).unwrap_err().reason,
+            "e2ee_required");
+        let message = fixture.message("unknown/topic", b"{}".to_vec());
+        assert_eq!(validate_gossip_for_forwarding(&message, &fixture.source(), &admission).unwrap_err().reason,
+            "unknown_gossip_topic");
+    }
+
+    #[test]
+    fn opaque_ciphertext_can_relay_but_tampering_cannot() {
+        let fixture = Fixture::new();
+        // The relay cannot parse this inner value, and is not its recipient.
+        let mut envelope = fixture.encrypted(PeerId::random(), b"opaque to this relay");
+        let message = fixture.message(ENCRYPTED_TOPIC_NAME, serde_json::to_vec(&envelope).unwrap());
+        assert!(validate_gossip_for_forwarding(&message, &fixture.source(), &fixture.admission()).is_ok());
+        let first = if envelope.ciphertext.starts_with('A') { "B" } else { "A" };
+        envelope.ciphertext.replace_range(0..1, first);
+        let message = fixture.message(ENCRYPTED_TOPIC_NAME, serde_json::to_vec(&envelope).unwrap());
+        assert_eq!(validate_gossip_for_forwarding(&message, &fixture.source(), &fixture.admission()).unwrap_err().reason,
+            "envelope_signature_invalid");
+    }
+
+    #[test]
+    fn local_ciphertext_requires_valid_fresh_observation_before_forwarding() {
+        let fixture = Fixture::new();
+        let envelope = fixture.encrypted(fixture.local, &serde_json::to_vec(&fixture.observation()).unwrap());
+        let message = fixture.message(ENCRYPTED_TOPIC_NAME, serde_json::to_vec(&envelope).unwrap());
+        let mut admission = fixture.admission();
+        admission.e2ee_enabled = true;
+        assert!(validate_gossip_for_forwarding(&message, &fixture.source(), &admission).is_ok());
+        admission.max_observation_age = Some(300);
+        assert_eq!(validate_gossip_for_forwarding(&message, &fixture.source(), &admission).unwrap_err(),
+            GossipRejection { reason: "invalid_plaintext_observation", detail: Some("stale_observation") });
+    }
+
+    #[test]
+    fn valid_receipts_for_another_sender_forward_without_local_pending_state() {
+        let fixture = Fixture::new();
+        let mut receipt = create_receipt(&fixture.sender, &PeerId::random(),
+            &STANDARD_NO_PAD.encode([7u8; 16]), &"a".repeat(64), fixture.now).unwrap();
+        let message = fixture.message(RECEIPT_TOPIC, serde_json::to_vec(&receipt).unwrap());
+        assert!(validate_gossip_for_forwarding(&message, &fixture.source(), &fixture.admission()).is_ok());
+        receipt.envelope_sha256 = "b".repeat(64);
+        let message = fixture.message(RECEIPT_TOPIC, serde_json::to_vec(&receipt).unwrap());
+        assert_eq!(validate_gossip_for_forwarding(&message, &fixture.source(), &fixture.admission()).unwrap_err().reason,
+            "receipt_signature_invalid");
+    }
+
+    #[test]
+    fn foreign_requester_revocation_pages_do_not_require_local_request_state() {
+        let fixture = Fixture::new();
+        let authority = ed25519_dalek::SigningKey::from_bytes(&[4; 32]);
+        let public: String = authority.verifying_key().as_bytes().iter().map(|byte| format!("{byte:02x}")).collect();
+        let registry = RevocationRegistry::open(fixture.directory.join("revocations.json"), public).unwrap();
+        let mut page = RevocationSyncMessage::SnapshotPageV2 {
+            request_id: "a".repeat(64), requester_peer_id: PeerId::random().to_string(),
+            responder_peer_id: fixture.source().to_string(), records: Vec::new(), next_cursor: None,
+        };
+        let mut admission = fixture.admission();
+        admission.revocation_registry = Some(&registry);
+        let message = fixture.message(REVOCATION_TOPIC_NAME, serde_json::to_vec(&page).unwrap());
+        assert!(validate_gossip_for_forwarding(&message, &fixture.source(), &admission).is_ok());
+        if let RevocationSyncMessage::SnapshotPageV2 { responder_peer_id, .. } = &mut page {
+            *responder_peer_id = PeerId::random().to_string();
+        }
+        let message = fixture.message(REVOCATION_TOPIC_NAME, serde_json::to_vec(&page).unwrap());
+        assert_eq!(validate_gossip_for_forwarding(&message, &fixture.source(), &admission).unwrap_err().reason,
+            "invalid_revocation_page");
     }
 }
 
@@ -1547,17 +1878,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
     let mut local_key_binding = create_key_binding(&key, &transport_key.public_key, transport_key_epoch, now, now + 30 * 24 * 60 * 60)?;
 
-    let gossipsub_config = gossipsub::ConfigBuilder::default()
-        .heartbeat_interval(Duration::from_secs(1))
-        // Bounded-degree meshes leave most subscribers of a large cohort
-        // reliant on IHAVE/IWANT gossip. Three samples per heartbeat cannot
-        // distribute control-plane bindings to ~100 peers within startup
-        // deadlines; widen lazy gossip so re-announcements converge quickly.
-        .gossip_lazy(25)
-        .max_transmit_size(2 * 1024 * 1024)
-        .validation_mode(gossipsub::ValidationMode::Strict)
-        .build()?;
-    gossipsub_config.validate_messages();
+    let gossipsub_config = gossip_config()?;
 
     let gossipsub = gossipsub::Behaviour::new(
         gossipsub::MessageAuthenticity::Signed(key.clone()),
@@ -2332,8 +2653,42 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     }
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message {
-                    propagation_source, message, ..
+                    propagation_source, message_id, message,
                 })) => {
+                    let validation = validate_gossip_for_forwarding(&message, &propagation_source, &GossipAdmission {
+                        local_peer: &peer_id, trusted_peers: &trusted_peers, revoked_peers: &revoked_peers,
+                        peer_key_store: &peer_key_store, revocation_registry: revocation_registry.as_ref(),
+                        e2ee_enabled, transport_key_epoch, transport_key: &transport_key, max_observation_age,
+                        now: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+                    });
+                    // Exactly one decision for every message: valid transit
+                    // data may forward even if it is not addressed to this node.
+                    // Local receipt/replay/paging handlers do not decide relay authorization.
+                    let acceptance = match &validation {
+                        Ok(()) => gossipsub::MessageAcceptance::Accept,
+                        Err(error) if matches!(error.reason, "sender_key_binding_missing"
+                            | "sender_key_store_unavailable" | "revocation_authority_not_configured"
+                            | "local_e2ee_disabled") => gossipsub::MessageAcceptance::Ignore,
+                        Err(_) => gossipsub::MessageAcceptance::Reject,
+                    };
+                    swarm.behaviour_mut().gossipsub.report_message_validation_result(
+                        &message_id, &propagation_source, acceptance,
+                    );
+                    if let Err(error) = validation {
+                        let source = message.source.as_ref().unwrap_or(&propagation_source);
+                        if error.reason == "peer_not_allowed" {
+                            emit_diagnostic_lines(rejection_log_throttle.rejected(
+                                message.topic.as_str(), &source.to_string(), "peer_not_allowed", Instant::now(),
+                            ));
+                        } else {
+                            let prefix = if message.topic.as_str() == ENCRYPTED_TOPIC_NAME {
+                                "encrypted_message_rejected"
+                            } else { "gossip_message_rejected" };
+                            emit!("{prefix} peer={source} topic={} reason={} detail={}",
+                                message.topic, error.reason, error.detail.unwrap_or("none"));
+                        }
+                        continue;
+                    }
                     let authenticated_source = message.source.unwrap_or(propagation_source);
 
                     if message.topic.as_str() == RECEIPT_TOPIC {

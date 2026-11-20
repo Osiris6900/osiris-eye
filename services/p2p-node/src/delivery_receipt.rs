@@ -204,6 +204,44 @@ pub fn create_receipt(
     Ok(receipt)
 }
 
+/// Check a receipt's public signature and freshness for opaque forwarding.
+/// This does not attest to a local pending send or acknowledge any ledger row.
+/// Callers must enforce authenticated-source and propagation-source admission.
+pub fn verify_receipt_for_forwarding(
+    receipt: &DeliveryReceipt,
+    authenticated_source: &PeerId,
+    identity_key: &identity::PublicKey,
+    now_secs: u64,
+) -> Result<(), &'static str> {
+    if receipt.schema != RECEIPT_SCHEMA {
+        return Err("receipt_schema_invalid");
+    }
+    parse_peer(&receipt.sender_peer_id)?;
+    let recipient = parse_peer(&receipt.recipient_peer_id)?;
+    if recipient != *authenticated_source || PeerId::from_public_key(identity_key) != recipient {
+        return Err("receipt_publisher_identity_mismatch");
+    }
+    validate_message_reference(&receipt.message_id, &receipt.envelope_sha256)?;
+    if receipt.signature.len() != 86 {
+        return Err("receipt_signature_invalid");
+    }
+    let signature = STANDARD_NO_PAD
+        .decode(&receipt.signature)
+        .map_err(|_| "receipt_signature_invalid")?;
+    if signature.len() != 64
+        || STANDARD_NO_PAD.encode(&signature) != receipt.signature
+        || !identity_key.verify(&signing_bytes(receipt)?, &signature)
+    {
+        return Err("receipt_signature_invalid");
+    }
+    if receipt.accepted_at > now_secs.saturating_add(MAX_FUTURE_SKEW_SECS)
+        || now_secs.saturating_sub(receipt.accepted_at) > MAX_RECEIPT_AGE_SECS
+    {
+        return Err("receipt_time_invalid");
+    }
+    Ok(())
+}
+
 struct PendingReceipt {
     envelope_sha256: String,
     published_at: Instant,
@@ -267,35 +305,11 @@ impl PendingReceipts {
         if !policy.authenticated_source_allowed || !policy.propagation_source_allowed {
             return Err("receipt_admission_policy_rejected");
         }
-        if receipt.schema != RECEIPT_SCHEMA {
-            return Err("receipt_schema_invalid");
-        }
+        verify_receipt_for_forwarding(receipt, authenticated_source, identity_key, now_secs)?;
         let sender = parse_peer(&receipt.sender_peer_id)?;
         let recipient = parse_peer(&receipt.recipient_peer_id)?;
         if sender != *local_sender {
             return Err("receipt_not_for_local_sender");
-        }
-        if recipient != *authenticated_source || PeerId::from_public_key(identity_key) != recipient
-        {
-            return Err("receipt_publisher_identity_mismatch");
-        }
-        validate_message_reference(&receipt.message_id, &receipt.envelope_sha256)?;
-        if receipt.signature.len() != 86 {
-            return Err("receipt_signature_invalid");
-        }
-        let signature = STANDARD_NO_PAD
-            .decode(&receipt.signature)
-            .map_err(|_| "receipt_signature_invalid")?;
-        if signature.len() != 64
-            || STANDARD_NO_PAD.encode(&signature) != receipt.signature
-            || !identity_key.verify(&signing_bytes(receipt)?, &signature)
-        {
-            return Err("receipt_signature_invalid");
-        }
-        if receipt.accepted_at > now_secs.saturating_add(MAX_FUTURE_SKEW_SECS)
-            || now_secs.saturating_sub(receipt.accepted_at) > MAX_RECEIPT_AGE_SECS
-        {
-            return Err("receipt_time_invalid");
         }
         let pending_key = (recipient, receipt.message_id.clone());
         let pending = self
@@ -470,6 +484,40 @@ mod tests {
                 self.created + Duration::from_secs(elapsed_secs),
                 AdmissionPolicy::allow_local(),
             )
+        }
+    }
+
+    #[test]
+    fn valid_foreign_receipt_can_relay_without_local_pending_attempt() {
+        let fixture = Fixture::new();
+        let receipt = fixture.receipt(1_000);
+        assert_eq!(verify_receipt_for_forwarding(
+            &receipt, &fixture.recipient, &fixture.recipient_key.public(), 1_001,
+        ), Ok(()));
+        let relay_peer = PeerId::random();
+        assert_eq!(PendingReceipts::new().verify(
+            &receipt, &fixture.recipient, &relay_peer, &fixture.recipient_key.public(),
+            1_001, fixture.created, AdmissionPolicy::allow_local(),
+        ).err(), Some("receipt_not_for_local_sender"));
+    }
+
+    #[test]
+    fn receipt_forwarding_refuses_bad_signature_identity_and_time() {
+        let fixture = Fixture::new();
+        let valid = fixture.receipt(1_000);
+        let mut tampered = valid.clone();
+        tampered.envelope_sha256 = "b".repeat(64);
+        assert_eq!(verify_receipt_for_forwarding(
+            &tampered, &fixture.recipient, &fixture.recipient_key.public(), 1_001,
+        ), Err("receipt_signature_invalid"));
+        assert_eq!(verify_receipt_for_forwarding(
+            &valid, &PeerId::random(), &fixture.recipient_key.public(), 1_001,
+        ), Err("receipt_publisher_identity_mismatch"));
+        for invalid_time in [879, 1_031] {
+            assert_eq!(verify_receipt_for_forwarding(
+                &fixture.receipt(invalid_time), &fixture.recipient,
+                &fixture.recipient_key.public(), 1_000,
+            ), Err("receipt_time_invalid"));
         }
     }
 
