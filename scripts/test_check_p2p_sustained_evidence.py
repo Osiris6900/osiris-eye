@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import math
 import unittest
 
 from check_p2p_sustained_evidence import validate
@@ -36,7 +37,7 @@ def report():
 
 
 
-def traffic_report():
+def traffic_report(*, recovered_ms=460000):
     data = report()
     data['measurement_notes'].update({
         'traffic_during_outage': True, 'traffic_mode': 'continuous_during_outage',
@@ -44,7 +45,7 @@ def traffic_report():
         'workload_retransmissions': 0,
     })
     data['outage'].update(outage_start_ms=450000, sink_restart_ms=455000,
-                          all_publishers_recovered_ms=460000, samples=[
+                          all_publishers_recovered_ms=recovered_ms, samples=[
                               {'elapsed_ms': 0, 'connected': True, 'delivered': True},
                               {'elapsed_ms': 450000, 'connected': False, 'delivered': False},
                               {'elapsed_ms': 460000, 'connected': True, 'delivered': True},
@@ -52,17 +53,20 @@ def traffic_report():
     records = []
     for i in range(10000):
         published = i * 80
-        received = published + 100
+        # Workload submitted while the sink is stopped can only be observed
+        # after it restarts. These are consistency fixtures, not real network
+        # evidence or a claim that gossipsub guarantees queued delivery.
+        received = max(published + 100, 455100) if 450000 <= published < 455000 else published + 100
         records.append({
             'payload_sha256': hashlib.sha256(str(i).encode()).hexdigest(),
             'source_host': 'host-a', 'recipient_host': 'host-b',
             'published_elapsed_ms': published,
-            'during_outage': 450000 <= published < 460000,
+            'during_outage': 450000 <= published < recovered_ms,
             'while_sink_stopped': 450000 <= published < 455000,
             'outcome': 'delivered', 'delivery_count': 1, 'duplicate_deliveries': 0,
             'delivered_elapsed_ms': received, 'delivered_after_restart': received >= 455000,
-            'outage_publication_delivered_after_restart': 450000 <= published < 460000 and received >= 455000,
-            'latency_ms': 100,
+            'outage_publication_delivered_after_restart': 450000 <= published < recovered_ms and received >= 455000,
+            'latency_ms': received - published,
         })
     data['delivery_records'] = records
     data['workload'].update(messages_while_sink_stopped=sum(r['while_sink_stopped'] for r in records),
@@ -71,8 +75,17 @@ def traffic_report():
                             delivered_after_restart=sum(r['delivered_after_restart'] for r in records))
     data['delivery']['outage_publications_delivered_after_restart'] = sum(
         r['outage_publication_delivered_after_restart'] for r in records)
-    data['latency_ms'].update(count=10000, p50=100, p95=100, p99=100, max=100)
+    update_latency_summary(data)
     return data
+
+
+def update_latency_summary(data):
+    ordered = sorted(row['latency_ms'] for row in data['delivery_records']
+                     if row['outcome'] == 'delivered')
+    data['latency_ms'] = {'count': len(ordered), **{
+        name: ordered[math.ceil(len(ordered) * q) - 1]
+        for name, q in (('p50', .5), ('p95', .95), ('p99', .99), ('max', 1))
+    }}
 
 
 def review(data, *, commit=SHA, url=URL, attempt=1):
@@ -119,6 +132,56 @@ class SustainedCapacityReviewTests(unittest.TestCase):
         self.assertEqual(result['declared_traffic_mode'], 'continuous_during_outage')
         self.assertFalse(result['t04_t19_release_gates_accepted'])
         self.assertFalse(result['independent_host_identity_verified'])
+
+    def test_delivery_inside_stopped_sink_window_is_refused(self):
+        data = traffic_report()
+        row = next(r for r in data['delivery_records']
+                   if r['while_sink_stopped'] and r['published_elapsed_ms'] > 450001)
+        row.update(delivered_elapsed_ms=450200, latency_ms=450200 - row['published_elapsed_ms'],
+                   delivered_after_restart=False, outage_publication_delivered_after_restart=False)
+        data['delivery']['delivered_after_restart'] -= 1
+        data['delivery']['outage_publications_delivered_after_restart'] -= 1
+        update_latency_summary(data)
+        self.assertIn('traffic_on_delivery_while_sink_stopped', review(data)['errors'])
+
+    def test_stopped_sink_delivery_boundaries_allow_only_one_ms_rounding(self):
+        for received, allowed in ((454998, False), (454999, True), (455000, True)):
+            data = traffic_report()
+            row = next(r for r in data['delivery_records']
+                       if r['while_sink_stopped'] and r['published_elapsed_ms'] > 450001)
+            after_restart = received >= 455000
+            row.update(delivered_elapsed_ms=received, latency_ms=received - row['published_elapsed_ms'],
+                       delivered_after_restart=after_restart,
+                       outage_publication_delivered_after_restart=after_restart)
+            data['delivery']['delivered_after_restart'] -= int(not after_restart)
+            data['delivery']['outage_publications_delivered_after_restart'] -= int(not after_restart)
+            update_latency_summary(data)
+            with self.subTest(received=received):
+                result = review(data)
+                self.assertEqual(result['passed_offline_consistency'], allowed, result['errors'])
+
+    def test_stop_request_clock_tick_does_not_imply_confirmed_sink_downtime(self):
+        for published, allowed in ((450000, True), (450001, True), (450002, False)):
+            data = traffic_report()
+            row = next(r for r in data['delivery_records'] if r['while_sink_stopped'])
+            row.update(published_elapsed_ms=published, delivered_elapsed_ms=450100,
+                       latency_ms=450100 - published, delivered_after_restart=False,
+                       outage_publication_delivered_after_restart=False)
+            data['delivery']['delivered_after_restart'] -= 1
+            data['delivery']['outage_publications_delivered_after_restart'] -= 1
+            update_latency_summary(data)
+            with self.subTest(published=published):
+                result = review(data)
+                self.assertEqual(result['passed_offline_consistency'], allowed, result['errors'])
+
+    def test_fast_probe_cannot_hide_all_publisher_recovery_over_policy(self):
+        for recovered_ms, allowed in ((479999, True), (480000, True), (480001, False), (899999, False)):
+            data = traffic_report(recovered_ms=recovered_ms)
+            with self.subTest(recovered_ms=recovered_ms):
+                result = review(data)
+                self.assertEqual(result['passed_offline_consistency'], allowed, result['errors'])
+                if not allowed:
+                    self.assertIn('traffic_on_all_publishers_recovery_limit_exceeded', result['errors'])
 
     def test_traffic_on_flag_without_actual_publication_records_is_refused(self):
         data = traffic_report()

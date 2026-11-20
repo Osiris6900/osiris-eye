@@ -176,6 +176,11 @@ Host B decryption events for a tracked digest can count as a delivery. The repor
 publisher-recovery windows. An aborted exercise retains pending-at-abort records
 rather than declaring their permanent loss.
 
+Offline consistency checks reject workload delivery timestamps inside confirmed
+sink downtime, allowing one millisecond at clock boundaries for truncation. They
+also apply the unchanged 30-second recovery limit to the declared recovery of
+every publisher; one fast probe cannot substitute for recovery of the other peers.
+
 The existing capacity workflow exposes this only as an explicit manual option:
 
 ```bash
