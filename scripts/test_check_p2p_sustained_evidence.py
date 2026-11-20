@@ -35,12 +35,157 @@ def report():
     return data
 
 
+
+def traffic_report():
+    data = report()
+    data['measurement_notes'].update({
+        'traffic_during_outage': True, 'traffic_mode': 'continuous_during_outage',
+        'workload_paused_during_outage': False, 'workload_drained_before_outage': False,
+        'workload_retransmissions': 0,
+    })
+    data['outage'].update(outage_start_ms=450000, sink_restart_ms=455000,
+                          all_publishers_recovered_ms=460000, samples=[
+                              {'elapsed_ms': 0, 'connected': True, 'delivered': True},
+                              {'elapsed_ms': 450000, 'connected': False, 'delivered': False},
+                              {'elapsed_ms': 460000, 'connected': True, 'delivered': True},
+                          ])
+    records = []
+    for i in range(10000):
+        published = i * 80
+        received = published + 100
+        records.append({
+            'payload_sha256': hashlib.sha256(str(i).encode()).hexdigest(),
+            'source_host': 'host-a', 'recipient_host': 'host-b',
+            'published_elapsed_ms': published,
+            'during_outage': 450000 <= published < 460000,
+            'while_sink_stopped': 450000 <= published < 455000,
+            'outcome': 'delivered', 'delivery_count': 1, 'duplicate_deliveries': 0,
+            'delivered_elapsed_ms': received, 'delivered_after_restart': received >= 455000,
+            'outage_publication_delivered_after_restart': 450000 <= published < 460000 and received >= 455000,
+            'latency_ms': 100,
+        })
+    data['delivery_records'] = records
+    data['workload'].update(messages_while_sink_stopped=sum(r['while_sink_stopped'] for r in records),
+                            messages_during_outage=sum(r['during_outage'] for r in records))
+    data['delivery'].update(delivered=10000, rejected=0, duplicate_deliveries=0,
+                            delivered_after_restart=sum(r['delivered_after_restart'] for r in records))
+    data['delivery']['outage_publications_delivered_after_restart'] = sum(
+        r['outage_publication_delivered_after_restart'] for r in records)
+    data['latency_ms'].update(count=10000, p50=100, p95=100, p99=100, max=100)
+    return data
+
+
 def review(data, *, commit=SHA, url=URL, attempt=1):
     return validate(data, commit=commit, run_url=url, attempt=attempt,
                     policy=copy.deepcopy(POLICY))
 
 
 class SustainedCapacityReviewTests(unittest.TestCase):
+    def test_requested_runtime_is_consistent_across_all_hosts(self):
+        for count in (None, 1, 2, 4):
+            data = report()
+            runtime = {'node_worker_threads_requested': count,
+                       'tokio_worker_threads_env': None if count is None else str(count),
+                       'observed_runtime_worker_count_verified': False}
+            data['runtime_config'] = runtime
+            for host in data['hosts']:
+                host['runtime_config'] = dict(runtime)
+            with self.subTest(count=count):
+                self.assertTrue(review(data)['passed_offline_consistency'])
+            data['hosts'][0]['runtime_config'] = {'node_worker_threads_requested': 3}
+            self.assertIn('host_runtime_configuration_mismatch', review(data)['errors'])
+        data = report()
+        runtime = {'node_worker_threads_requested': 1, 'tokio_worker_threads_env': '1',
+                   'observed_runtime_worker_count_verified': False}
+        data['runtime_config'] = runtime
+        for host in data['hosts']:
+            host['runtime_config'] = dict(runtime)
+        data['hosts'][0]['runtime_config']['node_worker_threads_requested'] = True
+        self.assertIn('host_runtime_configuration_mismatch', review(data)['errors'])
+        for invalid in (True, 0, 3, 8, '1'):
+            data = report()
+            runtime = {'node_worker_threads_requested': invalid,
+                       'tokio_worker_threads_env': str(invalid),
+                       'observed_runtime_worker_count_verified': False}
+            data['runtime_config'] = runtime
+            for host in data['hosts']:
+                host['runtime_config'] = runtime
+            with self.subTest(invalid=invalid):
+                self.assertIn('runtime_configuration_invalid', review(data)['errors'])
+
+    def test_traffic_on_windows_are_checked_without_promoting_acceptance(self):
+        result = review(traffic_report())
+        self.assertTrue(result['passed_offline_consistency'], result['errors'])
+        self.assertEqual(result['declared_traffic_mode'], 'continuous_during_outage')
+        self.assertFalse(result['t04_t19_release_gates_accepted'])
+        self.assertFalse(result['independent_host_identity_verified'])
+
+    def test_traffic_on_flag_without_actual_publication_records_is_refused(self):
+        data = traffic_report()
+        del data['delivery_records']
+        self.assertIn('traffic_on_exact_workload_records_required', review(data)['errors'])
+        data = traffic_report()
+        for record in data['delivery_records']:
+            record['published_elapsed_ms'] = 0
+            record['during_outage'] = record['while_sink_stopped'] = False
+        data['workload'].update(messages_while_sink_stopped=0, messages_during_outage=0)
+        self.assertIn('traffic_on_no_workload_while_sink_stopped', review(data)['errors'])
+
+    def test_traffic_windows_totals_and_delivery_counts_cannot_be_forged(self):
+        for field, value in (('during_outage', True), ('while_sink_stopped', True),
+                             ('duplicate_deliveries', 1), ('delivered_after_restart', True),
+                             ('delivery_count', True), ('published_elapsed_ms', -1),
+                             ('source_host', 'host-z'), ('recipient_host', 'host-c')):
+            data = traffic_report()
+            data['delivery_records'][0][field] = value
+            with self.subTest(field=field):
+                self.assertFalse(review(data)['passed_offline_consistency'])
+        data = traffic_report()
+        data['workload']['messages_while_sink_stopped'] += 1
+        self.assertIn('traffic_on_publication_counts_mismatch', review(data)['errors'])
+        data = traffic_report()
+        data['delivery_records'][1]['payload_sha256'] = data['delivery_records'][0]['payload_sha256']
+        self.assertFalse(review(data)['passed_offline_consistency'])
+        for boundary in ('sink_restart_ms', 'all_publishers_recovered_ms'):
+            data = traffic_report()
+            data['outage'][boundary] = None
+            with self.subTest(boundary=boundary):
+                self.assertFalse(review(data)['passed_offline_consistency'])
+
+    def test_traffic_latency_is_recomputed_from_observed_records(self):
+        data = traffic_report()
+        data['delivery_records'][0]['latency_ms'] = 1
+        self.assertIn('traffic_on_latency_time_mismatch', review(data)['errors'])
+        data = traffic_report()
+        data['latency_ms']['p95'] = 1
+        self.assertIn('traffic_on_latency_summary_mismatch', review(data)['errors'])
+
+    def test_traffic_observations_cannot_extend_beyond_reported_cutoff(self):
+        for field in ('published_elapsed_ms', 'delivered_elapsed_ms'):
+            data = traffic_report()
+            data['delivery_records'][0][field] = 900003
+            with self.subTest(field=field):
+                self.assertFalse(review(data)['passed_offline_consistency'])
+        data = traffic_report()
+        data['outage']['all_publishers_recovered_ms'] = 900003
+        self.assertIn('traffic_on_recovery_after_observation_cutoff', review(data)['errors'])
+
+    def test_actual_traffic_on_losses_remain_failures_of_the_unchanged_policy(self):
+        data = traffic_report()
+        row = next(r for r in data['delivery_records'] if r['while_sink_stopped'])
+        was_late = row['delivered_after_restart']
+        was_recovered = row['outage_publication_delivered_after_restart']
+        row.update(outcome='lost', delivery_count=0, delivered_elapsed_ms=None,
+                   delivered_after_restart=False, outage_publication_delivered_after_restart=False, latency_ms=None)
+        data['delivery']['delivered'] -= 1
+        data['delivery']['lost'] += 1
+        data['delivery']['delivered_after_restart'] -= int(was_late)
+        data['delivery']['outage_publications_delivered_after_restart'] -= int(was_recovered)
+        data['latency_ms']['count'] -= 1
+        result = review(data)
+        self.assertIn('predeclared_load_policy_not_met', result['errors'])
+        self.assertFalse(result['t04_t19_release_gates_accepted'])
+
     def test_exact_report_is_offline_only_and_requires_independent_review(self):
         result = review(report())
         self.assertTrue(result["passed_offline_consistency"], result["errors"])
