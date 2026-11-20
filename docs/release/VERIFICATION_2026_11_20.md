@@ -71,13 +71,49 @@ process, and includes the controller on host A. No threshold or metric is change
 to relabel this failed run. The topology remains a recipient-bootstrap star;
 NAT/open-mesh capacity, host independence and T04/T19 acceptance are unverified.
 
-## Current work and remaining acceptance
+## Resumed source verification and remaining acceptance
 
-New source fixes are under development and testing. The historical green PR CI
-and these downloaded bytes do not establish a passing result for that new source.
-After fixes, record the final exact commit/tree, rerun the relevant engineering
-checks and retain new measured paused/traffic-on operational results against the
-unchanged loss/resource policy.
+Source candidate `f29d961882ee3b6c564e509119155609d95e1adf`, tree
+`e0a1c88ccddc3960f1205ff30a50b713d871286c`, fixes three confirmed races:
+BLS ingestion now uses the exact verified in-memory observations, the real API
+recovery exercise isolates a single worker from inherited Uvicorn settings, and
+capacity handoffs retry until actual same-run/attempt artifact bytes validate.
+All capacity builds use the committed Cargo lockfile. The current action
+inventory is 19 workflows, 119 immutable action uses and zero mutable uses.
+
+All **31 engineering checks passed** on this clean, unchanged source candidate.
+The JUnit evidence contains **2,245 cases, zero skips and zero failures**, with
+26 subtests also passing. Locked P2P Rust tests passed 247 cases, native Rust
+tests passed three cases, frontend tests passed 119 cases, and all ten existing
+Chromium/TLS browser flows passed. Actual local receipt-to-paper, paper failures,
+portable recovery, dependency/provenance and source-integrity checks passed.
+The complete engineering report has SHA-256
+`1074c8a189952e63025c84d2fe98ef01f81aed7ea5857ed387714b4f532482ad`.
+
+The exact-source authenticated service recovery measured **585.606 ms local
+RTO**. One acknowledged post-backup fill was actually missing at restore and
+was then reapplied exactly once. This is one-host synthetic paper evidence,
+with production/independent-host acceptance still false.
+
+Fresh official BLS capture and offline verification passed: three series,
+66 observations, 64 numeric and two officially unavailable October 2025 values.
+No unavailable value was imputed, and numeric-feed completeness remains false.
+Fresh Coinbase capture retained 32 distinct quotes over 95.915 seconds and
+reproduced the original archive offline. Separate fitted-ridge diagnostics
+reproduced four purged folds. Fixed cost plus quoted-spread sensitivity returned
+approximately +0.102916%, -1.091811% and -2.860142% at 0/10/25 bps, respectively,
+with unit turnover 12. This short, post-capture diagnostic is neither a blinded
+holdout nor representative profitability or execution-calibration evidence.
+No operator feed policy was invented and no research-store ingestion ran.
+
+The JSON record binds all report/capture digests to the tested source and runtime.
+Private original bytes and complete local reports are also retained at
+`/workspace/shared/osiris-eye-evidence-20261120` in this task workspace. This
+directory remains task-local custody, with the same durability limits as above.
+This documentation checkpoint adds no implementation changes after the tested
+source commit. New paused/traffic-on independent-host measurements are still
+required against the unchanged loss/resource policy; no new operational pass is
+claimed and the historical failures remain failures.
 
 Final-candidate dependency acceptance and the residual `paste` disposition,
 original source-use rights, independent signed crypto/model/risk/compliance
