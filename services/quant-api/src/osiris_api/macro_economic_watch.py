@@ -128,7 +128,10 @@ def _json(raw: bytes):
             result[key] = value
         return result
 
-    return json.loads(raw, object_pairs_hook=unique)
+    try:
+        return json.loads(raw, object_pairs_hook=unique)
+    except RecursionError:
+        raise ValueError("bls_json_nesting_too_deep") from None
 
 
 def _plan(candidate_commit: str, series, started: datetime) -> dict:

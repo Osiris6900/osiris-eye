@@ -366,6 +366,58 @@ def test_oversized_capture_and_duplicate_json_fail_closed(tmp_path):
     assert result["passed"] is False
 
 
+def test_deeply_nested_response_retains_failed_hashed_capture(tmp_path):
+    raw = b"[" * 20_000 + b"0" + b"]" * 20_000
+    assert len(raw) <= macro.MAX_RESPONSE_BYTES
+    directory = tmp_path / "nested-response"
+    result = macro.capture_bls(
+        directory,
+        candidate_commit=COMMIT,
+        series=list(macro.SERIES),
+        transport=lambda body, timeout: (200, raw),
+        clock=lambda: NOW,
+    )
+    assert result["passed"] is False
+    assert result["error"] == {"type": "ValueError", "message": "bls_response_not_json"}
+    assert (directory / "response.bin").read_bytes() == raw
+    assert result["response_sha256"] == hashlib.sha256(raw).hexdigest()
+    retained = json.loads((directory / "capture.json").read_bytes())
+    assert retained == result
+    assert retained["capture_sha256"] == macro._digest(
+        macro._canonical({k: v for k, v in retained.items() if k != "capture_sha256"})
+    )
+    assert not (directory / "observations.json").exists()
+
+
+@pytest.mark.parametrize("filename", ["plan.json", "capture.json"])
+def test_deeply_nested_evidence_is_a_structured_verification_failure(tmp_path, filename):
+    directory, _, digest = capture(tmp_path)
+    (directory / filename).write_bytes(b"[" * 20_000 + b"0" + b"]" * 20_000)
+    with pytest.raises(ValueError, match="bls_json_nesting_too_deep"):
+        verify(directory, digest)
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(macro.ROOT / "scripts/record_bls_macro.py"),
+            "verify",
+            "--capture-dir", str(directory),
+            "--commit", COMMIT,
+            "--response-sha256", digest,
+            "--capture-sha256", TRUSTED_CAPTURES[directory],
+        ],
+        check=False,
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    assert payload["passed"] is False
+    assert payload["error"] == "bls_json_nesting_too_deep"
+    assert payload["release_gate_accepted"] is payload["live_trading_authorized"] is False
+    assert "Traceback" not in result.stderr
+
+
 def test_capture_verification_refuses_symlinked_evidence(tmp_path):
     directory, _, digest = capture(tmp_path)
     original = directory / "response.bin"

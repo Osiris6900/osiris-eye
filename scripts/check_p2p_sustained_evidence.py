@@ -88,6 +88,14 @@ def traffic_window_errors(data: dict) -> list[str]:
             if abs((received - published) - item["latency_ms"]) > 1.001:
                 errors.append("traffic_on_latency_time_mismatch")
                 break
+            # The controller waits for the sink-stop acknowledgement before
+            # sending more workload. A publication inside that stopped window
+            # cannot be decrypted before the restart request. Millisecond
+            # timestamps are independently truncated: leave one millisecond
+            # at each boundary for events sharing a clock tick.
+            if down and published > start + 1 and received < restart - 1:
+                errors.append("traffic_on_delivery_while_sink_stopped")
+                break
             delivered_count += 1
             latencies.append(item["latency_ms"])
             after_restart = received >= restart
@@ -220,6 +228,16 @@ def validate(data: object, *, commit: str, run_url: str, attempt: int, policy: d
         errors.append("load_policy_shape_invalid:" + str(exc))
     if policy_result is None or policy_result["status"] != "pass":
         errors.append("predeclared_load_policy_not_met")
+    if policy_result is not None and traffic_on:
+        # The generic outage policy checks the first successful probe. The
+        # sustained harness also declares when every publisher has recovered;
+        # a fast probe from one sender cannot excuse slower peer recovery.
+        boundaries = data.get("outage", {})
+        start = boundaries.get("outage_start_ms")
+        recovered = boundaries.get("all_publishers_recovered_ms")
+        if (type(start) is int and type(recovered) is int
+                and recovered - start > policy["maximum_recovery_ms"]):
+            errors.append("traffic_on_all_publishers_recovery_limit_exceeded")
     return {
         "schema": "osiris.p2p_sustained_offline_review.v1",
         "passed_offline_consistency": not errors,
