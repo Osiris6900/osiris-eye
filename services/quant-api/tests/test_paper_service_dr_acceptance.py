@@ -16,7 +16,13 @@ spec.loader.exec_module(dr)
 @pytest.fixture(scope="module")
 def exercise(tmp_path_factory):
     output = tmp_path_factory.mktemp("service-dr-parent") / "evidence"
-    report = dr.run(output)
+    # A deployment shell's Uvicorn settings must not introduce a supervisor
+    # whose workers survive the exercise's actual SIGKILL.
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("WEB_CONCURRENCY", "2")
+        patch.setenv("UVICORN_WORKERS", "2")
+        patch.setenv("UVICORN_RELOAD", "true")
+        report = dr.run(output)
     assert report["passed"] is True, report.get("error")
     return output, report
 

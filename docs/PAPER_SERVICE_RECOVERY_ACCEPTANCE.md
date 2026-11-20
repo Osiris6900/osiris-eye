@@ -5,6 +5,8 @@ in a separate OS process on loopback, with a generated bearer token and a
 throwaway paper account. It never selects an operator ledger, submits a broker
 order or fetches public/vendor market data. Both unauthenticated access and the
 previous process's token are refused by the replacement service.
+The runner fixes the service to one worker and ignores inherited Uvicorn
+worker/reload settings so SIGKILL targets the process actually serving the API.
 
 The exercise admits a working paper order and its first partial fill through
 authenticated HTTP, makes a consistent SQLite online backup while the service

@@ -179,6 +179,38 @@ def test_ingestion_is_point_in_time_idempotent_and_revision_preserving(tmp_path,
     assert len(store.list(macro.DATASET, 100)) == 68
 
 
+def test_ingestion_uses_verified_snapshot_if_evidence_changes_after_read(tmp_path, monkeypatch):
+    monkeypatch.setenv("OSIRIS_P2P_INGEST_ENABLED", "1")
+    directory, _, digest = capture(tmp_path)
+    path = directory / "observations.json"
+    original = json.loads(path.read_bytes())
+    replacement = copy.deepcopy(original)
+    replacement[0]["payload"]["value"] = "99.9"
+    read = macro._read
+    observation_reads = []
+
+    def replace_after_read(file, *args, **kwargs):
+        raw = read(file, *args, **kwargs)
+        if file == path:
+            observation_reads.append(file)
+            # A concurrent writer replaces the file after the trusted bytes
+            # were read. Ingestion must keep using that verified snapshot.
+            path.write_text(json.dumps(replacement))
+        return raw
+
+    monkeypatch.setattr(macro, "_read", replace_after_read)
+    store = ResearchStore(str(tmp_path / "research.sqlite3"))
+    accepted = ingest(store, directory, digest)
+    assert accepted["passed"] is True
+    assert observation_reads == [path]
+    persisted = {row["record_key"]: row["payload"]["value"]
+                 for row in store.list(macro.DATASET, 100)}
+    assert persisted == {row["record_key"]: row["payload"]["value"] for row in original}
+    # Later attempts still validate the replacement and refuse it.
+    with pytest.raises(ValueError, match="normalization_mismatch"):
+        ingest(store, directory, digest)
+
+
 def test_kill_switch_missing_rights_and_stale_capture_refuse_before_writes(tmp_path, monkeypatch):
     directory, _, digest = capture(tmp_path)
     store = ResearchStore(str(tmp_path / "research.sqlite3"))

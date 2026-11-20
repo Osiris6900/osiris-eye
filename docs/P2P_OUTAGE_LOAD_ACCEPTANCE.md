@@ -221,3 +221,35 @@ are recorded per host and in the report; actual runtime thread counts are not
 claimed independently measured. Different runtime settings require a new retained
 run, with the same memory, latency, delivery and recovery policy. No memory-budget
 pass or release acceptance is inferred from selecting one worker.
+
+## Capacity handoff recovery and retained candidate failures
+
+The capacity workflow now waits for downloaded, validated artifact bytes at
+all coordination boundaries. A name appearing in the GitHub artifact listing
+can precede storage availability; a single `actions/download-artifact` call
+previously aborted paused run
+[43593970718](https://github.com/Osiris6900/osiris-eye/actions/runs/43593970718)
+before any sustained measurement when Host B's endpoint was listed but not
+downloadable. Bounded retries stage downloads in a temporary directory and only
+publish the expected same-run, same-attempt SSH public key, tailnet endpoint
+with a valid Ed25519 host key, or controller-result payload after validation.
+A missing or malformed payload still times out. Receiver cleanup waits for
+actual controller-result bytes, including an explicit failure result. All
+three capacity builds use their committed Cargo lockfile.
+
+The previous candidate `84f307bbc7fafaceea88d5ee628a1151795c6243` also has an
+actual completed traffic-on run
+[43593983448](https://github.com/Osiris6900/osiris-eye/actions/runs/43593983448).
+Its downloaded `capacity-report-43593983448-1.zip` has SHA-256
+`3bc7fb591d239138396438691c62f51eb2254be1b6c18c6815101ceff69086a6`.
+The raw `sustained-100.json` SHA-256 is
+`191c25bebb0aca919aa72bf21c84b65f4809fe3b886267aedbc1af86c5783b40`.
+It measured 9,819 delivered and **181 lost** of 10,000 workload messages over
+957.404375 seconds, with zero observed duplicates. It recorded 55 publications
+while the sink was stopped, 223 during the full outage/recovery window and 43
+outage publications delivered after restart. Aggregate peak RSS was
+550,522,880 bytes on A, 559,902,720 on B and 522,551,296 on C. The unchanged
+536,870,912-byte per-host limit failed on A and B; the zero-loss limit failed.
+These results remain failed measurements. Artifact handoff retries do not
+establish durable message delivery or fix the measured memory limits, and a
+new final-candidate operational run remains necessary.

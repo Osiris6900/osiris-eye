@@ -363,13 +363,13 @@ def capture_bls(
     return result
 
 
-def verify_bls_capture(
+def _verified_bls_capture_snapshot(
     directory: Path,
     *,
     expected_commit: str,
     expected_response_sha256: str,
     expected_capture_sha256: str,
-) -> dict:
+) -> tuple[dict, list[dict]]:
     directory = Path(directory)
     if not isinstance(expected_response_sha256, str) or not re.fullmatch(
         "[0-9a-f]{64}", expected_response_sha256
@@ -428,7 +428,7 @@ def verify_bls_capture(
         or result.get("numeric_feed_complete") is not (result["unavailable_values"] == 0)
     ):
         raise ValueError("bls_normalization_mismatch")
-    return {
+    verified = {
         "passed": True,
         "candidate_commit": expected_commit,
         "observations": len(observations),
@@ -442,6 +442,23 @@ def verify_bls_capture(
         "release_gate_accepted": False,
         "live_trading_authorized": False,
     }
+    return verified, observations
+
+
+def verify_bls_capture(
+    directory: Path,
+    *,
+    expected_commit: str,
+    expected_response_sha256: str,
+    expected_capture_sha256: str,
+) -> dict:
+    verified, _ = _verified_bls_capture_snapshot(
+        directory,
+        expected_commit=expected_commit,
+        expected_response_sha256=expected_response_sha256,
+        expected_capture_sha256=expected_capture_sha256,
+    )
+    return verified
 
 
 def preflight_bls_ingestion(
@@ -463,13 +480,12 @@ def preflight_bls_ingestion(
         or not 0 < max_age_seconds <= 86_400
     ):
         raise ValueError("bls_freshness_bound_invalid")
-    verified = verify_bls_capture(
+    verified, rows = _verified_bls_capture_snapshot(
         directory,
         expected_commit=expected_commit,
         expected_response_sha256=expected_response_sha256,
         expected_capture_sha256=expected_capture_sha256,
     )
-    rows = _json(_read(Path(directory) / "observations.json"))
     current = _utc(now)
     for row in rows:
         age = (current - datetime.fromisoformat(row["available_at"])).total_seconds()

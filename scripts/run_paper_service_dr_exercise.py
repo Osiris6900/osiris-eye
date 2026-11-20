@@ -112,8 +112,12 @@ class Service:
         self.directory.mkdir(mode=0o700)
         self.log = (self.directory / "service.log").open("xb")
         os.chmod(self.directory / "service.log", 0o600)
+        # SIGKILL must target the process serving the API. Inherited Uvicorn
+        # reload/worker settings can otherwise turn it into a supervisor whose
+        # children keep serving after the supposed outage.
         environment = {key: value for key, value in os.environ.items()
-                       if not key.startswith("OSIRIS_") and key != "PYTHONPATH"}
+                       if not key.startswith(("OSIRIS_", "UVICORN_"))
+                       and key not in {"PYTHONPATH", "WEB_CONCURRENCY"}}
         environment.update({
             "OSIRIS_ENV": "production", "OSIRIS_API_TOKEN": self.token,
             "OSIRIS_PAPER_EXECUTION_DB": str(self.database),
@@ -132,7 +136,7 @@ class Service:
             self.port = listener.getsockname()[1]
             self.proc = subprocess.Popen(
                 [sys.executable, "-m", "uvicorn", "osiris_api.main:app", "--fd",
-                 str(listener.fileno()), "--log-level", "error", "--no-access-log"],
+                 str(listener.fileno()), "--workers", "1", "--log-level", "error", "--no-access-log"],
                 cwd=self.directory, env=environment, stdin=subprocess.DEVNULL,
                 stdout=self.log, stderr=self.log, pass_fds=(listener.fileno(),),
             )

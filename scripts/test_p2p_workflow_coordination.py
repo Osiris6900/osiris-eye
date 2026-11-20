@@ -190,6 +190,74 @@ class CoordinationTests(unittest.TestCase):
                 coordination._valid_coordinated_json("p2p-endpoint.json", path)
             )
 
+    def test_capacity_handoffs_retry_until_valid_same_attempt_bytes_exist(self):
+        cases = (
+            ("host-a.pub", "capacity-a-pub", PUBLIC_KEY + " runner@host\n"),
+            ("host-b.json", "capacity-b-endpoint", json.dumps({
+                "ip": "100.64.1.9", "ssh_port": 22, "ssh_host_key": PUBLIC_KEY})),
+            ("host-c.json", "capacity-c-endpoint", json.dumps({
+                "ip": "100.64.1.10", "ssh_port": 22, "ssh_host_key": PUBLIC_KEY})),
+            ("result.json", "capacity-controller-finished", '{"status":"failure"}'),
+        )
+        for filename, prefix, content in cases:
+            with self.subTest(filename=filename), tempfile.TemporaryDirectory() as directory:
+                destination = Path(directory) / filename
+                calls = []
+
+                def simulated_download(command, **kwargs):
+                    calls.append(command)
+                    self.assertEqual(command[command.index("--name") + 1], prefix + "-123-2")
+                    if len(calls) == 1:
+                        return subprocess.CompletedProcess(command, 1, "", "artifact not found")
+                    staged = Path(command[command.index("--dir") + 1])
+                    (staged / filename).write_text("invalid" if len(calls) == 2 else content)
+                    return subprocess.CompletedProcess(command, 0, "", "")
+
+                with patch.object(coordination.subprocess, "run", side_effect=simulated_download), \
+                     patch.object(coordination.time, "sleep") as sleep:
+                    coordination.download_same_run_artifact(
+                        "owner/repo", "123", "2", prefix + "-123-2", destination,
+                    )
+                self.assertEqual(len(calls), 3)
+                self.assertEqual(sleep.call_count, 2)
+                self.assertEqual(destination.read_text(), content)
+
+    def test_capacity_endpoint_validation_refuses_injection_and_non_tailnet_hosts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "host-b.json"
+            valid = {"ip": "100.64.1.9", "ssh_port": 22, "ssh_host_key": PUBLIC_KEY}
+            for bad in (
+                dict(valid, ip="127.0.0.1"), dict(valid, ip="100.64.1.9\nattacker"),
+                dict(valid, ssh_port=True), dict(valid, ssh_port=23),
+                dict(valid, ssh_host_key=PUBLIC_KEY + "\n" + PUBLIC_KEY),
+                dict(valid, ssh_host_key=None), dict(valid, ssh_host_key="ssh-ed25519 AAAA"),
+            ):
+                path.write_text(json.dumps(bad))
+                with self.subTest(payload=bad):
+                    self.assertFalse(coordination._valid_coordinated_json(path.name, path))
+            path.write_text(json.dumps(valid))
+            self.assertTrue(coordination._valid_coordinated_json(path.name, path))
+            for filename, artifact in (
+                ("host-b.json", "capacity-c-endpoint-123-1"),
+                ("host-a.pub", "capacity-controller-finished-123-1"),
+                ("result.json", "capacity-a-pub-123-1"),
+            ):
+                with self.subTest(filename=filename), self.assertRaisesRegex(ValueError, "destination"):
+                    coordination.download_same_run_artifact(
+                        "owner/repo", "123", "1", artifact, Path(directory) / filename,
+                    )
+
+    def test_capacity_workflow_never_releases_hosts_on_listing_alone(self):
+        workflow = (Path(__file__).resolve().parents[1] / ".github" / "workflows" /
+                    "p2p-capacity.yml").read_text()
+        self.assertNotIn("p2p_workflow_coordination.py wait-artifact", workflow)
+        self.assertNotIn("actions/download-artifact@", workflow)
+        self.assertEqual(workflow.count("p2p_workflow_coordination.py download-artifact"), 5)
+        self.assertIn('--destination "$RUNNER_TEMP/osiris-capacity/host-$host.json"', workflow)
+        self.assertEqual(workflow.count('--destination "$RUNNER_TEMP/osiris-capacity/host-a.pub"'), 2)
+        self.assertEqual(workflow.count('--destination "$RUNNER_TEMP/osiris-capacity/result.json"'), 2)
+        self.assertEqual(workflow.count("cargo build --locked --release --manifest-path"), 3)
+
     def test_download_timeout_does_not_release_host_on_404(self):
         with tempfile.TemporaryDirectory() as directory:
             destination = Path(directory) / "p2p-endpoint.json"

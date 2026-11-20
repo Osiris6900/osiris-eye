@@ -61,12 +61,26 @@ def wait_for_artifact(repository: str, run_id: str, name: str, timeout: float) -
 
 
 
+COORDINATED_ARTIFACTS = {
+    "p2p-endpoint.json": None,
+    "p2p-host-a-result.json": None,
+    "host-a.pub": "capacity-a-pub",
+    "host-b.json": "capacity-b-endpoint",
+    "host-c.json": "capacity-c-endpoint",
+    "result.json": "capacity-controller-finished",
+}
+
+
 def _valid_coordinated_json(filename: str, path: Path) -> bool:
-    """Check the actual downloaded bytes before releasing the next host."""
+    """Check actual downloaded coordination bytes, including SSH public keys."""
     if not path.is_file() or path.is_symlink() or not 0 < path.stat().st_size <= 8192:
         return False
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        raw = path.read_text(encoding="utf-8")
+        if filename == "host-a.pub":
+            public_host_key(raw)
+            return True
+        payload = json.loads(raw)
     except (OSError, ValueError, UnicodeError):
         return False
     if not isinstance(payload, dict):
@@ -85,7 +99,19 @@ def _valid_coordinated_json(filename: str, path: Path) -> bool:
             and isinstance(peer, str)
             and re.fullmatch(r"[A-Za-z0-9]{10,128}", peer) is not None
         )
-    if filename == "p2p-host-a-result.json":
+    if filename in ("host-b.json", "host-c.json"):
+        try:
+            address = ipaddress.ip_address(payload["ip"])
+            public_host_key(payload["ssh_host_key"])
+        except (KeyError, ValueError, TypeError, AttributeError):
+            return False
+        return (
+            address.version == 4
+            and address in ipaddress.ip_network("100.64.0.0/10")
+            and type(payload.get("ssh_port")) is int
+            and payload["ssh_port"] == 22
+        )
+    if filename in ("p2p-host-a-result.json", "result.json"):
         return payload.get("status") in ("success", "failure", "cancelled", "skipped")
     return False
 
@@ -94,7 +120,7 @@ def download_same_run_artifact(
     repository: str, run_id: str, run_attempt: str, name: str,
     destination: Path, *, timeout: float = 600,
 ) -> None:
-    """Retry until artifact ZIP bytes are downloadable and JSON is valid.
+    """Retry until artifact ZIP bytes are downloadable and payload is valid.
 
     The GitHub artifacts listing may expose a name while its backing blob
     still returns 404/BlobNotFound. A listing is not a download guarantee.
@@ -110,8 +136,11 @@ def download_same_run_artifact(
     ):
         raise ValueError("artifact does not belong to requested run attempt")
     destination = Path(destination)
-    if destination.name not in ("p2p-endpoint.json", "p2p-host-a-result.json"):
+    if destination.name not in COORDINATED_ARTIFACTS:
         raise ValueError("unexpected artifact destination")
+    prefix = COORDINATED_ARTIFACTS[destination.name]
+    if prefix is not None and name != f"{prefix}-{run_id}-{run_attempt}":
+        raise ValueError("artifact does not match coordination destination")
     if not 0 < timeout <= 2700:
         raise ValueError("artifact download timeout must be between 0 and 2700 seconds")
     destination.parent.mkdir(parents=True, exist_ok=True)

@@ -4,7 +4,7 @@
   "live_trading_authorized": false,
   "facts": {
     "mutable_action_uses": 0,
-    "pinned_action_uses": 123,
+    "pinned_action_uses": 119,
     "workflow_files": 19,
     "advisory_inputs_match_worktree": true,
     "advisory_source_commit": "2b685c2bc8689422724f1d9eb52ceef660ebb8a7",

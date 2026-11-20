@@ -64,6 +64,10 @@ to the previous version; old observations remain queryable as of their original
 availability. A full batch commits atomically. The output does not send a broker
 order or broadcast into P2P.
 
+Ingestion uses the exact in-memory observations validated against the trusted
+capture. Replacing the evidence file after that read cannot change the admitted
+batch; a later ingestion attempt verifies the replacement again.
+
 Source/API references: <https://www.bls.gov/developers/api_signature_v2.htm> and
 <https://www.bls.gov/bls/linksite.htm>. These links and an accessible API do not
 replace an independent source-rights decision. Source authenticity, rights,

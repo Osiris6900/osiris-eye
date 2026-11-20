@@ -62,7 +62,7 @@ jobs:
       - name: Run soak measurement regression tests
         run: python3 -m unittest discover -s scripts -p 'test_run_p2p_soak.py' -v
       - name: Build P2P binary
-        run: cargo build --release --manifest-path services/p2p-node/Cargo.toml
+        run: cargo build --locked --release --manifest-path services/p2p-node/Cargo.toml
       - name: Create ephemeral SSH key and Host A endpoint
         run: |
           set -euo pipefail
@@ -75,22 +75,16 @@ jobs:
           name: capacity-a-pub-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/osiris-capacity/host-a.pub
           retention-days: 1
-      - name: Wait for Host B and C endpoints
+      - name: Download and validate Host B and C endpoint bytes
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          for artifact in "capacity-b-endpoint-${{ github.run_id }}-${{ github.run_attempt }}" "capacity-c-endpoint-${{ github.run_id }}-${{ github.run_attempt }}"; do
-            python3 scripts/p2p_workflow_coordination.py wait-artifact --name "$artifact" --timeout 600
+          for host in b c; do
+            python3 scripts/p2p_workflow_coordination.py download-artifact \
+              --name "capacity-$host-endpoint-${{ github.run_id }}-${{ github.run_attempt }}" \
+              --destination "$RUNNER_TEMP/osiris-capacity/host-$host.json" --timeout 600
           done
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: capacity-b-endpoint-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/osiris-capacity
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: capacity-c-endpoint-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/osiris-capacity
       - name: Pin SSH keys and run real three-host 10/50/100-peer capacity sweeps
         env:
           NODE_WORKER_THREADS: ${{ inputs.node_worker_threads }}
@@ -222,18 +216,15 @@ jobs:
           authkey: ${{ secrets.TS_AUTHKEY }}
           tags: tag:ci-p2p
       - name: Build receiver
-        run: cargo build --release --manifest-path services/p2p-node/Cargo.toml
-      - name: Wait for sender SSH key
+        run: cargo build --locked --release --manifest-path services/p2p-node/Cargo.toml
+      - name: Download and validate sender SSH public key bytes
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          python3 scripts/p2p_workflow_coordination.py wait-artifact \
-            --name "capacity-a-pub-${{ github.run_id }}-${{ github.run_attempt }}" --timeout 600
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: capacity-a-pub-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/osiris-capacity
+          python3 scripts/p2p_workflow_coordination.py download-artifact \
+            --name "capacity-a-pub-${{ github.run_id }}-${{ github.run_attempt }}" \
+            --destination "$RUNNER_TEMP/osiris-capacity/host-a.pub" --timeout 600
       - name: Start SSH receiver and publish endpoint
         run: |
           set -euo pipefail
@@ -258,8 +249,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          python3 scripts/p2p_workflow_coordination.py wait-artifact \
-            --name "capacity-controller-finished-${{ github.run_id }}-${{ github.run_attempt }}" --timeout 2700
+          python3 scripts/p2p_workflow_coordination.py download-artifact \
+            --name "capacity-controller-finished-${{ github.run_id }}-${{ github.run_attempt }}" \
+            --destination "$RUNNER_TEMP/osiris-capacity/result.json" --timeout 2700
       - name: Remove ephemeral SSH authorization
         if: always()
         run: rm -f "$HOME/.ssh/authorized_keys"
@@ -276,18 +268,15 @@ jobs:
           authkey: ${{ secrets.TS_AUTHKEY }}
           tags: tag:ci-p2p
       - name: Build observer
-        run: cargo build --release --manifest-path services/p2p-node/Cargo.toml
-      - name: Wait for sender SSH key
+        run: cargo build --locked --release --manifest-path services/p2p-node/Cargo.toml
+      - name: Download and validate sender SSH public key bytes
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          python3 scripts/p2p_workflow_coordination.py wait-artifact \
-            --name "capacity-a-pub-${{ github.run_id }}-${{ github.run_attempt }}" --timeout 600
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: capacity-a-pub-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/osiris-capacity
+          python3 scripts/p2p_workflow_coordination.py download-artifact \
+            --name "capacity-a-pub-${{ github.run_id }}-${{ github.run_attempt }}" \
+            --destination "$RUNNER_TEMP/osiris-capacity/host-a.pub" --timeout 600
       - name: Start SSH receiver and publish endpoint
         run: |
           set -euo pipefail
@@ -312,8 +301,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          python3 scripts/p2p_workflow_coordination.py wait-artifact \
-            --name "capacity-controller-finished-${{ github.run_id }}-${{ github.run_attempt }}" --timeout 2700
+          python3 scripts/p2p_workflow_coordination.py download-artifact \
+            --name "capacity-controller-finished-${{ github.run_id }}-${{ github.run_attempt }}" \
+            --destination "$RUNNER_TEMP/osiris-capacity/result.json" --timeout 2700
       - name: Remove ephemeral SSH authorization
         if: always()
         run: rm -f "$HOME/.ssh/authorized_keys"
