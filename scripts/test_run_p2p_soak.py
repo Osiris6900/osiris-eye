@@ -1,19 +1,155 @@
 """Fail-closed measurement and lifecycle regressions (no network needed)."""
 import json
 import os
+import signal
 import shlex
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from types import SimpleNamespace
 
 from run_p2p_soak import Agent, Controller, measurement_class, percentile, workload_records, runtime_config, measure
 
 
 class MeasurementTests(unittest.TestCase):
+    def test_cleanup_signals_all_nodes_before_waiting_and_uses_one_grace_period(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            agent = Agent(SimpleNamespace(controller_pid=None), tmp)
+            events, clock = [], [10.0]
+            for index in range(3):
+                proc = Mock(pid=1000 + index)
+                proc.poll.return_value = None
+                def terminate(index=index, proc=proc):
+                    proc.stdin.close.assert_called_once()
+                    events.append(('terminate', index))
+                proc.terminate.side_effect = terminate
+                def wait(*, timeout, index=index):
+                    events.append(('wait', index, timeout))
+                    clock[0] += 3
+                    return 0
+                proc.wait.side_effect = wait
+                agent.nodes[index] = proc
+            with patch('run_p2p_soak.time.monotonic', side_effect=lambda: clock[0]):
+                agent.cleanup()
+            self.assertEqual(events[:3], [('terminate', index) for index in range(3)])
+            self.assertEqual([event[2] for event in events[3:]], [8.0, 5.0, 2.0])
+            self.assertTrue(agent.done.is_set())
+            for proc in agent.nodes.values():
+                proc.stdin.close.assert_called_once()
+                proc.stdout.close.assert_called_once()
+
+    def test_sink_restart_stop_closes_stdin_before_waiting_for_child(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            agent = Agent(SimpleNamespace(controller_pid=None), tmp)
+            proc = Mock(pid=1000)
+            proc.terminate.side_effect = lambda: proc.stdin.close.assert_called_once()
+            agent.nodes[0] = proc
+            agent.stop_node(0)
+            proc.terminate.assert_called_once()
+            proc.wait.assert_called_once_with(timeout=8)
+            proc.stdout.close.assert_called_once()
+
+    def test_undrained_reader_cannot_be_reported_as_finished(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            agent = Agent(SimpleNamespace(controller_pid=None, binary=Path('/bin/true')), tmp)
+            proc, reader = Mock(pid=1500), Mock()
+            proc.poll.return_value = None
+            reader.is_alive.return_value = True
+            agent.nodes[0], agent.node_readers[proc.pid] = proc, reader
+            events = []
+            agent.emit = lambda kind, **data: events.append(kind)
+            with patch('run_p2p_soak.revision', return_value=('1' * 40, True)), \
+                 patch('run_p2p_soak.digest_file', return_value='a' * 64), \
+                 patch('run_p2p_soak.threading.Thread'), \
+                 patch('run_p2p_soak.signal.signal'), \
+                 patch('run_p2p_soak.sys.stdin', ['{"action":"finish"}\n']), \
+                 patch.object(agent, 'sample', return_value={}):
+                with self.assertRaisesRegex(RuntimeError, 'node_reader_not_drained:1500'):
+                    agent.run()
+            self.assertEqual(events, ['metadata', 'metrics'])
+            proc.wait.assert_called_once()
+            self.assertLessEqual(reader.join.call_args.kwargs['timeout'], 2)
+            proc.stdout.close.assert_not_called()
+
+    def test_controller_escalation_preserves_parent_reaping_and_bounds_final_wait(self):
+        controller, proc = Controller(), Mock(pid=1600)
+        proc.poll.return_value = None
+        proc.wait.side_effect = [subprocess.TimeoutExpired('agent', 30),
+                                subprocess.TimeoutExpired('agent', 10), 0]
+        controller.agents['host-a'] = proc
+        with patch('run_p2p_soak.os.killpg') as signal_group:
+            controller.cleanup()
+        proc.stdin.close.assert_called_once()
+        proc.terminate.assert_called_once()
+        signal_group.assert_called_once_with(proc.pid, signal.SIGKILL)
+        self.assertEqual([call.kwargs['timeout'] for call in proc.wait.call_args_list], [30, 10, 5])
+
+    def test_cleanup_kills_every_overdue_node_before_final_parent_waits(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            agent = Agent(SimpleNamespace(controller_pid=None), tmp)
+            events = []
+            for index in range(2):
+                proc = Mock(pid=2000 + index)
+                proc.poll.return_value = None
+                proc.terminate.side_effect = lambda index=index: events.append(('terminate', index))
+                proc.kill.side_effect = lambda index=index: events.append(('kill', index))
+                attempts = [0]
+                def wait(*, timeout, index=index, attempts=attempts):
+                    events.append(('wait', index))
+                    attempts[0] += 1
+                    if attempts[0] == 1:
+                        raise subprocess.TimeoutExpired('node', timeout)
+                    return 0
+                proc.wait.side_effect = wait
+                agent.nodes[index] = proc
+            agent.cleanup()
+            self.assertEqual(events, [('terminate', 0), ('terminate', 1),
+                ('wait', 0), ('wait', 1), ('kill', 0), ('kill', 1), ('wait', 0), ('wait', 1)])
+
+    def test_repeated_termination_signals_cannot_interrupt_parent_reaping(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            agent = Agent(SimpleNamespace(controller_pid=None), tmp)
+            proc = Mock(pid=3000)
+            proc.poll.return_value = None
+            observed = []
+            def interrupted(kind, _frame):
+                observed.append(kind)
+            previous = {kind: signal.signal(kind, interrupted)
+                        for kind in (signal.SIGTERM, signal.SIGHUP)}
+            try:
+                def wait(*, timeout):
+                    os.kill(os.getpid(), signal.SIGTERM)
+                    os.kill(os.getpid(), signal.SIGHUP)
+                    return 0
+                proc.wait.side_effect = wait
+                agent.nodes[0] = proc
+                agent.cleanup()
+                self.assertEqual(observed, [])
+                self.assertIs(signal.getsignal(signal.SIGTERM), interrupted)
+                self.assertIs(signal.getsignal(signal.SIGHUP), interrupted)
+                proc.wait.assert_called_once()
+            finally:
+                for kind, handler in previous.items():
+                    signal.signal(kind, handler)
+
+    def test_finished_event_waits_for_parent_cleanup_and_preserves_final_sample(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            agent = Agent(SimpleNamespace(controller_pid=None, binary=Path('/bin/true')), tmp)
+            events = []
+            agent.emit = lambda kind, **data: events.append(kind)
+            with patch('run_p2p_soak.revision', return_value=('1' * 40, True)), \
+                 patch('run_p2p_soak.digest_file', return_value='a' * 64), \
+                 patch('run_p2p_soak.threading.Thread'), \
+                 patch('run_p2p_soak.signal.signal'), \
+                 patch('run_p2p_soak.sys.stdin', ['{"action":"finish"}\n']), \
+                 patch.object(agent, 'sample', return_value={}), \
+                 patch.object(agent, 'cleanup', side_effect=lambda: events.append('reaped')):
+                agent.run()
+            self.assertEqual(events, ['metadata', 'metrics', 'reaped', 'finished'])
+
     def test_bounded_worker_setting_reaches_actual_node_environment(self):
         for count in (None, 1, 2, 4):
             with self.subTest(count=count), tempfile.TemporaryDirectory() as tmp:
