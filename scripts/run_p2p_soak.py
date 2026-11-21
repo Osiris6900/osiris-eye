@@ -104,6 +104,7 @@ class Agent:
         self.args, self.state = args, Path(state)
         self.runtime = runtime_config(getattr(args, 'node_worker_threads', None))
         self.nodes = {}
+        self.node_readers = {}
         self.lock = threading.Lock()
         self.done = threading.Event()
         self.expected_stops = set()
@@ -157,7 +158,9 @@ class Agent:
                                 stderr=subprocess.STDOUT, text=True, bufsize=1)
         self.nodes[index] = proc
         self.expected_stops.discard(index)
-        threading.Thread(target=self.read_node, args=(index, proc), daemon=True).start()
+        reader = threading.Thread(target=self.read_node, args=(index, proc), daemon=True)
+        self.node_readers[proc.pid] = reader
+        reader.start()
 
     def read_node(self, index, proc):
         for line in proc.stdout:
@@ -218,6 +221,7 @@ class Agent:
     def stop_node(self, index):
         self.expected_stops.add(index)
         proc = self.nodes[index]
+        self.close_node_stdin(proc)
         proc.terminate()
         try:
             proc.wait(timeout=8)
@@ -226,6 +230,84 @@ class Agent:
             proc.wait(timeout=5)
         with self.lock:
             self.live_links = {key: value for key, value in self.live_links.items() if key[0] != index}
+        self.close_node_streams(proc)
+
+    @staticmethod
+    def close_node_stdin(proc):
+        # Tokio's blocking stdin worker also needs EOF to let the process exit
+        # after its async signal handler finishes.
+        if proc.stdin is not None:
+            try:
+                proc.stdin.close()
+            except (BrokenPipeError, OSError):
+                pass
+
+    def close_node_streams(self, proc, *, deadline=None):
+        reader = self.node_readers.get(proc.pid)
+        if reader is not None:
+            reader.join(timeout=2 if deadline is None else max(0, deadline - time.monotonic()))
+            if reader.is_alive():
+                raise RuntimeError('node_reader_not_drained:' + str(proc.pid))
+        if proc.stdout is not None:
+            proc.stdout.close()
+
+    def cleanup(self):
+        # A second group signal must not raise SystemExit halfway through the
+        # parent waits and leave terminated children orphaned under PID 1.
+        kinds = (signal.SIGTERM, signal.SIGHUP)
+        mask = signal.pthread_sigmask(signal.SIG_BLOCK, kinds)
+        try:
+            previous = {kind: signal.signal(kind, signal.SIG_IGN) for kind in kinds}
+        finally:
+            signal.pthread_sigmask(signal.SIG_SETMASK, mask)
+        try:
+            self.done.set()
+            self.expected_stops.update(self.nodes)
+            nodes = list(self.nodes.values())
+            # Signal the entire cohort before waiting for any one child. The
+            # grace period bounds all children together, rather than each node.
+            for proc in nodes:
+                self.close_node_stdin(proc)
+                if proc.poll() is None:
+                    try:
+                        proc.terminate()
+                    except ProcessLookupError:
+                        pass
+            deadline = time.monotonic() + 8
+            pending = []
+            for proc in nodes:
+                try:
+                    proc.wait(timeout=max(0, deadline - time.monotonic()))
+                except subprocess.TimeoutExpired:
+                    pending.append(proc)
+            for proc in pending:
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+            deadline = time.monotonic() + 5
+            failed = []
+            for proc in pending:
+                try:
+                    proc.wait(timeout=max(0, deadline - time.monotonic()))
+                except subprocess.TimeoutExpired:
+                    failed.append(proc.pid)
+            if failed:
+                raise RuntimeError('node_cleanup_not_reaped:' + ','.join(map(str, failed)))
+            deadline = time.monotonic() + 2
+            reader_errors = []
+            for proc in nodes:
+                try:
+                    self.close_node_streams(proc, deadline=deadline)
+                except RuntimeError as error:
+                    reader_errors.append(str(error))
+            if reader_errors:
+                raise RuntimeError(';'.join(reader_errors))
+            with self.lock:
+                self.live_links.clear()
+        finally:
+            for kind, handler in previous.items():
+                signal.signal(kind, handler)
 
     def sample(self):
         now = time.monotonic()
@@ -284,6 +366,7 @@ class Agent:
         signal.signal(signal.SIGTERM, interrupted)
         signal.signal(signal.SIGHUP, interrupted)
         threading.Thread(target=self.monitor, daemon=True).start()
+        finished = False
         try:
             for line in sys.stdin:
                 command = json.loads(line)
@@ -307,14 +390,16 @@ class Agent:
                     self.start(0)
                 elif action == 'finish':
                     self.emit('metrics', **self.sample())
-                    self.emit('finished')
-                    return
+                    finished = True
+                    break
                 else:
                     raise ValueError('unknown command')
         finally:
-            self.done.set()
-            for index in list(self.nodes):
-                self.stop_node(index)
+            self.cleanup()
+        if finished:
+            # The controller may release/close an agent only after every node
+            # was waited for. Resource sampling still ends before shutdown.
+            self.emit('finished')
 
 
 class Controller:
@@ -447,12 +532,14 @@ class Controller:
             try:
                 proc.wait(timeout=30)
             except subprocess.TimeoutExpired:
-                os.killpg(proc.pid, 15)
+                # Give the agent parent a chance to reap its own children. A
+                # group-wide termination can interrupt a child-reaping phase.
+                proc.terminate()
                 try:
                     proc.wait(timeout=10)
                 except subprocess.TimeoutExpired:
                     os.killpg(proc.pid, 9)
-                    proc.wait()
+                    proc.wait(timeout=5)
 
 
 

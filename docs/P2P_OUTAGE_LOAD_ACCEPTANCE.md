@@ -81,6 +81,20 @@ and `production_readiness_evidence` remain false. The release gate stays open
 until an actual final-candidate run and its sanitized retained artifact exist;
 no such run is created by this offline checker.
 
+## Agent shutdown and process evidence
+
+An agent reports `finished` only after it has terminated and reaped its node
+processes and drained their output readers. Shutdown closes node stdin before
+SIGTERM, uses shared cohort deadlines, and prevents repeat TERM/HUP signals from
+interrupting parent waits. An undrained reader or unreaped node fails cleanup.
+The controller allows parent-managed cleanup before a bounded group-kill fallback.
+
+`scripts/test_p2p_soak_cleanup.py` checks the real process contract with a small
+local run. Its Linux subreaper records any adopted orphan as a failure and reaps
+it for test hygiene; it does not turn a cleanup failure into a pass. This test
+and the ordinary lifecycle unit tests supplement the retained measurement.
+They do not establish independent-host capacity or release acceptance.
+
 ## Run the encrypted soak on GitHub runners
 
 The existing two-host E2EE workflow has an opt-in `soak` input:
