@@ -6,6 +6,7 @@
 
 pub mod delivery_receipt;
 pub mod peer_metrics;
+pub mod outbound_queue;
 
 #[cfg(target_os = "linux")]
 pub mod verified_receipt_bridge;

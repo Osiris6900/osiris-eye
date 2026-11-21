@@ -9,7 +9,9 @@ mod announcement;
 
 use revocation::{apply_synced_revocation, RevocationRegistry, RevocationSyncMessage, SyncedRevocation};
 use rejection_log::RejectionLogThrottle;
-use e2ee::{create_key_binding, decrypt_for_recipient, encrypt_for_recipient, verify_envelope_for_forwarding, verify_key_binding, EncryptedEnvelope, KeyBindingRecord, TransportKeyPair};
+use e2ee::{create_key_binding, decrypt_for_recipient, verify_envelope_for_forwarding, verify_key_binding, EncryptedEnvelope, KeyBindingRecord, TransportKeyPair};
+#[cfg(test)]
+use e2ee::encrypt_for_recipient;
 use peer_auth::{deny_peer, is_peer_allowed, parse_revoked_peers, parse_trusted_peers, read_peer_setting, run_if_peer_allowed};
 use peer_cache::{CachedPeer, PeerCache};
 use peer_key_store::PeerKeyStore;
@@ -26,6 +28,9 @@ macro_rules! emit {
     }};
 }
 
+mod outbound_publish;
+
+use osiris_p2p_node::outbound_queue::{OutboundQueue, MAX_QUEUE_AGE_SECONDS};
 use futures::StreamExt;
 use libp2p::{
     allow_block_list, autonat, connection_limits, dcutr, gossipsub, identify, identity, relay, upnp,
@@ -1868,6 +1873,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     if delivery_receipts_enabled && !e2ee_enabled {
         return Err("OSIRIS_DELIVERY_RECEIPTS requires OSIRIS_E2EE_ENABLED=1".into());
     }
+    let outbound_queue_path = env::var_os("OSIRIS_P2P_OUTBOUND_DB").map(PathBuf::from);
+    if outbound_queue_path.is_some() && (!e2ee_enabled || max_observation_age.is_none()) {
+        return Err("OSIRIS_P2P_OUTBOUND_DB requires E2EE and an explicit observation freshness limit".into());
+    }
     let transport_key = load_or_create_transport_key()?;
     let transport_key_epoch = match env::var("OSIRIS_TRANSPORT_KEY_EPOCH") {
         Ok(value) => value.parse::<u64>()?,
@@ -2004,6 +2013,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut reconnect_tick_count: u64 = 0;
     let bootstrap_peers = parse_bootstrap_peers(read_peer_setting("OSIRIS_BOOTSTRAP_PEERS")?.as_deref())?;
     let trusted_peers = parse_trusted_peers(read_peer_setting("OSIRIS_TRUSTED_PEERS")?.as_deref())?;
+    if outbound_queue_path.is_some() && trusted_peers.is_none() {
+        return Err("OSIRIS_P2P_OUTBOUND_DB requires an explicit trusted peer allowlist".into());
+    }
+    let mut outbound_queue = outbound_queue_path.map(OutboundQueue::open).transpose()?;
+    if let Some(queue) = outbound_queue.as_ref() {
+        let counts = queue.counts()?;
+        emit!("outbound_queue_enabled=true queued={} held={} payload_bytes={}",
+              counts.queued, counts.held, counts.payload_bytes);
+    }
     // Server-mode kademlia auto-bootstraps whenever the routing table gains
     // entries, and its internal query dials bypass the allowlist: every
     // discovered peer gets dialed and then disconnected by policy. In
@@ -2239,6 +2257,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     )?;
     let mut receipt_tick = tokio::time::interval(Duration::from_secs(5));
     receipt_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut outbound_tick = tokio::time::interval(Duration::from_secs(1));
+    outbound_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     emit!("delivery_receipts_enabled={delivery_receipts_enabled} receipt_topic={RECEIPT_TOPIC}");
     emit!("verified_receipt_bridge={}", if receipt_bridge.is_some() { "enabled" } else { "disabled" });
 
@@ -2258,6 +2278,70 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
             _ = rejection_log_tick.tick() => {
                 emit_diagnostic_lines(rejection_log_throttle.flush_elapsed(Instant::now()));
+            }
+            _ = outbound_tick.tick(), if outbound_queue.is_some() => {
+                let queue = outbound_queue.as_mut().expect("enabled outbound queue");
+                let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+                // Bound synchronous SQLite/crypto work per swarm turn. A crash
+                // after claiming leaves these records held, never auto-reissued.
+                for item in queue.claim_due(now, 8)? {
+                    let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+                    let recipient: PeerId = item.recipient.parse()?;
+                    if now < item.enqueued_at {
+                        if !queue.hold(item.id, "clock_rollback")? { return Err("outbound_queue_claim_missing".into()); }
+                        emit!("outbound_observation_held id={} recipient={recipient} reason=clock_rollback", item.id);
+                        continue;
+                    }
+                    if now.saturating_sub(item.enqueued_at) >= MAX_QUEUE_AGE_SECONDS {
+                        if !queue.complete(item.id)? { return Err("outbound_queue_claim_missing".into()); }
+                        emit!("outbound_observation_rejected id={} recipient={recipient} reason=queue_expired", item.id);
+                        continue;
+                    }
+                    let recipients = match outbound_publish::recipients() {
+                        Ok(recipients) => recipients,
+                        Err(reason) => {
+                            if !queue.hold(item.id, reason)? { return Err("outbound_queue_claim_missing".into()); }
+                            emit!("outbound_observation_held id={} recipient={recipient} reason={reason}", item.id);
+                            continue;
+                        }
+                    };
+                    if !recipients.contains(&recipient) {
+                        if !queue.complete(item.id)? { return Err("outbound_queue_claim_missing".into()); }
+                        emit!("outbound_observation_rejected id={} recipient={recipient} reason=recipient_removed", item.id);
+                        continue;
+                    }
+                    let result = outbound_publish::Publisher {
+                        swarm: &mut swarm, topic: &encrypted_topic, identity: &key,
+                        transport_key_epoch, key_store: &peer_key_store,
+                        trusted: &trusted_peers, revoked: &revoked_peers, max_observation_age,
+                        queue_enqueued_at: Some(item.enqueued_at),
+                        queue_storage: Some(queue),
+                        receipts_enabled: delivery_receipts_enabled,
+                        pending_receipts: &mut pending_receipts, peer_metrics: &mut peer_metrics,
+                    }.send(recipient, &item.observation)?;
+                    match result {
+                        outbound_publish::SendResult::Published => {
+                            if !queue.complete(item.id)? { return Err("outbound_queue_claim_missing".into()); }
+                        }
+                        outbound_publish::SendResult::Unsent(reason) => {
+                            let deferred_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+                            let retry = queue.defer_unsent(item.id, deferred_at)?;
+                            if retry {
+                                emit!("outbound_observation_deferred id={} recipient={recipient} reason={reason}", item.id);
+                            } else {
+                                emit!("outbound_observation_held id={} recipient={recipient} reason=retry_limit_reached", item.id);
+                            }
+                        }
+                        outbound_publish::SendResult::Rejected(reason) => {
+                            if !queue.complete(item.id)? { return Err("outbound_queue_claim_missing".into()); }
+                            emit!("outbound_observation_rejected id={} recipient={recipient} reason={reason}", item.id);
+                        }
+                        outbound_publish::SendResult::Ambiguous => {
+                            if !queue.hold(item.id, "publication_uncertain")? { return Err("outbound_queue_claim_missing".into()); }
+                            emit!("outbound_observation_held id={} recipient={recipient} reason=publication_uncertain", item.id);
+                        }
+                    }
+                }
             }
             _ = receipt_tick.tick(), if delivery_receipts_enabled => {
                 for (recipient, message_id) in pending_receipts.expire(Instant::now()) {
@@ -3143,102 +3227,36 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         }
                     };
                     if e2ee_enabled {
-                        let recipients_raw = if let Some(path) = env::var_os("OSIRIS_E2EE_RECIPIENTS_FILE") {
-                            match fs::read_to_string(PathBuf::from(path)) {
-                                Ok(value) => value,
-                                Err(error) => {
-                                    emit!("publish_rejected reason=recipient_file_read_error error={error}");
-                                    continue;
-                                }
+                        let recipients = match outbound_publish::recipients() {
+                            Ok(recipients) => recipients,
+                            Err(reason) => {
+                                emit!("publish_rejected reason={reason}");
+                                continue;
                             }
-                        } else {
-                            env::var("OSIRIS_E2EE_RECIPIENTS").unwrap_or_default()
                         };
-                        if recipients_raw.len() > 16_384 {
-                            emit!("publish_rejected reason=recipient_configuration_too_large");
-                            continue;
-                        }
-                        let mut unique_recipients = HashSet::new();
-                        let recipients: Vec<String> = recipients_raw
-                            .split(',')
-                            .map(str::trim)
-                            .filter(|value| !value.is_empty())
-                            .filter(|value| unique_recipients.insert((*value).to_owned()))
-                            .map(str::to_owned)
-                            .collect();
-                        if recipients.is_empty() || recipients.len() > 128 {
-                            emit!("publish_rejected reason=e2ee_recipient_count_out_of_range");
-                            continue;
-                        }
                         let plaintext = serde_json::to_vec(&envelope)?;
                         for recipient in recipients {
-                            let recipient_peer: PeerId = match recipient.parse() {
-                                Ok(peer) => peer,
-                                Err(_) => {
-                                    emit!("publish_rejected reason=invalid_e2ee_recipient");
-                                    continue;
-                                }
-                            };
-                            if !is_peer_allowed(&recipient_peer, &trusted_peers, &revoked_peers) {
-                                emit!("publish_rejected recipient={recipient_peer} reason=recipient_not_allowed");
+                            if !is_peer_allowed(&recipient, &trusted_peers, &revoked_peers) {
+                                emit!("publish_rejected recipient={recipient} reason=recipient_not_allowed");
                                 continue;
                             }
-                            if delivery_receipts_enabled && !pending_receipts.has_capacity() {
-                                emit!("publish_deferred recipient={recipient_peer} reason=receipt_tracking_capacity");
-                                continue;
-                            }
-                            let Some(binding_record) = peer_key_store.get(&recipient_peer.to_string())? else {
-                                emit!("publish_deferred recipient={recipient_peer} reason=recipient_key_binding_missing");
-                                continue;
-                            };
-                            let recipient_binding = match verify_key_binding(
-                                &binding_record,
-                                SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-                                binding_record.key_epoch,
-                            ) {
-                                Ok(binding) => binding,
-                                Err(error) => {
-                                    emit!("publish_rejected recipient={recipient_peer} reason=recipient_key_binding_invalid error={error}");
-                                    continue;
+                            if let Some(queue) = outbound_queue.as_mut() {
+                                let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+                                match queue.enqueue(&recipient.to_string(), &plaintext, now) {
+                                    Ok(inserted) => emit!("outbound_observation_queued recipient={recipient} duplicate={}", !inserted),
+                                    Err(reason) => emit!("publish_rejected recipient={recipient} reason={reason}"),
                                 }
-                            };
-                            let created_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-                            let encrypted = match encrypt_for_recipient(
-                                &key,
-                                transport_key_epoch,
-                                &recipient_peer.to_string(),
-                                &recipient_binding.transport_public_key,
-                                recipient_binding.key_epoch,
-                                &plaintext,
-                                created_at,
-                                created_at + 3600,
-                            ) {
-                                Ok(encrypted) => encrypted,
-                                Err(error) => {
-                                    emit!("publish_rejected recipient={recipient_peer} reason=encryption_error error={error}");
-                                    continue;
-                                }
-                            };
-                            let message_id = encrypted.message_id.clone();
-                            let bytes = serde_json::to_vec(&encrypted)?;
-                            let envelope_sha256 = format!("{:x}", Sha256::digest(&bytes));
-                            match swarm.behaviour_mut().gossipsub.publish(encrypted_topic.clone(), bytes) {
-                                Ok(_) => {
-                                    if delivery_receipts_enabled {
-                                        match pending_receipts.track(
-                                            recipient_peer, message_id.clone(), envelope_sha256.clone(), Instant::now(),
-                                        ) {
-                                            Ok(()) => {
-                                                peer_metrics.sent(&recipient_peer.to_string(), &message_id, Instant::now());
-                                                emit!("encrypted_observation_published recipient={recipient_peer} message_id={message_id} envelope_sha256={envelope_sha256} receipts_tracked=true");
-                                            },
-                                            Err(reason) => emit!("observation_delivery_unconfirmed recipient={recipient_peer} message_id={message_id} reason={reason}"),
-                                        }
-                                    } else {
-                                        emit!("encrypted_observation_published recipient={recipient_peer} message_id={message_id}");
-                                    }
-                                }
-                                Err(error) => emit!("encrypted_observation_deferred recipient={recipient_peer} error={error}"),
+                            } else {
+                                // Preserve the existing direct path when queue storage is unconfigured.
+                                let _ = outbound_publish::Publisher {
+                                    swarm: &mut swarm, topic: &encrypted_topic, identity: &key,
+                                    transport_key_epoch, key_store: &peer_key_store,
+                                    trusted: &trusted_peers, revoked: &revoked_peers, max_observation_age,
+                                    queue_enqueued_at: None,
+                                    queue_storage: None,
+                                    receipts_enabled: delivery_receipts_enabled,
+                                    pending_receipts: &mut pending_receipts, peer_metrics: &mut peer_metrics,
+                                }.send(recipient, &plaintext)?;
                             }
                         }
                     } else {

@@ -85,3 +85,53 @@ Tests and supervisors that construct it with `enabled=False` cannot schedule.
 
 Counts from `counts()` are local row totals. They are not a metrics endpoint
 and they do not page an operator.
+
+## Node storage for definitely-unsent observations
+
+The Rust node has a separate, opt-in prepublication queue. Configure
+`OSIRIS_P2P_OUTBOUND_DB` with an absolute SQLite file path in an existing
+owner-private directory (mode `0700`). This Linux storage path requires E2EE,
+an explicit `OSIRIS_TRUSTED_PEERS` allowlist and a finite
+`OSIRIS_MAX_OBSERVATION_AGE_SECS`. Leaving the database setting absent preserves
+direct stdin publication. The queue stores plaintext observations locally in a
+regular, owner-private file, with a lifetime lock preventing concurrent nodes.
+
+Each recipient observation commits before a send attempt. Pending identical
+recipient/payload bytes share one row without resetting its age. Current loaded
+trust/revocation policy, the recipient configuration file, key binding, payload
+hash and observation freshness are rechecked before every publication. Recipient
+configuration must be a bounded regular file; a FIFO or symbolic link is refused.
+Removed recipients, stale data and records reaching 120 seconds expire without
+publication. Up to 1,024 pending/held rows and 16 MiB of observation bytes are
+retained; capacity failure is explicit and never evicts existing work.
+
+Missing bindings, receipt-tracking capacity and GossipSub's
+`NoPeersSubscribedToTopic` result can defer an unsent attempt. Backoff is
+1/2/4/8 seconds, with 16 attempts maximum. Other publication errors become
+`held`: notably, `AllQueuesFull` already cached the envelope and cannot prove
+that no future network delivery is possible. Accepted publications leave this
+queue immediately and are never reissued by it, even without a receipt.
+
+Claims interrupted by a crash become `held` on restart. An ambiguous send,
+invalid recipient configuration or exhausted retry budget also requires manual
+inspection. No automatic reset/retry endpoint exists. This queue does not
+deduplicate later stdin submissions after a successful send, or establish
+delivery after GossipSub acceptance, durable recipient processing, or exactly
+once network delivery. The signed-receipt rules above still govern admission
+acknowledgement.
+
+Peers must still converge on authenticated key bindings. GossipSub acceptance
+can precede a remote node learning the sender binding; that unconfirmed case
+is outside the queue's definitely-unsent retry rule.
+
+The real local exercise covers recipient outage, sender SIGKILL, durable queue
+recovery, a single validated delivery, accepted-send suppression after restart,
+stale-data and changed-recipient rejection, and nonblocking FIFO refusal:
+
+```bash
+OSIRIS_P2P_TEST_BINARY=/absolute/path/to/osiris-p2p-node \
+  python scripts/test_p2p_outbound_queue.py
+```
+
+CI and the engineering verification profile run this exercise. It does not
+accept the sustained independent-host loss, memory or release gates.
