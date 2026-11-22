@@ -33,7 +33,10 @@ def main():
     tokens = {role: secrets.token_urlsafe(24) for role in ('analyst', 'operator', 'security_admin')}
     os.environ.update(OSIRIS_CONTROL_DB=str(root / 'control.sqlite3'), OSIRIS_DB_PATH=str(root / 'research.sqlite3'),
         OSIRIS_PAPER_EXECUTION_DB=str(root / 'paper.sqlite3'), OSIRIS_PAPER_LEDGER_DB=str(root / 'legacy.sqlite3'),
-        OSIRIS_CONTROL_MASTER_KEY=base64.b64encode(secrets.token_bytes(32)).decode(), OSIRIS_ADMIN_TOKENS=json.dumps(tokens),
+        OSIRIS_CONTROL_MASTER_KEY=base64.b64encode(secrets.token_bytes(32)).decode(),
+        OSIRIS_CONTROL_MASTER_KEY_ID='browser-identity-master-1',
+        OSIRIS_CONTROL_MASTER_KEY_VERSION='1',
+        OSIRIS_ADMIN_TOKENS=json.dumps(tokens),
         OSIRIS_ENV='development', OSIRIS_API_TOKEN='fixture-api-only', OSIRIS_PUBLIC_COINBASE_ENABLED='false',
         OSIRIS_PUBLIC_BINANCE_ENABLED='false', OSIRIS_PUBLIC_STOOQ_ENABLED='false')
     fixture = root / 'fixture.json'

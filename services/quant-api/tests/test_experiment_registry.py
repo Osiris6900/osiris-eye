@@ -1,6 +1,7 @@
 """Reproducible research IDs bind real backtest inputs, source and result bytes."""
 import base64
 import json
+import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
@@ -156,7 +157,9 @@ def test_invalid_or_oversized_experiments_never_create_partial_records(registry,
 @pytest.fixture
 def api(tmp_path, monkeypatch):
     monkeypatch.setenv("OSIRIS_CONTROL_DB", str(tmp_path / "api.db"))
-    monkeypatch.setenv("OSIRIS_CONTROL_MASTER_KEY", base64.b64encode(b"f" * 32).decode())
+    monkeypatch.setenv("OSIRIS_CONTROL_MASTER_KEY", base64.b64encode(os.urandom(32)).decode())
+    monkeypatch.setenv("OSIRIS_CONTROL_MASTER_KEY_ID", "identity-master-1")
+    monkeypatch.setenv("OSIRIS_CONTROL_MASTER_KEY_VERSION", "1")
     monkeypatch.setenv("OSIRIS_ADMIN_TOKENS", json.dumps({
         "analyst": "fixture-analyst-token", "viewer": "fixture-viewer-token",
     }))
