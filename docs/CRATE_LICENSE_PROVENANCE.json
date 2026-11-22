@@ -624,11 +624,11 @@
       "license_file": null,
       "source": "https://crates.io/api/v1/crates/foreign-types/0.3.2"
     },
-    "form_urlencoded@1.2.3": {
-      "checksum": "afa489199eaffb1211795df1c6236ce1ad0d41a6fa45250add73e3b02420f06e",
+    "form_urlencoded@1.2.2": {
+      "checksum": "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf",
       "license": "MIT OR Apache-2.0",
       "license_file": null,
-      "source": "https://crates.io/api/v1/crates/form_urlencoded/1.2.3"
+      "source": "https://crates.io/api/v1/crates/form_urlencoded/1.2.2"
     },
     "fs_extra@1.3.0": {
       "checksum": "42703706b716c37f96a77aea830392ad231f44c9e9a67872fa5548707e11b11c",
@@ -2232,11 +2232,11 @@
       "license_file": null,
       "source": "https://crates.io/api/v1/crates/ureq/2.12.1"
     },
-    "url@2.5.9": {
-      "checksum": "f00cd2407bb42c0ef17be88d4cf020f5cceffd121665bac9b8b9493a369b3b1a",
+    "url@2.5.8": {
+      "checksum": "ff67a8a4397373c3ef660812acab3268222035010ab8680ec4215f38ba3d0eed",
       "license": "MIT OR Apache-2.0",
       "license_file": null,
-      "source": "https://crates.io/api/v1/crates/url/2.5.9"
+      "source": "https://crates.io/api/v1/crates/url/2.5.8"
     },
     "utf-8@0.7.6": {
       "checksum": "09cc8ee72d2a9becf2f2febe0205bbed8fc6615b7cb429ad062dc7b7ddd036a9",

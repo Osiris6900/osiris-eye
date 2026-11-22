@@ -7,7 +7,7 @@
     "pinned_action_uses": 122,
     "workflow_files": 19,
     "advisory_inputs_match_worktree": true,
-    "advisory_source_commit": "827acda9b97df5e56eea5a630926417e34038414",
+    "advisory_source_commit": "2b685c2bc8689422724f1d9eb52ceef660ebb8a7",
     "sbom_marks_python_unresolved": false,
     "python_lock_schema": "osiris.python-deployment-lock.v1",
     "cargo_versions": {

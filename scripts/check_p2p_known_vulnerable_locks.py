@@ -14,14 +14,12 @@ import tomllib
 # Minimum versions OSV records as fixed. Hickory and Yamux were checked against
 # api.osv.dev on 2026-11-08. libsqlite3-sys was rechecked on 2026-11-09:
 # RUSTSEC-2026-0459 / CVE-2026-119375 is fixed in 0.39.0 (bundled SQLite 3.54.0).
-# url was rechecked on 2026-11-22: RUSTSEC-2026-0592 is fixed in 2.5.9.
 FLOORS = (
     ("hickory-proto", "0.26.1", "RUSTSEC-2026-0118 / RUSTSEC-2026-0119"),
     ("hickory-resolver", "0.26.2", "GHSA-5j98-2g5x-46v6 / GHSA-6f2x-v7q7-m7m5"),
     ("hickory-net", "0.26.1", "RUSTSEC-2026-0120 / GHSA-3v94-mw7p-v465"),
     ("yamux", "0.13.10", "GHSA-vxx9-2994-q338 / CVE-2026-32314"),
     ("libsqlite3-sys", "0.39.0", "RUSTSEC-2026-0459 / CVE-2026-119375"),
-    ("url", "2.5.9", "RUSTSEC-2026-0592"),
 )
 # RUSTSEC-2024-0436 covers every paste release and names no fixed version.
 MAINTENANCE = {"paste": "RUSTSEC-2024-0436 (unmaintained; no fixed crates.io release)"}
