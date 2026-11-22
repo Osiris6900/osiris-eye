@@ -12,6 +12,7 @@ import json
 import math
 import os
 import sqlite3
+import time
 from datetime import datetime, timezone
 from decimal import Context, Decimal, Inexact, InvalidOperation, localcontext
 from fractions import Fraction
@@ -28,6 +29,9 @@ from .risk import RiskLimits, check_execution
 LIVE_EXECUTION_ENABLED = False
 # Realized P&L plus only negative unrealized P&L. Gains do not offset a loss.
 DAILY_LOSS_BASIS = "realized_plus_adverse_unrealized"
+# In-process budget for one pre-trade decision. There is no separate risk process.
+_PRETRADE_TIMEOUT_SECONDS = 5.0
+PRETRADE_RISK_EVENT = "pretrade_risk_decision"
 
 # Paper-only lifecycle. "new" is transient and is never stored.
 ORDER_STATES = (
@@ -981,24 +985,13 @@ def _fill_risk_reason(
         position, gross = _raise_buy_exposure(
             conn, account, order["symbol"], price, position, gross, quantity, now,
         )
-    try:
-        position_float, gross_float = _risk_exposures_as_floats(order["side"], quantity, price, position, gross)
-        approved, reason, _evaluated = check_execution(
-            side=order["side"], quantity=_as_float(quantity), price=_as_float(price),
-            current_position_notional=position_float,
-            current_gross_exposure=gross_float,
-            daily_pnl=_as_float(Decimal(account["realized_pnl"])),
-            limits=_limits_from_row(account),
-            kill_switch_active=bool(account["kill_switch"]),
-            market_data_fresh=True, risk_service_available=True,
-        )
-    except Exception:  # noqa: BLE001 - an unavailable risk check must fail closed
-        return "risk_service_unavailable"
-    if not approved:
-        return reason
-    return _decimal_risk_reason(
-        conn, account, order["side"], order["symbol"], quantity, price, position, gross, now,
+    approved, reason, _evaluated, _inputs = _decide_pretrade(
+        conn, account, side=order["side"], symbol=order["symbol"],
+        qty=quantity, price=price, position=position, gross=gross, now=now,
+        kill_switch_active=bool(account["kill_switch"]),
+        market_data_fresh=True, risk_service_available=True,
     )
+    return None if approved else reason
 
 
 def _decimal_risk_reason(
@@ -1159,6 +1152,190 @@ def set_kill_switch(active: object) -> dict[str, Any]:
     }
 
 
+def _decision_clock() -> str:
+    """Wall clock for a broker submission. Callers do not supply this."""
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _pretrade_monotonic() -> float:
+    return time.monotonic()
+
+
+def _symbol_mark_fresh(conn: sqlite3.Connection, account: sqlite3.Row, symbol: str, now: object) -> bool:
+    row = conn.execute(
+        "SELECT observed_at FROM paper_exec_marks WHERE symbol=?", (symbol,)
+    ).fetchone()
+    if row is None:
+        return False
+    return _fresh(account, row["observed_at"], now)
+
+
+def _submission_exposures(conn, account, side, symbol, qty, price, now):
+    """Position and gross a new order would add to, from the open book."""
+    filled_notional, filled_gross = _book(conn, symbol, price)
+    if side != "BUY":
+        return filled_notional, filled_gross
+    extra_symbol, extra_gross = _open_buy_exposure(conn, symbol)
+    position = _finite_decimal(Fraction(filled_notional) + Fraction(extra_symbol))
+    gross = _finite_decimal(Fraction(filled_gross) + Fraction(extra_gross))
+    return _raise_buy_exposure(conn, account, symbol, price, position, gross, qty, now)
+
+
+def _pretrade_inputs(
+    account, *, side, symbol, qty, price, position, gross, now,
+    kill_switch_active, market_data_fresh, risk_service_available, conn,
+) -> dict[str, Any]:
+    try:
+        adverse, _loss_reason = _adverse_daily_pnl(
+            conn, account, symbol=symbol, price=price, now=now,
+        )
+        adverse_text = None if adverse is None else _canonical(adverse)
+    except Exception:  # noqa: BLE001 - a missing loss figure is recorded, not approved
+        adverse_text = None
+    return {
+        "source": "paper_ledger",
+        "symbol": symbol,
+        "side": side,
+        "quantity": _canonical(qty),
+        "price": _canonical(price),
+        "current_position_notional": _canonical(position),
+        "current_gross_exposure": _canonical(gross),
+        "daily_pnl": account["realized_pnl"],
+        "adverse_daily_pnl": adverse_text,
+        "kill_switch_active": kill_switch_active is not False,
+        "persisted_kill_switch": bool(account["kill_switch"]),
+        "market_data_fresh": market_data_fresh is True,
+        "risk_service_available": risk_service_available is True,
+        "max_order_notional": account["max_order_notional"],
+        "max_position_notional": account["max_position_notional"],
+        "max_daily_loss": account["max_daily_loss"],
+        "max_gross_exposure": account["max_gross_exposure"],
+        "daily_loss_basis": DAILY_LOSS_BASIS,
+    }
+
+
+def _decide_pretrade(
+    conn, account, *, side, symbol, qty, price, position, gross, now,
+    kill_switch_active, market_data_fresh, risk_service_available,
+) -> tuple[bool, str, bool, dict[str, Any]]:
+    """One paper pre-trade decision: float gate, then the exact ledger veto.
+
+    ``check_execution`` is the Python authority that matches the Rust kernel's
+    shared vectors. The decimal veto adds the exact daily-loss and exposure
+    checks the float kernel can round away. An error from the float gate
+    rejects. This does not submit an order.
+    """
+    inputs = _pretrade_inputs(
+        account, side=side, symbol=symbol, qty=qty, price=price,
+        position=position, gross=gross, now=now, conn=conn,
+        kill_switch_active=kill_switch_active,
+        market_data_fresh=market_data_fresh,
+        risk_service_available=risk_service_available,
+    )
+    try:
+        position_float, gross_float = _risk_exposures_as_floats(side, qty, price, position, gross)
+        approved, reason, limits_evaluated = check_execution(
+            side=side, quantity=_as_float(qty), price=_as_float(price),
+            current_position_notional=position_float,
+            current_gross_exposure=gross_float,
+            daily_pnl=_as_float(Decimal(account["realized_pnl"])),
+            limits=_limits_from_row(account),
+            kill_switch_active=kill_switch_active,
+            market_data_fresh=market_data_fresh,
+            risk_service_available=risk_service_available,
+        )
+    except TimeoutError:
+        inputs["timeout"] = True
+        inputs["error"] = "timeout"
+        return False, "risk_service_unavailable", False, inputs
+    except Exception:  # noqa: BLE001 - an unavailable risk check must fail closed
+        inputs["error"] = "risk_check_failed"
+        return False, "risk_service_unavailable", False, inputs
+    if approved:
+        exact_reason = _decimal_risk_reason(
+            conn, account, side, symbol, qty, price, position, gross, now,
+        )
+        if exact_reason is not None:
+            approved, reason = False, exact_reason
+    return approved, reason, limits_evaluated, inputs
+
+
+def _closed_pretrade(reason: str = "risk_service_unavailable") -> dict[str, Any]:
+    return {
+        "approved": False, "reason": reason, "limits_evaluated": False,
+        "inputs": {"source": "paper_ledger"}, "audit_seq": None,
+        "live_execution": False, "broker_order_submitted": False,
+    }
+
+
+def authorize_paper_submission(
+    *, client_order_id: str, symbol: str, side: str, quantity: Decimal, price: Decimal,
+) -> dict[str, Any]:
+    """Fail-closed pre-trade decision for one paper broker submission.
+
+    Exposure, P&L, limits, the kill switch, and mark freshness are read from
+    the paper ledger. Caller arguments are not accepted. A missing ledger, a
+    check error, or a check that exceeds the in-process budget rejects the
+    order. The decision is appended to the paper audit when the ledger can
+    be written. This does not call a broker.
+    """
+    try:
+        if not isinstance(client_order_id, str):
+            raise ValueError("invalid_client_order_id")
+        _database()
+    except Exception:  # noqa: BLE001 - no ledger means the check cannot run
+        return _closed_pretrade()
+    with _lock:
+        conn = None
+        try:
+            conn = _connect()
+            conn.execute("BEGIN IMMEDIATE")
+            _assert_ready(conn)
+            account = conn.execute("SELECT * FROM paper_exec_meta WHERE id=1").fetchone()
+            now = _decision_clock()
+            normalized = _normalize_symbol(symbol)
+            if not isinstance(side, str) or side.upper() not in ("BUY", "SELL"):
+                raise ValueError("invalid_side")
+            side_name = side.upper()
+            fresh = _symbol_mark_fresh(conn, account, normalized, now)
+            kill = bool(account["kill_switch"])
+            position, gross = _submission_exposures(
+                conn, account, side_name, normalized, quantity, price, now,
+            )
+            started = _pretrade_monotonic()
+            approved, reason, evaluated, inputs = _decide_pretrade(
+                conn, account, side=side_name, symbol=normalized,
+                qty=quantity, price=price, position=position, gross=gross, now=now,
+                kill_switch_active=kill, market_data_fresh=fresh,
+                risk_service_available=True,
+            )
+            if _pretrade_monotonic() - started > _PRETRADE_TIMEOUT_SECONDS:
+                approved, reason, evaluated = False, "risk_service_unavailable", False
+                inputs = {**inputs, "timeout": True}
+            payload = {
+                "approved": approved, "reason": reason, "limits_evaluated": evaluated,
+                "inputs": inputs, "live_execution": False, "broker_order_submitted": False,
+            }
+            seq, _digest = _append_audit(conn, PRETRADE_RISK_EVENT, client_order_id, payload)
+            _assert_ready(conn)
+            conn.commit()
+            return {
+                "approved": approved, "reason": reason, "limits_evaluated": evaluated,
+                "inputs": inputs, "audit_seq": seq,
+                "live_execution": False, "broker_order_submitted": False,
+            }
+        except Exception:  # noqa: BLE001 - a broken ledger must not approve
+            if conn is not None:
+                try:
+                    conn.rollback()
+                except sqlite3.Error:
+                    pass
+            return _closed_pretrade()
+        finally:
+            if conn is not None:
+                conn.close()
+
+
 def _fresh(account: sqlite3.Row, observed_at: object, now: object) -> bool:
     observed = _parse_time(observed_at)
     current = _parse_time(now)
@@ -1188,35 +1365,13 @@ def _submit_new_order(
     account = conn.execute("SELECT * FROM paper_exec_meta WHERE id=1").fetchone()
     effective_kill = bool(account["kill_switch"]) or kill_switch_active is not False
     fresh = _fresh(account, observed_at, now)
-    filled_notional, filled_gross = _book(conn, symbol, px)
-    if side == "BUY":
-        extra_symbol, extra_gross = _open_buy_exposure(conn, symbol)
-        position_notional = _finite_decimal(Fraction(filled_notional) + Fraction(extra_symbol))
-        gross = _finite_decimal(Fraction(filled_gross) + Fraction(extra_gross))
-        position_notional, gross = _raise_buy_exposure(
-            conn, account, symbol, px, position_notional, gross, qty, now,
-        )
-    else:
-        position_notional, gross = filled_notional, filled_gross
-    try:
-        position_float, gross_float = _risk_exposures_as_floats(side, qty, px, position_notional, gross)
-        approved, reason, limits_evaluated = check_execution(
-            side=side, quantity=_as_float(qty), price=_as_float(px),
-            current_position_notional=position_float,
-            current_gross_exposure=gross_float,
-            daily_pnl=_as_float(Decimal(account["realized_pnl"])),
-            limits=_limits_from_row(account),
-            kill_switch_active=effective_kill, market_data_fresh=fresh,
-            risk_service_available=risk_service_available is True,
-        )
-    except Exception:
-        approved, reason, limits_evaluated = False, "risk_service_unavailable", False
-    if approved:
-        exact_reason = _decimal_risk_reason(
-            conn, account, side, symbol, qty, px, position_notional, gross, now,
-        )
-        if exact_reason is not None:
-            approved, reason = False, exact_reason
+    position_notional, gross = _submission_exposures(conn, account, side, symbol, qty, px, now)
+    approved, reason, limits_evaluated, risk_inputs = _decide_pretrade(
+        conn, account, side=side, symbol=symbol, qty=qty, price=px,
+        position=position_notional, gross=gross, now=now,
+        kill_switch_active=effective_kill, market_data_fresh=fresh,
+        risk_service_available=risk_service_available is True,
+    )
     realized_delta = Decimal("0")
     filled_quantity = Decimal("0")
     leaves_quantity = Decimal("0")
@@ -1260,6 +1415,7 @@ def _submit_new_order(
         "symbol": symbol, "side": side, "quantity": qty_s, "price": px_s, "fee": fee_s,
         "created_at": now if isinstance(now, str) else "",
         "live_execution": False, "broker_order_submitted": False,
+        "risk_inputs": risk_inputs,
     }
     if origin_reference is not None:
         payload["origin_reference"] = origin_reference

@@ -15,6 +15,7 @@ BASE = PaperOrderContext(
     feed_authenticated=True,
     feed_entitled=True,
     kill_switch_active=False,
+    current_gross_exposure=0,
 )
 
 
