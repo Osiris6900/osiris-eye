@@ -206,7 +206,10 @@ def prepare(conn, order, context):
     # Refresh the target's mark from the same book before independent fill risk.
     observed = datetime.fromtimestamp(book["captured_ms"] / 1000, UTC).isoformat()
     midpoint = _exact((levels["BUY"][0][0] + levels["SELL"][0][0]) / 2)
-    decision = ledger.instrument_decision(order["symbol"], price=midpoint, as_of=observed)
+    # A valuation midpoint can be half a tick even when both executable quotes
+    # are on the venue grid. Check identity/status/effectivity here; the shared
+    # fill path independently enforces the selected execution price and lot.
+    decision = ledger.instrument_decision(order["symbol"], as_of=observed)
     if not decision["ok"]:
         raise ValueError(decision["reason"])
     conn.execute("INSERT INTO paper_exec_marks VALUES (?,?,?) ON CONFLICT(symbol) DO UPDATE SET price=excluded.price,observed_at=excluded.observed_at",

@@ -12,6 +12,7 @@ import pytest
 from osiris_api import paper_execution as ledger
 from osiris_api.control_plane.database import Database
 from osiris_api.control_plane.depth import DepthService
+from osiris_api.instrument_master import InstrumentMasterStore, instrument_db_path
 from osiris_api.paper_depth_execution import execute_depth_fill
 
 NOW = datetime(2026, 11, 13, 21, 30, tzinfo=UTC).timestamp()
@@ -20,12 +21,13 @@ NOW = datetime(2026, 11, 13, 21, 30, tzinfo=UTC).timestamp()
 class Transport:
     def __init__(self):
         self.sequence, self.ask_size, self.bid_size = 1, "10", "10"
+        self.ask_price, self.bid_price = "101", "99"
 
     def request(self, method, url):
         assert method == "GET" and url.endswith("/products/BTC-USD/book?level=2")
         return {"sequence": self.sequence,
-                "asks": [["101", self.ask_size, 1], ["102", "20", 1]],
-                "bids": [["99", self.bid_size, 1], ["98", "10", 1]]}
+                "asks": [[self.ask_price, self.ask_size, 1], ["102", "20", 1]],
+                "bids": [[self.bid_price, self.bid_size, 1], ["98", "10", 1]]}
 
 
 @pytest.fixture
@@ -57,6 +59,19 @@ def fill(service, order_id, plan_id, **kwargs):
                               **{"risk_service_available": True, **kwargs})
 
 
+@pytest.fixture
+def venue_grid(session):
+    # Retain Coinbase-only depth provenance while giving the synthetic BTC book
+    # the same .01 price grid and whole-unit lot as the catalog's equity case.
+    store = InstrumentMasterStore(instrument_db_path())
+    store.ensure_seeded()
+    record = store.get("crypto:PAPER:BTC-USD")["instrument"]
+    store.put({**record, "tick_size": "0.01", "price_precision": 2,
+               "lot_size": "1", "min_qty": "1", "qty_precision": 0},
+              effective_at=iso(NOW - 86400))
+    return session
+
+
 def test_displayed_levels_partial_fees_exact_pnl_and_canonical_reconciliation(session):
     service, now, transport = session
     assert order("buy", now[0])["state"] == "accepted"
@@ -84,6 +99,67 @@ def test_displayed_levels_partial_fees_exact_pnl_and_canonical_reconciliation(se
     assert current["positions"] == []
     assert ledger.recover()["passed"] is True
     assert last["broker_order_submitted"] is False
+
+
+def test_one_tick_spread_preserves_half_tick_valuation_and_grid_execution(venue_grid):
+    service, now, transport = venue_grid
+    transport.sequence, transport.bid_price, transport.ask_price = 2, "100.00", "100.01"
+    now[0] += 1
+    service.capture("BTC-USD")
+    now[0] += 0.5
+    assert order("one-tick", now[0], quantity="1", price="100.01", fee="0")["state"] == "accepted"
+
+    result = fill(service, "one-tick", "half-tick-mark")
+
+    assert result["fill"]["price"] == "100.01"
+    assert result["fill"]["quantity"] == "1"
+    current = ledger.snapshot()
+    assert current["marks"] == [{
+        "symbol": "BTC-USD", "price": "100.005", "observed_at": iso(now[0] - 0.5),
+    }]
+    assert current["cash"] == "9899.99"
+    assert current["unrealized_pnl"] == "-0.005"
+    assert ledger.recover()["passed"] is True
+
+
+@pytest.mark.parametrize("ask_price,ask_size,reason", [
+    ("100.001", "10", "invalid_tick_size"),
+    ("100.01", "5", "invalid_lot_size"),
+])
+def test_midpoint_valuation_does_not_relax_executable_grid(venue_grid, ask_price, ask_size, reason):
+    service, now, transport = venue_grid
+    transport.sequence, transport.bid_price, transport.ask_price = 2, "100.00", ask_price
+    transport.ask_size = ask_size
+    now[0] += 1
+    service.capture("BTC-USD")
+    now[0] += 0.5
+    assert order("bad-quote", now[0], quantity="1", price="100.01", fee="0")["state"] == "accepted"
+
+    with pytest.raises(ValueError, match=reason):
+        fill(service, "bad-quote", "off-grid-execution")
+
+    current = ledger.snapshot()
+    assert current["fill_count"] == 0
+    assert current["cash"] == "10000"
+    assert current["positions"] == []
+    assert ledger.reconcile()["passed"] is True
+
+
+def test_depth_valuation_still_refuses_a_now_inactive_instrument(venue_grid):
+    service, now, _ = venue_grid
+    assert order("halted-after-admission", now[0], quantity="1", fee="0")["state"] == "accepted"
+    store = InstrumentMasterStore(instrument_db_path())
+    record = store.get("crypto:PAPER:BTC-USD")["instrument"]
+    store.put({**record, "status": "halted"}, effective_at=iso(NOW - 1))
+
+    with pytest.raises(ValueError, match="instrument_inactive"):
+        fill(service, "halted-after-admission", "halted-mark")
+
+    current = ledger.snapshot()
+    assert current["marks"] == []
+    assert current["fill_count"] == 0
+    assert current["cash"] == "10000"
+    assert ledger.reconcile()["passed"] is True
 
 
 def test_same_or_unchanged_new_snapshot_never_restores_consumed_liquidity(session):
