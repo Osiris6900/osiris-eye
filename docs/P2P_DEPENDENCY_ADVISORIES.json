@@ -97,14 +97,14 @@
   "query": {
     "batch_size": 100,
     "batches": 7,
-    "queried_at": "2026-11-22T10:42:05Z",
+    "queried_at": "2026-11-22T20:03:20Z",
     "querybatch_url": "https://api.osv.dev/v1/querybatch",
     "service": "OSV",
     "vulnerability_url_template": "https://api.osv.dev/v1/vulns/{id}"
   },
   "schema": "osiris.dependency-advisory-report.v1",
   "source": {
-    "commit": "c897f81bb55ad6c097dddebbaeef00cb418d53eb",
+    "commit": "82dda3197f8e4cc55f8b2f79cd2afdee3f9a218f",
     "inputs": {
       "apps/web/package-lock.json": {
         "sha256": "fc7b7c0a8bc7216c037feea96eeae9003d32a059d2f34a538de8313136f21c49"
@@ -119,7 +119,7 @@
         "sha256": "cbd5e44ec9812a1724814c3ae9bf32554c1b39680e73674154c6c43aef52f3b3"
       },
       "services/quant-api/pyproject.toml": {
-        "sha256": "cc09246e40902345e7b7eac605e9b528e36c7bbc7df7d35c2229c1dee7676050"
+        "sha256": "512fc54ed77e6e2ffcda0c5d40a3b342272cdae2792f90e51b5d159c63b98711"
       },
       "services/quant-api/requirements-lock.txt": {
         "sha256": "ff5e5ece6f90c6f97786e3cb3f199d06c57cef282b7daa057485277cf5b77ae5"

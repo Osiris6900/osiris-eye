@@ -7,7 +7,7 @@
     "pinned_action_uses": 122,
     "workflow_files": 19,
     "advisory_inputs_match_worktree": true,
-    "advisory_source_commit": "c897f81bb55ad6c097dddebbaeef00cb418d53eb",
+    "advisory_source_commit": "82dda3197f8e4cc55f8b2f79cd2afdee3f9a218f",
     "sbom_marks_python_unresolved": false,
     "python_lock_schema": "osiris.python-deployment-lock.v1",
     "cargo_versions": {
@@ -207,7 +207,7 @@
           "gate": "T01"
         }
       ],
-      "blocker": "RUSTSEC-2026-0459 is cleared: rusqlite 0.41.1 and libsqlite3-sys 0.39.1 are the only copies, and the lock ratchet floor is libsqlite3-sys >= 0.39.0. #302 merged at 8ef21a84846a0e525978d6589b458caf3afc75e4 (head d47d14d0c9b429fbc5c6a7d9c8df6fc75bec961c). CI 42677260186 and Dependency Security Audit 42677259943 passed on that head, including rust-audit. #306's lock bump is the same fix and is superseded; its only unique merged change is fetch-depth 0. T01 stays Partial because paste 1.0.15 (RUSTSEC-2024-0436) remains. The SBOM generator no longer marks Python resolution unresolved, and Dependency Security Audit already runs scripts/check_license_provenance.py. Accepted final-candidate audit, SBOM, and provenance artifacts, plus a reviewed paste disposition, are still required. facts.cargo_versions and facts.advisory_source_commit still match the worktree (source c897f81bb55ad6c097dddebbaeef00cb418d53eb). #302's advisory file recorded source 2501a07441c7a3e124a7494f2384903c85f5b6ca; later refreshes replaced that file. #436 merged at 9f9e27a3cf286cb3bb95cf33b5a245ec2b413118 (head 666a3e5599363f6347e671664b8135aeab0d38e6). Dependency Security Audit 43416302544 passed. The retained scan covers all locked roots and still leaves paste 1.0.15. Final-candidate audit, SBOM, and provenance acceptance remain open. Status stays Partial."
+      "blocker": "RUSTSEC-2026-0459 is cleared: rusqlite 0.41.1 and libsqlite3-sys 0.39.1 are the only copies, and the lock ratchet floor is libsqlite3-sys >= 0.39.0. #302 merged at 8ef21a84846a0e525978d6589b458caf3afc75e4 (head d47d14d0c9b429fbc5c6a7d9c8df6fc75bec961c). CI 42677260186 and Dependency Security Audit 42677259943 passed on that head, including rust-audit. #306's lock bump is the same fix and is superseded; its only unique merged change is fetch-depth 0. T01 stays Partial because paste 1.0.15 (RUSTSEC-2024-0436) remains. The SBOM generator no longer marks Python resolution unresolved, and Dependency Security Audit already runs scripts/check_license_provenance.py. Accepted final-candidate audit, SBOM, and provenance artifacts, plus a reviewed paste disposition, are still required. facts.cargo_versions and facts.advisory_source_commit still match the worktree (source 82dda3197f8e4cc55f8b2f79cd2afdee3f9a218f). #302's advisory file recorded source 2501a07441c7a3e124a7494f2384903c85f5b6ca; later refreshes replaced that file. #436 merged at 9f9e27a3cf286cb3bb95cf33b5a245ec2b413118 (head 666a3e5599363f6347e671664b8135aeab0d38e6). Dependency Security Audit 43416302544 passed. The retained scan covers all locked roots and still leaves paste 1.0.15. Final-candidate audit, SBOM, and provenance acceptance remain open. Status stays Partial."
     },
     {
       "id": "T02",
