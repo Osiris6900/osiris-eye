@@ -19,7 +19,12 @@ BROKER_STATES = frozenset({
     "filled", "done_for_day", "canceled", "expired", "pending_cancel", "stopped",
     "rejected", "suspended", "calculated",
 })
-TERMINAL_BROKER_STATES = frozenset({"filled", "canceled", "expired", "rejected"})
+# This adapter only accepts time_in_force=day. A day order reported
+# done_for_day will not trade again in that session, so reconciliation must
+# not reopen it or accept a later fill. A genuine correction stays a break.
+TERMINAL_BROKER_STATES = frozenset({
+    "filled", "canceled", "expired", "rejected", "done_for_day",
+})
 
 
 def validate_broker_snapshot(order: dict, response: object, previous: dict | None = None) -> None:
