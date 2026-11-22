@@ -98,6 +98,24 @@ def review(data, *, commit=SHA, url=URL, attempt=1):
 
 
 class SustainedCapacityReviewTests(unittest.TestCase):
+    def test_publisher_reconnect_configuration_is_bound_to_every_host(self):
+        data = report()
+        runtime = {
+            'node_worker_threads_requested': 1,
+            'tokio_worker_threads_env': '1',
+            'observed_runtime_worker_count_verified': False,
+            'publisher_outbound_queue': True,
+            'publisher_bootstrap_reconnect_seconds': 1,
+        }
+        data['runtime_config'] = runtime
+        for host in data['hosts']:
+            host['runtime_config'] = dict(runtime)
+        self.assertTrue(review(data)['passed_offline_consistency'])
+        data['hosts'][0]['runtime_config']['publisher_bootstrap_reconnect_seconds'] = True
+        self.assertIn('host_runtime_configuration_mismatch', review(data)['errors'])
+        runtime.pop('publisher_outbound_queue')
+        self.assertIn('runtime_configuration_invalid', review(data)['errors'])
+
     def test_unhashable_host_id_returns_structured_failure(self):
         data = report()
         data['hosts'][0]['host_id'] = []

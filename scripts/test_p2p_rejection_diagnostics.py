@@ -30,9 +30,14 @@ class DiagnosticTests(unittest.TestCase):
         for line in (
             "peer_not_allowed_rejected_suppressed reason=peer_not_allowed count=0 window_secs=60",
             "peer_not_allowed_rejected_suppressed reason=peer_not_allowed window_secs=60",
+            "outbound_observation_rearmed recipient=a count=0",
         ):
             with self.assertRaises(ValueError):
                 classify_node_diagnostic(line)
+
+    def test_queue_rearm_accounts_for_every_advanced_row(self):
+        self.assertEqual(classify_node_diagnostic("outbound_observation_rearmed recipient=a count=3"),
+                         ("outbound_observation_rearmed", 3))
 
 
 if __name__ == "__main__":

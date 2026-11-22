@@ -55,8 +55,10 @@ DIAGNOSTIC_PREFIXES = (
     'outgoing_connection_error', 'incoming_connection_error',
     'bootstrap_reconnect_error', 'bootstrap_reconnect_attempt',
     'outbound_observation_queued', 'outbound_observation_deferred',
-    'outbound_observation_held', 'outbound_observation_rejected',
+    'outbound_observation_held', 'outbound_observation_rejected', 'outbound_observation_rearmed',
 )
+STANDARD_RECONNECT_SECONDS = 5
+QUEUED_PUBLISHER_RECONNECT_SECONDS = 1
 _DIAGNOSTIC_REASON = re.compile(r'\breason=([a-z_]{1,64})(?:\s|$)')
 _DIAGNOSTIC_COUNT = re.compile(r'\bcount=(\d+)(?:\s|$)')
 
@@ -64,7 +66,7 @@ _DIAGNOSTIC_COUNT = re.compile(r'\bcount=(\d+)(?:\s|$)')
 def classify_node_diagnostic(line):
     """Return `(counter_key, amount)` for one node stdout line.
 
-    Suppressed aggregates add their `count`. A missing or zero count fails
+    Aggregated diagnostics add their `count`. A missing or zero count fails
     closed. Lines that are not diagnostics return None.
     """
     prefix = next((item for item in DIAGNOSTIC_PREFIXES if line.startswith(item + ' ')), None)
@@ -72,10 +74,12 @@ def classify_node_diagnostic(line):
         return None
     reason = _DIAGNOSTIC_REASON.search(line)
     amount = 1
-    if prefix == 'peer_not_allowed_rejected_suppressed':
+    if prefix in ('peer_not_allowed_rejected_suppressed', 'outbound_observation_rearmed'):
         count = _DIAGNOSTIC_COUNT.search(line)
         if count is None or int(count[1]) < 1:
-            raise ValueError('invalid_suppressed_rejection_count')
+            reason = ('invalid_suppressed_rejection_count' if prefix == 'peer_not_allowed_rejected_suppressed'
+                      else 'invalid_outbound_rearmed_count')
+            raise ValueError(reason)
         amount = int(count[1])
     return prefix + (':' + reason[1] if reason else ''), amount
 
@@ -98,7 +102,10 @@ def runtime_config(worker_threads, publisher_outbound_queue=False):
         'node_worker_threads_requested': worker_threads,
         'tokio_worker_threads_env': str(worker_threads) if worker_threads is not None else None,
         'observed_runtime_worker_count_verified': False,
-        **({'publisher_outbound_queue': True} if publisher_outbound_queue else {}),
+        **({
+            'publisher_outbound_queue': True,
+            'publisher_bootstrap_reconnect_seconds': QUEUED_PUBLISHER_RECONNECT_SECONDS,
+        } if publisher_outbound_queue else {}),
     }
 
 
@@ -147,7 +154,7 @@ class Agent:
             'OSIRIS_MAX_CONNECTIONS_PER_PEER': '1',
             'OSIRIS_PEER_CACHE_DIAL_ON_START': '0', 'OSIRIS_DHT_WALK_INTERVAL_SECS': '3600',
             'OSIRIS_HEALTH_HTTP_ADDR': '127.0.0.1:0',
-            'OSIRIS_BOOTSTRAP_RECONNECT_INTERVAL_SECS': '5',
+            'OSIRIS_BOOTSTRAP_RECONNECT_INTERVAL_SECS': str(STANDARD_RECONNECT_SECONDS),
             'OSIRIS_LISTEN_ADDR': f'/ip4/0.0.0.0/tcp/{self.args.port if index == 0 else 0}',
         })
         if bootstrap:
@@ -160,6 +167,8 @@ class Agent:
             if self.runtime.get('publisher_outbound_queue'):
                 env['OSIRIS_P2P_OUTBOUND_DB'] = str(directory.resolve() / 'outbound.sqlite3')
                 env['OSIRIS_MAX_OBSERVATION_AGE_SECS'] = '120'
+                env['OSIRIS_BOOTSTRAP_RECONNECT_INTERVAL_SECS'] = str(
+                    self.runtime['publisher_bootstrap_reconnect_seconds'])
         proc = subprocess.Popen([str(self.args.binary)], env=env, cwd=directory,
                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, text=True, bufsize=1)
@@ -173,8 +182,8 @@ class Agent:
         for line in proc.stdout:
             try:
                 classified = classify_node_diagnostic(line)
-            except ValueError:
-                self.emit('fatal', reason='invalid_suppressed_rejection_count', node=index)
+            except ValueError as error:
+                self.emit('fatal', reason=str(error), node=index)
                 classified = None
             if classified is not None:
                 key, amount = classified
@@ -623,6 +632,8 @@ def measure(args):
                or type(metadata['runtime_config'].get('node_worker_threads_requested')) is not type(args.node_worker_threads)
                or metadata['runtime_config'].get('observed_runtime_worker_count_verified') is not False
                or metadata['runtime_config'].get('publisher_outbound_queue') is not runtime.get('publisher_outbound_queue')
+               or type(metadata['runtime_config'].get('publisher_bootstrap_reconnect_seconds'))
+               is not type(runtime.get('publisher_bootstrap_reconnect_seconds'))
                for metadata in c.metadata.values()):
             raise RuntimeError('agents_require_same_requested_runtime')
         commit, clean = revision()

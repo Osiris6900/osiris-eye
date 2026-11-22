@@ -202,7 +202,9 @@ class MeasurementTests(unittest.TestCase):
                                    publisher_outbound_queue=True)
             agent = Agent(args, tmp)
             agent.start(0)
-            self.assertNotIn('OSIRIS_P2P_OUTBOUND_DB', launch.call_args.kwargs['env'])
+            sink_env = launch.call_args.kwargs['env']
+            self.assertNotIn('OSIRIS_P2P_OUTBOUND_DB', sink_env)
+            self.assertEqual(sink_env['OSIRIS_BOOTSTRAP_RECONNECT_INTERVAL_SECS'], '5')
             agent.start(1, recipient='sink')
             env = launch.call_args.kwargs['env']
             database = Path(tmp) / '1' / 'outbound.sqlite3'
@@ -210,6 +212,8 @@ class MeasurementTests(unittest.TestCase):
             self.assertEqual(database.parent.stat().st_mode & 0o777, 0o700)
             self.assertEqual(env['OSIRIS_MAX_OBSERVATION_AGE_SECS'], '120')
             self.assertEqual(env['OSIRIS_TRUSTED_PEERS'], 'sink')
+            self.assertEqual(env['OSIRIS_BOOTSTRAP_RECONNECT_INTERVAL_SECS'], '1')
+            self.assertEqual(agent.runtime['publisher_bootstrap_reconnect_seconds'], 1)
 
     def test_cli_rejects_unbounded_worker_settings_before_starting_agents(self):
         script = Path(__file__).with_name('run_p2p_soak.py')

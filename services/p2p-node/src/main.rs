@@ -1081,6 +1081,14 @@ mod tests {
         assert!(!super::reconnect_backoff_active(&failures, &peer, tick));
         assert!(failures.is_empty());
     }
+    #[test] fn bootstrap_reconnect_interval_keeps_default_and_allows_fast_recovery() {
+        assert_eq!(super::bootstrap_reconnect_interval(None), 15);
+        assert_eq!(super::bootstrap_reconnect_interval(Some("invalid")), 15);
+        assert_eq!(super::bootstrap_reconnect_interval(Some("0")), 1);
+        assert_eq!(super::bootstrap_reconnect_interval(Some("1")), 1);
+        assert_eq!(super::bootstrap_reconnect_interval(Some("5")), 5);
+        assert_eq!(super::bootstrap_reconnect_interval(Some("301")), 300);
+    }
     #[test] fn reconnect_backoff_attempt_counter_saturates() {
         let peer = PeerId::random();
         let mut failures = std::collections::HashMap::new();
@@ -1387,6 +1395,10 @@ fn parse_interval_secs(raw: Option<&str>, default: u64, min: u64, max: u64) -> u
         .clamp(min, max)
 }
 
+fn bootstrap_reconnect_interval(raw: Option<&str>) -> u64 {
+    parse_interval_secs(raw, 15, 1, 300)
+}
+
 fn parse_per_peer_limit(raw: Option<&str>) -> Result<u32, Box<dyn Error>> {
     match raw {
         None | Some("4") => Ok(4),
@@ -1539,9 +1551,8 @@ struct ReconnectFailure {
 }
 
 /// How many upcoming reconnect ticks to skip after this failure.
-/// The sequence is 1, 2, 4, then 8 ticks. The reconnect timer is at least
-/// 5 seconds, so a shorter wall-clock delay would already have expired
-/// before the next tick. A success clears the entry.
+/// The sequence is 1, 2, 4, then 8 ticks, independent of the configured
+/// reconnect interval. A success clears the entry.
 fn reconnect_skip_ticks(attempts: u32) -> u32 {
     1u32 << attempts.saturating_sub(1).min(3)
 }
@@ -2166,11 +2177,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         emit!("peer_authentication=open");
     }
     emit!("peer_revocation=local revoked_peers={}", revoked_peers.as_ref().map_or(0, |peers| peers.len()));
-    let reconnect_interval_secs = parse_interval_secs(
+    let reconnect_interval_secs = bootstrap_reconnect_interval(
         env::var("OSIRIS_BOOTSTRAP_RECONNECT_INTERVAL_SECS").ok().as_deref(),
-        15,
-        5,
-        300,
     );
     // How often the node walks the DHT to discover new peers on the internet.
     let dht_walk_interval_secs = parse_interval_secs(
@@ -2257,8 +2265,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     )?;
     let mut receipt_tick = tokio::time::interval(Duration::from_secs(5));
     receipt_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    let mut outbound_tick = tokio::time::interval(Duration::from_secs(1));
+    let mut outbound_tick = tokio::time::interval(Duration::from_millis(250));
     outbound_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut outbound_woken_peers = HashSet::new();
     emit!("delivery_receipts_enabled={delivery_receipts_enabled} receipt_topic={RECEIPT_TOPIC}");
     emit!("verified_receipt_bridge={}", if receipt_bridge.is_some() { "enabled" } else { "disabled" });
 
@@ -2678,6 +2687,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 SwarmEvent::ConnectionClosed { peer_id, cause, num_established, .. } => {
                     emit!("peer_disconnected={peer_id} cause={cause:?} remaining={num_established}");
                     if num_established == 0 {
+                        outbound_woken_peers.remove(&peer_id);
                         peer_metrics.disconnected(&peer_id.to_string());
                         active_relay_reservations.remove(&peer_id);
                         if let Some(listener) = relay_listeners.remove(&peer_id) {
@@ -2718,6 +2728,22 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         continue;
                     }
                     emit!("gossipsub_subscribed peer={subscribed_peer_id} topic={topic}");
+                    if topic.as_str() == ENCRYPTED_TOPIC_NAME {
+                        if let Some(queue) = outbound_queue.as_mut() {
+                            // Only a configured, allowed recipient's first subscription
+                            // on this connection cohort can accelerate its deferred work.
+                            let is_recipient = outbound_publish::recipients()
+                                .is_ok_and(|recipients| recipients.contains(&subscribed_peer_id));
+                            if is_recipient && outbound_woken_peers.insert(subscribed_peer_id) {
+                                let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+                                let woken = queue.wake_deferred_recipient(&subscribed_peer_id.to_string(), now)?;
+                                if woken > 0 {
+                                    emit!("outbound_observation_rearmed recipient={subscribed_peer_id} count={woken}");
+                                    outbound_tick.reset_immediately();
+                                }
+                            }
+                        }
+                    }
                     // One connection subscribes to several topics. Announcing
                     // on each event floods all subscribers during cohort startup.
                     if topic.as_str() == KEY_BINDING_TOPIC_NAME {
