@@ -604,21 +604,21 @@ class InstrumentMasterStore:
         eligible: list[tuple[sqlite3.Row, dict[str, Any]]] = []
         saw_future = False
         for versions in grouped.values():
-            covering: tuple[sqlite3.Row, dict[str, Any]] | None = None
-            future_only = True
+            latest: tuple[sqlite3.Row, dict[str, Any]] | None = None
             for row in versions:
-                metadata = json.loads(row["metadata_json"])
                 if row["effective_at"] > cutoff:
                     continue
-                future_only = False
-                end = metadata.get("effective_to")
-                if end is not None and _timestamp(str(end)) <= cutoff:
-                    continue
-                covering = (row, metadata)
-            if covering is not None:
-                eligible.append(covering)
-            elif future_only:
+                latest = (row, json.loads(row["metadata_json"]))
+            if latest is None:
                 saw_future = True
+                continue
+            # A newer effective version supersedes its history even after its
+            # window ends. Filtering expired rows before selecting the version
+            # would revive an older open-ended contract (or create ambiguity
+            # with a different venue that really is current).
+            end = latest[1].get("effective_to")
+            if end is None or _timestamp(str(end)) > cutoff:
+                eligible.append(latest)
         if len(eligible) > 1:
             base["reason"] = "ambiguous_instrument"
             return base
