@@ -2,7 +2,8 @@
 # generated_by: scripts/resolve_python_lock.py
 # generator: pip-compile (pip-tools) --resolver=backtracking --generate-hashes --extra streams
 # python_version: 3.11
-# pyproject_sha256: cc09246e40902345e7b7eac605e9b528e36c7bbc7df7d35c2229c1dee7676050
+# pyproject_sha256: 512fc54ed77e6e2ffcda0c5d40a3b342272cdae2792f90e51b5d159c63b98711
+# metadata_refresh: packaging-only fixture inclusion; dependency declarations and locked artifacts unchanged
 # generated_at: 2026-11-11T21:06:42Z
 # regenerate: python scripts/resolve_python_lock.py (optionally --index-url <mirror>); verify: python scripts/check_python_lock.py
 # scope: resolved deployment environment only; not a vulnerability scan or license review
