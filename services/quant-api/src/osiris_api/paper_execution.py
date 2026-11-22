@@ -7,6 +7,7 @@ P&L, and audit chain. This is a simulation ledger, not a production trading syst
 """
 from __future__ import annotations
 
+import contextvars
 import hashlib
 import json
 import math
@@ -22,7 +23,7 @@ from typing import Any
 from fastapi import APIRouter, Body, HTTPException
 
 from .decimal_safety import bounded_decimal, validate_decimal_bounds
-from .risk import RiskLimits, check_execution
+from .risk import RiskLimits, bind_paper_clock_gate, check_execution, reset_paper_clock_gate
 
 # There is no branch that submits a broker order. A true value still refuses.
 LIVE_EXECUTION_ENABLED = False
@@ -51,6 +52,16 @@ _ORDER_TRANSITIONS = {
 
 router = APIRouter()
 _lock = Lock()
+_PROVENANCE_EVENTS = frozenset({
+    "order_decided", "fill_recorded", "fill_rejected", "mark_to_market",
+})
+_PROVENANCE_FIELDS = (
+    "source_event_time", "server_receive_time", "clock_source_id",
+    "clock_offset_ms", "clock_uncertainty_ms", "trusted", "flag", "causes",
+)
+_attached_provenance: contextvars.ContextVar = contextvars.ContextVar(
+    "osiris_attached_provenance", default=None,
+)
 
 
 def order_transition(current: str, target: str) -> str:
@@ -262,6 +273,13 @@ def _migrate(conn: sqlite3.Connection) -> None:
             )
         conn.execute("DROP TABLE paper_exec_fills")
         conn.execute("ALTER TABLE paper_exec_fills_v2 RENAME TO paper_exec_fills")
+    conn.execute("""CREATE TABLE IF NOT EXISTS paper_exec_time_provenance (
+        symbol TEXT PRIMARY KEY,
+        source_event_time TEXT NOT NULL,
+        server_receive_time TEXT NOT NULL,
+        clock_source_id TEXT NOT NULL,
+        clock_offset_ms TEXT,
+        clock_uncertainty_ms TEXT)""")
 
 
 def _parse_time(value: object) -> datetime | None:
@@ -274,6 +292,144 @@ def _parse_time(value: object) -> datetime | None:
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         return None
     return parsed.astimezone(timezone.utc)
+
+
+def _offset_text(value: object) -> str | None:
+    if value is None:
+        return None
+    return format(float(value), ".6f")
+
+
+def _remember_event_time(conn, event: str, payload: dict, provenance: dict) -> None:
+    if provenance.get("trusted") is not True:
+        return
+    event_time = provenance.get("source_event_time")
+    received = provenance.get("server_receive_time")
+    source = provenance.get("clock_source_id")
+    if not all(isinstance(value, str) and value for value in (event_time, received, source)):
+        return
+    if event == "mark_to_market" and isinstance(payload.get("marks"), dict):
+        symbols = list(payload["marks"])
+    elif event == "fill_recorded" and isinstance(payload.get("symbol"), str):
+        symbols = [payload["symbol"]]
+    elif (
+        event == "order_decided"
+        and payload.get("status") in {"filled", "accepted"}
+        and isinstance(payload.get("symbol"), str)
+    ):
+        symbols = [payload["symbol"]]
+    else:
+        return
+    for symbol in symbols:
+        conn.execute(
+            """INSERT INTO paper_exec_time_provenance(
+                symbol, source_event_time, server_receive_time, clock_source_id,
+                clock_offset_ms, clock_uncertainty_ms)
+               VALUES (?,?,?,?,?,?)
+               ON CONFLICT(symbol) DO UPDATE SET
+                source_event_time=excluded.source_event_time,
+                server_receive_time=excluded.server_receive_time,
+                clock_source_id=excluded.clock_source_id,
+                clock_offset_ms=excluded.clock_offset_ms,
+                clock_uncertainty_ms=excluded.clock_uncertainty_ms""",
+            (
+                symbol, event_time, received, source,
+                _offset_text(provenance.get("clock_offset_ms")),
+                _offset_text(provenance.get("clock_uncertainty_ms")),
+            ),
+        )
+
+
+def _screen_symbol(conn, symbol: str, observed_at: object, now: object, *, injected: bool, depth: bool):
+    from .control_plane.clock import (
+        FUTURE_TOLERANCE_S,
+        MAX_EVENT_RECEIVE_LATENCY_S,
+        REGRESSION_TOLERANCE_S,
+        assess_timestamp_provenance,
+        stamp_identity,
+    )
+    event = _parse_time(observed_at)
+    receive = _parse_time(now)
+    if event is None or receive is None:
+        return None
+    row = conn.execute(
+        "SELECT source_event_time, server_receive_time FROM paper_exec_time_provenance WHERE symbol=?",
+        (symbol,),
+    ).fetchone()
+    last = _parse_time(row["source_event_time"]) if row else None
+    last_receive = _parse_time(row["server_receive_time"]) if row else None
+    identity = stamp_identity(injected=injected, depth=depth)
+    return assess_timestamp_provenance(
+        event_time=event,
+        receive_time=receive,
+        last_event_time=last,
+        last_receive_time=last_receive,
+        future_tolerance_s=FUTURE_TOLERANCE_S,
+        regression_tolerance_s=REGRESSION_TOLERANCE_S,
+        max_latency_s=MAX_EVENT_RECEIVE_LATENCY_S,
+        clock_source_id=identity["clock_source_id"],
+        clock_offset_ms=identity["clock_offset_ms"],
+        clock_uncertainty_ms=identity["clock_uncertainty_ms"],
+    )
+
+
+def _screen_symbols(conn, symbols, observed_at, now, *, injected: bool, depth: bool):
+    items = []
+    for symbol in symbols:
+        item = _screen_symbol(
+            conn, symbol, observed_at, now, injected=injected, depth=depth,
+        )
+        if item is None:
+            return None
+        items.append(item)
+    causes: list[str] = []
+    for item in items:
+        for cause in item["causes"]:
+            if cause not in causes:
+                causes.append(cause)
+    summary = dict(items[0])
+    summary["trusted"] = not causes
+    summary["flag"] = None if not causes else "timestamp_untrusted"
+    summary["causes"] = causes
+    return summary
+
+
+def _timestamp_verdict(provenance, account, observed_at, now) -> str | None:
+    """Name timestamp_untrusted only when freshness would otherwise accept it,
+    or when the receive gap is too large to be a delayed live print.
+    """
+    if not isinstance(provenance, dict) or provenance.get("trusted") is True:
+        return None
+    causes = set(provenance.get("causes") or [])
+    if "implausible_latency" in causes:
+        return "timestamp_untrusted"
+    if _fresh(account, observed_at, now) and causes & {"future_event", "event_regression"}:
+        return "timestamp_untrusted"
+    return None
+
+
+def _bind_provenance(provenance, *, clock_healthy: bool, verdict: str | None):
+    return (
+        bind_paper_clock_gate(clock_healthy=clock_healthy, timestamp_verdict=verdict),
+        _attached_provenance.set(provenance if isinstance(provenance, dict) else None),
+    )
+
+
+def _reset_provenance(tokens) -> None:
+    reset_paper_clock_gate(tokens[0])
+    _attached_provenance.reset(tokens[1])
+
+
+def _clock_allows_orders() -> bool:
+    from .control_plane.clock import current_clock_health
+    health = current_clock_health()
+    return health.get("status") == "healthy" and health.get("orders_fail_closed") is False
+
+
+def _reject_caller_clock(payload: object) -> None:
+    from .control_plane.clock import CALLER_CLOCK_FIELDS
+    if isinstance(payload, dict) and any(name in payload for name in CALLER_CLOCK_FIELDS):
+        raise ValueError("caller_clock_rejected")
 
 
 def _limits_from_row(row: sqlite3.Row) -> RiskLimits:
@@ -309,7 +465,13 @@ def _validate_limits(limits: RiskLimits) -> None:
 def _append_audit(
     conn: sqlite3.Connection, event: str, client_order_id: str | None, payload: dict[str, Any],
 ) -> tuple[int, str]:
-    encoded = _canon_json(payload)
+    stored = dict(payload)
+    provenance = _attached_provenance.get()
+    if isinstance(provenance, dict) and event in _PROVENANCE_EVENTS:
+        stored["timestamp_provenance"] = {
+            key: provenance[key] for key in _PROVENANCE_FIELDS if key in provenance
+        }
+    encoded = _canon_json(stored)
     previous = conn.execute(
         "SELECT seq, row_hash FROM paper_exec_audit ORDER BY seq DESC LIMIT 1"
     ).fetchone()
@@ -321,6 +483,8 @@ def _append_audit(
            VALUES (?,?,?,?,?,?)""",
         (seq, client_order_id, event, encoded, prev, digest),
     )
+    if isinstance(provenance, dict):
+        _remember_event_time(conn, event, stored, provenance)
     return seq, digest
 
 
@@ -1342,8 +1506,14 @@ def submit_paper_order(
     px = _number(price, positive=True)
     cost = _number(fee)
     qty_s, px_s, fee_s = _canonical(qty), _canonical(px), _canonical(cost)
+    injected_clock = now is not None
+    if not injected_clock:
+        from .control_plane.clock import server_receive_time
+        now = server_receive_time().isoformat()
+    orders_allowed = _clock_allows_orders()
     conflict = False
     result: dict[str, Any] | None = None
+    clock_tokens = None
     with _lock:
         conn = _connect()
         try:
@@ -1373,6 +1543,15 @@ def submit_paper_order(
                 else:
                     result = _public(prior, _latest_fill(conn, key), replay=True)
             else:
+                account = conn.execute("SELECT * FROM paper_exec_meta WHERE id=1").fetchone()
+                provenance = _screen_symbol(
+                    conn, normalized_symbol, observed_at, now,
+                    injected=injected_clock, depth=False,
+                )
+                verdict = _timestamp_verdict(provenance, account, observed_at, now)
+                clock_tokens = _bind_provenance(
+                    provenance, clock_healthy=orders_allowed, verdict=verdict,
+                )
                 result = _submit_new_order(
                     conn, key=key, symbol=normalized_symbol, side=normalized_side,
                     qty=qty, px=px, cost=cost, qty_s=qty_s, px_s=px_s, fee_s=fee_s,
@@ -1387,6 +1566,8 @@ def submit_paper_order(
             conn.rollback()
             raise
         finally:
+            if clock_tokens is not None:
+                _reset_provenance(clock_tokens)
             conn.close()
     if conflict:
         raise ValueError("idempotency_key_conflict")
@@ -1456,6 +1637,8 @@ def _apply_paper_fill(
     error: str | None = None
     result: dict[str, Any] | None = None
     depth_plan = None
+    caller_supplied_now = now is not None
+    clock_tokens = None
     with _lock:
         conn = _connect()
         try:
@@ -1542,6 +1725,22 @@ def _apply_paper_fill(
                     problem = "invalid_fill_quantity"
                 if problem is None and worse:
                     problem = "fill_price_exceeds_limit"
+                if now is None:
+                    from .control_plane.clock import server_receive_time
+                    now = server_receive_time().isoformat()
+                if clock_tokens is None:
+                    provenance = _screen_symbol(
+                        conn, order["symbol"], observed_at, now,
+                        injected=caller_supplied_now, depth=depth_plan is not None,
+                    )
+                    verdict = _timestamp_verdict(provenance, account, observed_at, now)
+                    clock_tokens = _bind_provenance(
+                        provenance, clock_healthy=True, verdict=verdict,
+                    )
+                else:
+                    verdict = None
+                if problem is None and verdict == "timestamp_untrusted":
+                    problem = "timestamp_untrusted"
                 if problem is None and bool(account["kill_switch"]):
                     problem = "kill_switch_active"
                 if problem is None and not _fresh(account, observed_at, now):
@@ -1643,6 +1842,8 @@ def _apply_paper_fill(
             conn.rollback()
             raise
         finally:
+            if clock_tokens is not None:
+                _reset_provenance(clock_tokens)
             conn.close()
     if error is not None:
         raise ValueError(error)
@@ -1735,20 +1936,37 @@ def _normalize_symbol(symbol: Any) -> str:
     return normalized
 
 
-def mark_to_market(marks: Any, *, observed_at: object, now: object) -> dict[str, Any]:
-    """Store fresh marks and the unrealized P&L they imply. This does not trade."""
+def mark_to_market(marks: Any, *, observed_at: object, now: object = None) -> dict[str, Any]:
+    """Store fresh marks and the unrealized P&L they imply. This does not trade.
+
+    ``now`` is an injected server clock for tests and in-process callers.
+    HTTP does not pass it. Receive time is stamped here when it is omitted.
+    PR #458 should keep this screen when it rewrites mark admission.
+    """
     _refuse_live(False)
+    injected_clock = now is not None
+    if not injected_clock:
+        from .control_plane.clock import server_receive_time
+        now = server_receive_time().isoformat()
     if not isinstance(marks, dict) or not marks:
         raise ValueError("invalid_marks")
     parsed: dict[str, Decimal] = {}
     for symbol, price in marks.items():
         parsed[_normalize_symbol(symbol)] = _number(price, positive=True)
+    tokens = None
     with _lock:
         conn = _connect()
         try:
             conn.execute("BEGIN IMMEDIATE")
             _assert_ready(conn)
             account = conn.execute("SELECT * FROM paper_exec_meta WHERE id=1").fetchone()
+            provenance = _screen_symbols(
+                conn, list(parsed), observed_at, now, injected=injected_clock, depth=False,
+            )
+            verdict = _timestamp_verdict(provenance, account, observed_at, now)
+            tokens = _bind_provenance(provenance, clock_healthy=True, verdict=verdict)
+            if verdict == "timestamp_untrusted":
+                raise ValueError("timestamp_untrusted")
             if not _fresh(account, observed_at, now):
                 raise ValueError("stale_market_data")
             held = {
@@ -1782,6 +2000,8 @@ def mark_to_market(marks: Any, *, observed_at: object, now: object) -> dict[str,
             conn.rollback()
             raise
         finally:
+            if tokens is not None:
+                _reset_provenance(tokens)
             conn.close()
     return {
         "unrealized_pnl": unrealized,
@@ -2452,37 +2672,42 @@ def api_initialize(p: dict = Body(...)):
 @router.post("/paper/execution/orders")
 def api_submit(p: dict = Body(...)):
     # simulate_crash is a library fault hook and is not accepted over HTTP.
-    return _guard(
-        submit_paper_order,
-        client_order_id=p.get("client_order_id"),
-        symbol=p.get("symbol"),
-        side=p.get("side", ""),
-        quantity=p.get("quantity"),
-        price=p.get("price"),
-        fee=p.get("fee", "0"),
-        observed_at=p.get("observed_at"),
-        now=p.get("now"),
-        risk_service_available=p.get("risk_service_available", True) is True,
-        kill_switch_active=p.get("kill_switch_active") is True,
-        live_execution=p.get("live_execution") is True,
-        working=p.get("working") is True,
-    )
+    # Receive time is stamped from the server clock. A body clock is rejected.
+    def submit():
+        _reject_caller_clock(p)
+        return submit_paper_order(
+            client_order_id=p.get("client_order_id"),
+            symbol=p.get("symbol"),
+            side=p.get("side", ""),
+            quantity=p.get("quantity"),
+            price=p.get("price"),
+            fee=p.get("fee", "0"),
+            observed_at=p.get("observed_at"),
+            now=None,
+            risk_service_available=p.get("risk_service_available", True) is True,
+            kill_switch_active=p.get("kill_switch_active") is True,
+            live_execution=p.get("live_execution") is True,
+            working=p.get("working") is True,
+        )
+    return _guard(submit)
 
 
 @router.post("/paper/execution/orders/{client_order_id}/fills")
 def api_fill(client_order_id: str, p: dict = Body(...)):
     # simulate_crash is a library fault hook and is not accepted over HTTP.
-    return _guard(
-        apply_paper_fill,
-        client_order_id=client_order_id,
-        client_fill_id=p.get("client_fill_id"),
-        quantity=p.get("quantity"),
-        price=p.get("price"),
-        fee=p.get("fee"),
-        observed_at=p.get("observed_at"),
-        now=p.get("now"),
-        live_execution=p.get("live_execution") is True,
-    )
+    def fill():
+        _reject_caller_clock(p)
+        return apply_paper_fill(
+            client_order_id=client_order_id,
+            client_fill_id=p.get("client_fill_id"),
+            quantity=p.get("quantity"),
+            price=p.get("price"),
+            fee=p.get("fee"),
+            observed_at=p.get("observed_at"),
+            now=None,
+            live_execution=p.get("live_execution") is True,
+        )
+    return _guard(fill)
 
 
 @router.get("/paper/execution/reconciliation-report")
@@ -2507,9 +2732,10 @@ def api_cancel(client_order_id: str, p: dict | None = Body(default=None)):
 
 @router.post("/paper/execution/marks")
 def api_marks(p: dict = Body(...)):
-    return _guard(
-        mark_to_market, p.get("marks"), observed_at=p.get("observed_at"), now=p.get("now"),
-    )
+    def mark():
+        _reject_caller_clock(p)
+        return mark_to_market(p.get("marks"), observed_at=p.get("observed_at"), now=None)
+    return _guard(mark)
 
 
 @router.post("/paper/execution/kill-switch")
