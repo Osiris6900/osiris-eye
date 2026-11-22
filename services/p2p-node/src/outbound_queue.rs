@@ -425,7 +425,9 @@ impl OutboundQueue {
             .map_err(db_error)?;
         Self::validate_write_state(&tx, now)?;
         let woken = tx.execute(
-            "UPDATE outbound_observations SET next_due=?1 WHERE recipient=?2 AND state='queued' AND attempts>0 AND updated_at<?1 AND next_due>?1",
+            "UPDATE outbound_observations SET next_due=MAX(?1,updated_at+1) \
+             WHERE recipient=?2 AND state='queued' AND attempts>0 \
+             AND next_due>MAX(?1,updated_at+1)",
             params![now, recipient],
         ).map_err(db_error)?;
         tx.commit().map_err(db_error)?;
@@ -674,8 +676,8 @@ mod tests {
         }
         assert_eq!(queue.wake_deferred_recipient(&recipient, 100).unwrap_err(),
             "outbound_queue_clock_rollback");
-        assert_eq!(queue.wake_deferred_recipient(&recipient, 101).unwrap(), 0);
-        assert_eq!(queue.wake_deferred_recipient(&recipient, 102).unwrap(), 1);
+        assert_eq!(queue.wake_deferred_recipient(&recipient, 101).unwrap(), 1);
+        assert!(queue.claim_due(101, 4).unwrap().is_empty());
         assert_eq!(queue.wake_deferred_recipient(&recipient, 102).unwrap(), 0);
 
         let retry = queue.claim_due(102, 4).unwrap();

@@ -31,6 +31,15 @@ on:
         default: false
         type: boolean
 
+      release_opt_level:
+        description: "Release optimization level (s optimizes for binary size)"
+        required: false
+        default: '3'
+        type: choice
+        options:
+          - '3'
+          - 's'
+
 permissions:
   contents: read
   actions: read
@@ -41,6 +50,7 @@ concurrency:
 
 env:
   CARGO_TARGET_DIR: ${{ github.workspace }}/target
+  CARGO_PROFILE_RELEASE_OPT_LEVEL: ${{ inputs.release_opt_level }}
 
 # Coordinated hosts must be rerun together; each attempt has fresh artifacts.
 jobs:
