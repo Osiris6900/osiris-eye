@@ -206,11 +206,15 @@ def prepare(conn, order, context):
     # Refresh the target's mark from the same book before independent fill risk.
     observed = datetime.fromtimestamp(book["captured_ms"] / 1000, UTC).isoformat()
     midpoint = _exact((levels["BUY"][0][0] + levels["SELL"][0][0]) / 2)
+    decision = ledger.instrument_decision(order["symbol"], price=midpoint, as_of=observed)
+    if not decision["ok"]:
+        raise ValueError(decision["reason"])
     conn.execute("INSERT INTO paper_exec_marks VALUES (?,?,?) ON CONFLICT(symbol) DO UPDATE SET price=excluded.price,observed_at=excluded.observed_at",
                  (order["symbol"], midpoint, observed))
     ledger._refresh_unrealized(conn)
     ledger._append_audit(conn, "mark_to_market", None, {"marks": {order["symbol"]: midpoint},
-                           "observed_at": observed, "live_execution": False, "broker_order_submitted": False})
+                           "observed_at": observed, "live_execution": False, "broker_order_submitted": False,
+                           **ledger._instrument_audit_fields(decision)})
     return {"receipt": receipt, "replayed": False, "observed_at": observed,
             "now": datetime.fromtimestamp(decision_ms / 1000, UTC).isoformat()}
 

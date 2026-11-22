@@ -20,6 +20,7 @@ class PaperOrderContext:
     feed_entitled: bool
     kill_switch_active: bool
     max_feed_age_ms: int = 5000
+    symbol: str | None = None
 
 
 def authorize_paper_order(
@@ -56,6 +57,15 @@ def authorize_paper_order(
         return False, "future_observation"
     if age > context.max_feed_age_ms:
         return False, "stale_feed"
+    symbol = context.symbol
+    if not isinstance(symbol, str) or not symbol.strip():
+        return False, "unknown_instrument"
+    # The paper gate names an instrument. A missing or inactive one cannot pass.
+    from .instrument_master import assess_order
+
+    decision = assess_order(symbol, price=context.price, quantity=context.quantity)
+    if not decision["ok"]:
+        return False, decision["reason"]
     return check_order(
         quantity=context.quantity,
         price=context.price,

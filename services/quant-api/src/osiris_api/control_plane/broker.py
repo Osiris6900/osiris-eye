@@ -148,6 +148,11 @@ class AlpacaPaperBroker:
         order = dict(order)
         client_id, symbol = identifier(order["client_order_id"]), identifier(order["symbol"])
         quantity, price = money(order["quantity"]), money(order["limit_price"])
+        from ..instrument_master import assess_order
+
+        decision = assess_order(symbol, price=price, quantity=quantity)
+        if not decision["ok"]:
+            raise ValueError(decision["reason"])
         allowed, reason, _ = check_execution(
             side=order["side"],
             quantity=float(quantity),
@@ -159,6 +164,7 @@ class AlpacaPaperBroker:
             kill_switch_active=kill_switch,
             market_data_fresh=fresh,
             risk_service_available=True,
+            symbol=symbol,
         )
         if not allowed:
             raise ValueError(reason)
