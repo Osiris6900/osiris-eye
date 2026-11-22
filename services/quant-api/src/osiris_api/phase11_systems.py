@@ -20,28 +20,16 @@ def _number(value, name, *, minimum=None, maximum=None):
     return value
 
 
-def reconcile_ledger(positions, broker_positions, cash, broker_cash, tolerance=1e-6):
-    if not isinstance(positions, list) or not isinstance(broker_positions, list):
-        raise ValueError("positions and broker_positions must be lists")
-    tolerance = _number(tolerance, "tolerance", minimum=0)
-    cash = _number(cash, "cash")
-    broker_cash = _number(broker_cash, "broker_cash")
-    def aggregate(rows, key):
-        totals = {}
-        for row in rows:
-            if not isinstance(row, dict) or not row.get("asset"):
-                raise ValueError("each position requires an asset")
-            qty = _number(row.get("quantity"), "quantity")
-            totals[row["asset"]] = totals.get(row["asset"], 0.0) + qty
-        return totals
-    internal, external = aggregate(positions, "asset"), aggregate(broker_positions, "asset")
-    diffs = {a: internal.get(a, 0.0) - external.get(a, 0.0)
-             for a in sorted(set(internal) | set(external))}
-    breaks = {a: d for a, d in diffs.items() if abs(d) > tolerance}
-    cash_diff = cash - broker_cash
-    return {"status": "reconciled" if not breaks and abs(cash_diff) <= tolerance else "breaks_found",
-            "position_differences": diffs, "cash_difference": cash_diff,
-            "new_risk_allowed": not breaks and abs(cash_diff) <= tolerance}
+def reconcile_ledger(positions=None, broker_positions=None, cash=None, broker_cash=None,
+                     tolerance=1e-6):
+    """Caller positions and cash are not a reconciliation source.
+
+    Post-trade comparison reads the durable paper book and a server-side broker
+    snapshot. These arguments used to be scored as floats and could report
+    ``new_risk_allowed`` without either book. They are rejected.
+    """
+    del positions, broker_positions, cash, broker_cash, tolerance
+    raise ValueError("caller_supplied_numbers_rejected")
 
 
 def simulate_order_lifecycle(order):
