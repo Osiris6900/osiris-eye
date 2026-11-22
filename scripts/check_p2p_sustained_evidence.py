@@ -202,12 +202,14 @@ def validate(data: object, *, commit: str, run_url: str, attempt: int, policy: d
             workers = runtime.get("node_worker_threads_requested")
             if ((workers is not None and (type(workers) is not int or workers not in (1, 2, 4)))
                     or runtime.get("tokio_worker_threads_env") != (None if workers is None else str(workers))
+                    or ("publisher_outbound_queue" in runtime and runtime["publisher_outbound_queue"] is not True)
                     or runtime.get("observed_runtime_worker_count_verified") is not False):
                 errors.append("runtime_configuration_invalid")
             if not isinstance(hosts, list) or any(
                 not isinstance(host, dict) or host.get("runtime_config") != runtime
                 or type(host["runtime_config"].get("node_worker_threads_requested")) is not type(workers)
                 or host["runtime_config"].get("observed_runtime_worker_count_verified") is not False
+                or host["runtime_config"].get("publisher_outbound_queue") is not runtime.get("publisher_outbound_queue")
                 for host in hosts
             ):
                 errors.append("host_runtime_configuration_mismatch")

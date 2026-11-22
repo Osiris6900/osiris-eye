@@ -175,7 +175,8 @@ class MeasurementTests(unittest.TestCase):
             args = SimpleNamespace(binary=Path('/bin/true'), remote_binary='/bin/true',
                 remote_script='/workspace/scripts/run_p2p_soak.py', extra_host=['host-c=runner@host-c'],
                 peers=6, port=4001, local_agents=False, ssh_target='runner@host-b',
-                ssh_option=[], node_worker_threads=count, traffic_during_outage=False)
+                ssh_option=[], node_worker_threads=count, traffic_during_outage=True,
+                publisher_outbound_queue=True)
             with patch('run_p2p_soak.Controller', return_value=controller), \
                  patch.object(controller, 'launch', side_effect=lambda host, command: launched.update({host: command})), \
                  patch.object(controller, 'wait', side_effect=RuntimeError('stop_after_launch')), \
@@ -186,10 +187,29 @@ class MeasurementTests(unittest.TestCase):
             for host, command in launched.items():
                 parts = command if host == 'host-a' else shlex.split(command[-1])
                 with self.subTest(count=count, host=host):
+                    self.assertIn('--publisher-outbound-queue', parts)
                     if count is None:
                         self.assertNotIn('--node-worker-threads', parts)
                     else:
                         self.assertEqual(parts[parts.index('--node-worker-threads') + 1], str(count))
+
+    def test_outbound_queue_is_private_and_enabled_only_on_publishers(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch('run_p2p_soak.subprocess.Popen') as launch, \
+             patch('run_p2p_soak.threading.Thread'), \
+             patch.dict(os.environ, {'OSIRIS_P2P_OUTBOUND_DB': '/inherited.sqlite3'}):
+            args = SimpleNamespace(binary=Path('/bin/true'), port=0, controller_pid=None,
+                                   publisher_outbound_queue=True)
+            agent = Agent(args, tmp)
+            agent.start(0)
+            self.assertNotIn('OSIRIS_P2P_OUTBOUND_DB', launch.call_args.kwargs['env'])
+            agent.start(1, recipient='sink')
+            env = launch.call_args.kwargs['env']
+            database = Path(tmp) / '1' / 'outbound.sqlite3'
+            self.assertEqual(Path(env['OSIRIS_P2P_OUTBOUND_DB']), database.resolve())
+            self.assertEqual(database.parent.stat().st_mode & 0o777, 0o700)
+            self.assertEqual(env['OSIRIS_MAX_OBSERVATION_AGE_SECS'], '120')
+            self.assertEqual(env['OSIRIS_TRUSTED_PEERS'], 'sink')
 
     def test_cli_rejects_unbounded_worker_settings_before_starting_agents(self):
         script = Path(__file__).with_name('run_p2p_soak.py')

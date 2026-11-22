@@ -54,6 +54,8 @@ DIAGNOSTIC_PREFIXES = (
     'key_binding_refreshed', 'key_binding_refresh_deferred',
     'outgoing_connection_error', 'incoming_connection_error',
     'bootstrap_reconnect_error', 'bootstrap_reconnect_attempt',
+    'outbound_observation_queued', 'outbound_observation_deferred',
+    'outbound_observation_held', 'outbound_observation_rejected',
 )
 _DIAGNOSTIC_REASON = re.compile(r'\breason=([a-z_]{1,64})(?:\s|$)')
 _DIAGNOSTIC_COUNT = re.compile(r'\bcount=(\d+)(?:\s|$)')
@@ -88,7 +90,7 @@ def measurement_class(metadata, local_agents):
 
 
 
-def runtime_config(worker_threads):
+def runtime_config(worker_threads, publisher_outbound_queue=False):
     """Bound the requested node runtime without weakening resource policy."""
     if worker_threads is not None and (type(worker_threads) is not int or worker_threads not in (1, 2, 4)):
         raise ValueError('node_worker_threads_must_be_1_2_or_4')
@@ -96,13 +98,15 @@ def runtime_config(worker_threads):
         'node_worker_threads_requested': worker_threads,
         'tokio_worker_threads_env': str(worker_threads) if worker_threads is not None else None,
         'observed_runtime_worker_count_verified': False,
+        **({'publisher_outbound_queue': True} if publisher_outbound_queue else {}),
     }
 
 
 class Agent:
     def __init__(self, args, state):
         self.args, self.state = args, Path(state)
-        self.runtime = runtime_config(getattr(args, 'node_worker_threads', None))
+        self.runtime = runtime_config(getattr(args, 'node_worker_threads', None),
+                                      getattr(args, 'publisher_outbound_queue', False))
         self.nodes = {}
         self.node_readers = {}
         self.lock = threading.Lock()
@@ -153,6 +157,9 @@ class Agent:
             # The declared soak is a publisher/recipient star. Prevent DHT and
             # Identify discovery from silently turning it into a full mesh.
             env['OSIRIS_TRUSTED_PEERS'] = recipient
+            if self.runtime.get('publisher_outbound_queue'):
+                env['OSIRIS_P2P_OUTBOUND_DB'] = str(directory.resolve() / 'outbound.sqlite3')
+                env['OSIRIS_MAX_OBSERVATION_AGE_SECS'] = '120'
         proc = subprocess.Popen([str(self.args.binary)], env=env, cwd=directory,
                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, text=True, bufsize=1)
@@ -575,10 +582,13 @@ def workload_records(controller, workload, start, *, outage_start_ms, restart_ms
 
 def measure(args):
     c = Controller()
-    runtime = runtime_config(args.node_worker_threads)
-    worker_args = ([] if args.node_worker_threads is None
-                   else ['--node-worker-threads', str(args.node_worker_threads)])
-    base = [sys.executable, str(Path(__file__).resolve()), '--agent', '--binary', str(args.binary), *worker_args]
+    publisher_queue = getattr(args, 'publisher_outbound_queue', False)
+    runtime = runtime_config(args.node_worker_threads, publisher_queue)
+    runtime_args = ([] if args.node_worker_threads is None
+                    else ['--node-worker-threads', str(args.node_worker_threads)])
+    if publisher_queue:
+        runtime_args.append('--publisher-outbound-queue')
+    base = [sys.executable, str(Path(__file__).resolve()), '--agent', '--binary', str(args.binary), *runtime_args]
     extra_hosts = {}
     for specification in args.extra_host:
         host, target = specification.split('=', 1)
@@ -592,7 +602,7 @@ def measure(args):
     c.launch('host-a', base + ['--count', str(local_count), '--controller-pid', str(os.getpid())])
     remote_args = ['python3', args.remote_script, '--agent', '--binary', args.remote_binary,
                    '--count', str(args.peers - local_count * (host_count-1)), '--port', str(args.port),
-                   *worker_args]
+                   *runtime_args]
     if args.local_agents:
         remote_args = [sys.executable, str(Path(__file__).resolve()), *remote_args[2:]]
         c.launch('host-b', remote_args)
@@ -601,7 +611,7 @@ def measure(args):
                             shlex.join(remote_args)])
     for host, target in extra_hosts.items():
         peer_args = ['python3', args.remote_script, '--agent', '--binary', args.remote_binary,
-                     '--count', str(local_count), *worker_args]
+                     '--count', str(local_count), *runtime_args]
         if args.local_agents:
             c.launch(host, [sys.executable, str(Path(__file__).resolve()), *peer_args[2:]])
         else:
@@ -612,6 +622,7 @@ def measure(args):
         if any(metadata.get('runtime_config') != runtime
                or type(metadata['runtime_config'].get('node_worker_threads_requested')) is not type(args.node_worker_threads)
                or metadata['runtime_config'].get('observed_runtime_worker_count_verified') is not False
+               or metadata['runtime_config'].get('publisher_outbound_queue') is not runtime.get('publisher_outbound_queue')
                for metadata in c.metadata.values()):
             raise RuntimeError('agents_require_same_requested_runtime')
         commit, clean = revision()
@@ -819,6 +830,8 @@ def main():
     p.add_argument('--count', type=int, default=2)
     p.add_argument('--node-worker-threads', type=int, choices=(1, 2, 4),
                    help='explicit TOKIO_WORKER_THREADS on every node; default unsets it')
+    p.add_argument('--publisher-outbound-queue', action='store_true',
+                   help='persist publisher observations and retry only definitely-unsent attempts')
     p.add_argument('--controller-pid', type=int)
     p.add_argument('--port', type=int, default=0)
     p.add_argument('--ssh-target')
