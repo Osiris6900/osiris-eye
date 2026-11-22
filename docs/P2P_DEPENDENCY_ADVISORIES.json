@@ -97,14 +97,14 @@
   "query": {
     "batch_size": 100,
     "batches": 7,
-    "queried_at": "2026-11-22T20:03:20Z",
+    "queried_at": "2026-11-22T20:09:08Z",
     "querybatch_url": "https://api.osv.dev/v1/querybatch",
     "service": "OSV",
     "vulnerability_url_template": "https://api.osv.dev/v1/vulns/{id}"
   },
   "schema": "osiris.dependency-advisory-report.v1",
   "source": {
-    "commit": "82dda3197f8e4cc55f8b2f79cd2afdee3f9a218f",
+    "commit": "b1390b4cc702f919e2e92438d4234e962ac8ce3a",
     "inputs": {
       "apps/web/package-lock.json": {
         "sha256": "fc7b7c0a8bc7216c037feea96eeae9003d32a059d2f34a538de8313136f21c49"
@@ -122,7 +122,7 @@
         "sha256": "512fc54ed77e6e2ffcda0c5d40a3b342272cdae2792f90e51b5d159c63b98711"
       },
       "services/quant-api/requirements-lock.txt": {
-        "sha256": "ff5e5ece6f90c6f97786e3cb3f199d06c57cef282b7daa057485277cf5b77ae5"
+        "sha256": "b7f990b1d5e99d0b18bf87213172c0771939541782b66c0b519a199d0bd70618"
       }
     },
     "repository": "Osiris6900/osiris-eye"

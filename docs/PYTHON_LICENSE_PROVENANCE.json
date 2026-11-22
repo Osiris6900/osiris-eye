@@ -5,10 +5,10 @@
   ],
   "lock": {
     "path": "services/quant-api/requirements-lock.txt",
-    "sha256": "ff5e5ece6f90c6f97786e3cb3f199d06c57cef282b7daa057485277cf5b77ae5"
+    "sha256": "b7f990b1d5e99d0b18bf87213172c0771939541782b66c0b519a199d0bd70618"
   },
   "metadata": {
-    "queried_at": "2026-11-11T21:13:57Z",
+    "queried_at": "2026-11-22T20:09:03Z",
     "service": "PyPI JSON API",
     "url_template": "https://pypi.org/pypi/{name}/{version}/json"
   },
@@ -243,7 +243,7 @@
   ],
   "schema": "osiris.python-license-provenance.v1",
   "source": {
-    "commit": "d479d2e5ac2215faf55c61332fa80a3c5ae39b2b",
+    "commit": "b1390b4cc702f919e2e92438d4234e962ac8ce3a",
     "repository": "Osiris6900/osiris-eye"
   }
 }
