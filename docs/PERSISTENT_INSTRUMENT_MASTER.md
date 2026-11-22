@@ -17,3 +17,18 @@ recorded timestamps are retained.
 This release supports operator/fixture imports only. No licensed vendor instrument
 master, exchange calendar, real-time feed, broker connection, or live execution is
 configured. Back up the SQLite data volume in deployment.
+
+## Paper-order gate
+
+`services/quant-api/src/osiris_api/instrument_master_fixture.json` is the checked-in
+seed. The paper order, fill, and mark paths and `authorize_paper_order` reject an
+unknown, halted, delisted, expired, or not-yet-effective instrument, a price off
+the tick, and a quantity that is not a lot multiple. Accepted order and fill
+journal rows record `instrument_master_version`, the catalog content hash.
+
+`GET /market-data/instruments/catalog` is read-only. It returns that version,
+the stored corporate actions, and `live_trading_authorized: false`. Corporate
+actions are not applied to positions. Stored trading hours are not enforced.
+`BTC`, `ETH`, `BTC-USD`, `ETH-USD`, and `TEST` use a 10^-1000 research grid so
+the existing arbitrary-precision paper ledger still balances. That grid is not
+an exchange tick.

@@ -22,7 +22,37 @@ from typing import Any
 from fastapi import APIRouter, Body, HTTPException
 
 from .decimal_safety import bounded_decimal, validate_decimal_bounds
+from .instrument_master import assess_order
 from .risk import RiskLimits, check_execution
+
+_INSTRUMENT_REASONS = frozenset({
+    "unknown_instrument",
+    "instrument_inactive",
+    "instrument_not_yet_effective",
+    "invalid_tick_size",
+    "invalid_lot_size",
+    "ambiguous_instrument",
+})
+
+
+def instrument_decision(symbol, *, price=None, quantity=None, as_of=None):
+    """Read the seeded master. Callers on the paper path pass exact decimals."""
+    return assess_order(
+        symbol, price=price, quantity=quantity,
+        as_of=as_of if isinstance(as_of, str) else None,
+    )
+
+
+def _instrument_audit_fields(decision: dict[str, Any]) -> dict[str, Any]:
+    fields: dict[str, Any] = {}
+    version = decision.get("catalog_version")
+    if isinstance(version, str) and version:
+        fields["instrument_master_version"] = version
+    for key in ("instrument_id", "instrument_version"):
+        value = decision.get(key)
+        if isinstance(value, str) and value:
+            fields[key] = value
+    return fields
 
 # There is no branch that submits a broker order. A true value still refuses.
 LIVE_EXECUTION_ENABLED = False
@@ -991,6 +1021,7 @@ def _fill_risk_reason(
             limits=_limits_from_row(account),
             kill_switch_active=bool(account["kill_switch"]),
             market_data_fresh=True, risk_service_available=True,
+            symbol=order["symbol"],
         )
     except Exception:  # noqa: BLE001 - an unavailable risk check must fail closed
         return "risk_service_unavailable"
@@ -1198,19 +1229,28 @@ def _submit_new_order(
         )
     else:
         position_notional, gross = filled_notional, filled_gross
-    try:
-        position_float, gross_float = _risk_exposures_as_floats(side, qty, px, position_notional, gross)
-        approved, reason, limits_evaluated = check_execution(
-            side=side, quantity=_as_float(qty), price=_as_float(px),
-            current_position_notional=position_float,
-            current_gross_exposure=gross_float,
-            daily_pnl=_as_float(Decimal(account["realized_pnl"])),
-            limits=_limits_from_row(account),
-            kill_switch_active=effective_kill, market_data_fresh=fresh,
-            risk_service_available=risk_service_available is True,
-        )
-    except Exception:
-        approved, reason, limits_evaluated = False, "risk_service_unavailable", False
+    as_of = now if isinstance(now, str) else None
+    decision = instrument_decision(symbol, price=px, quantity=qty, as_of=as_of)
+    instrument_fields = _instrument_audit_fields(decision)
+    if not decision["ok"]:
+        approved, reason, limits_evaluated = False, decision["reason"], False
+    else:
+        try:
+            position_float, gross_float = _risk_exposures_as_floats(
+                side, qty, px, position_notional, gross,
+            )
+            approved, reason, limits_evaluated = check_execution(
+                side=side, quantity=_as_float(qty), price=_as_float(px),
+                current_position_notional=position_float,
+                current_gross_exposure=gross_float,
+                daily_pnl=_as_float(Decimal(account["realized_pnl"])),
+                limits=_limits_from_row(account),
+                kill_switch_active=effective_kill, market_data_fresh=fresh,
+                risk_service_available=risk_service_available is True,
+                symbol=symbol, as_of=as_of,
+            )
+        except Exception:
+            approved, reason, limits_evaluated = False, "risk_service_unavailable", False
     if approved:
         exact_reason = _decimal_risk_reason(
             conn, account, side, symbol, qty, px, position_notional, gross, now,
@@ -1222,7 +1262,7 @@ def _submit_new_order(
     leaves_quantity = Decimal("0")
     execution_mode = "working" if working else "immediate"
     if not approved:
-        status = "risk_rejected"
+        status = "instrument_rejected" if reason in _INSTRUMENT_REASONS else "risk_rejected"
         state = order_transition("new", "rejected")
     else:
         reserved_cash, reserved_sell = _reserved(conn)
@@ -1260,6 +1300,7 @@ def _submit_new_order(
         "symbol": symbol, "side": side, "quantity": qty_s, "price": px_s, "fee": fee_s,
         "created_at": now if isinstance(now, str) else "",
         "live_execution": False, "broker_order_submitted": False,
+        **instrument_fields,
     }
     if origin_reference is not None:
         payload["origin_reference"] = origin_reference
@@ -1276,6 +1317,7 @@ def _submit_new_order(
             "realized_pnl": _canonical(realized_delta), "quantity": qty_s, "price": px_s,
             "symbol": symbol, "side": side, "fee": fee_s, "state": "filled",
             "live_execution": False, "broker_order_submitted": False,
+            **instrument_fields,
         })
     created = now if isinstance(now, str) else ""
     conn.execute(
@@ -1295,7 +1337,9 @@ def _submit_new_order(
     stored = conn.execute(
         "SELECT * FROM paper_exec_orders WHERE client_order_id=?", (key,)
     ).fetchone()
-    return _public(stored, _latest_fill(conn, key), replay=False)
+    body = _public(stored, _latest_fill(conn, key), replay=False)
+    body.update(instrument_fields)
+    return body
 
 
 def submit_paper_order(
@@ -1540,6 +1584,15 @@ def _apply_paper_fill(
                 )
                 if problem is None and fill_qty > leaves:
                     problem = "invalid_fill_quantity"
+                instrument_fields: dict[str, Any] = {}
+                if problem is None:
+                    decision = instrument_decision(
+                        order["symbol"], price=fill_px, quantity=fill_qty,
+                        as_of=now if isinstance(now, str) else None,
+                    )
+                    instrument_fields = _instrument_audit_fields(decision)
+                    if not decision["ok"]:
+                        problem = decision["reason"]
                 if problem is None and worse:
                     problem = "fill_price_exceeds_limit"
                 if problem is None and bool(account["kill_switch"]):
@@ -1559,6 +1612,7 @@ def _apply_paper_fill(
                         "client_fill_id": fill_id, "reason": problem,
                         "state": order["state"],
                         "live_execution": False, "broker_order_submitted": False,
+                        **instrument_fields,
                     })
                     error = problem
                 else:
@@ -1606,6 +1660,7 @@ def _apply_paper_fill(
                                 "quantity": qty_s, "price": px_s, "state": target,
                                 "symbol": order["symbol"], "side": order["side"], "fee": fee_s,
                                 "live_execution": False, "broker_order_submitted": False,
+                                **instrument_fields,
                                 **({"depth_origin": {"plan_id": depth_plan["receipt"]["plan_id"],
                                     "book_sha256": depth_plan["receipt"]["book_sha256"]}}
                                    if depth_plan else {}),
@@ -1743,6 +1798,13 @@ def mark_to_market(marks: Any, *, observed_at: object, now: object) -> dict[str,
     parsed: dict[str, Decimal] = {}
     for symbol, price in marks.items():
         parsed[_normalize_symbol(symbol)] = _number(price, positive=True)
+    as_of = observed_at if isinstance(observed_at, str) else None
+    decisions: dict[str, dict[str, Any]] = {}
+    for symbol, price in parsed.items():
+        decision = instrument_decision(symbol, price=price, as_of=as_of)
+        if not decision["ok"]:
+            raise ValueError(decision["reason"])
+        decisions[symbol] = decision
     with _lock:
         conn = _connect()
         try:
@@ -1771,6 +1833,10 @@ def mark_to_market(marks: Any, *, observed_at: object, now: object) -> dict[str,
             _append_audit(conn, "mark_to_market", None, {
                 "marks": {symbol: _canonical(price) for symbol, price in sorted(parsed.items())},
                 "observed_at": observed,
+                "instrument_master_version": next(iter(decisions.values()))["catalog_version"],
+                "instrument_versions": {
+                    symbol: decisions[symbol]["instrument_version"] for symbol in sorted(decisions)
+                },
                 "live_execution": False, "broker_order_submitted": False,
             })
             _assert_ready(conn)
