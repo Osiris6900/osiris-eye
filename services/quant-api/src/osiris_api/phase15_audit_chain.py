@@ -1,7 +1,10 @@
 """Phase 15 tamper-evident audit-chain primitives.
 
-This module verifies caller-supplied evidence. It is not a durable audit store,
-a signature system, or proof that an actor was authenticated.
+``build_audit_chain`` verifies caller-supplied evidence. It is not a durable
+audit store, a signature system, or proof that an actor was authenticated.
+Those flags stay false. Server-stamped records and the fail-closed verifier
+live in ``audit_evidence`` and the phase 16 store. A caller-supplied chain is
+``unverifiable`` there, never ``ok``.
 """
 from __future__ import annotations
 
