@@ -43,7 +43,7 @@ def traffic_window_errors(data: dict) -> list[str]:
     start, restart, recovered = boundaries
     duration = workload.get("duration_seconds")
     if (not isinstance(duration, (int, float)) or isinstance(duration, bool)
-            or not math.isfinite(duration) or not 0 < duration <= 86400):
+            or not 0 < duration <= 86400):
         return errors + ["traffic_on_observation_duration_invalid"]
     cutoff = math.ceil(duration * 1000) + 2
     if recovered > cutoff:
@@ -82,7 +82,7 @@ def traffic_window_errors(data: dict) -> list[str]:
             if (count < 1 or type(received) is not int or not published <= received <= cutoff
                     or not isinstance(item.get("latency_ms"), (int, float))
                     or isinstance(item.get("latency_ms"), bool)
-                    or not 0 <= item["latency_ms"] < float("inf")):
+                    or not 0 <= item["latency_ms"] <= cutoff + 2):
                 errors.append("traffic_on_delivery_invalid")
                 break
             if abs((received - published) - item["latency_ms"]) > 1.001:
@@ -179,7 +179,11 @@ def validate(data: object, *, commit: str, run_url: str, attempt: int, policy: d
             if not isinstance(host, dict):
                 errors.append("host_record_invalid")
                 continue
-            ids.add(host.get("host_id"))
+            host_id = host.get("host_id")
+            if isinstance(host_id, str):
+                ids.add(host_id)
+            else:
+                errors.append("host_record_invalid")
             digest = host.get("host_fingerprint_commitment")
             if not isinstance(digest, str) or not _SHA256.fullmatch(digest):
                 errors.append("host_commitment_invalid")
@@ -224,7 +228,7 @@ def validate(data: object, *, commit: str, run_url: str, attempt: int, policy: d
     policy_result = None
     try:
         policy_result = check(data, policy)
-    except (ValueError, TypeError, KeyError) as exc:
+    except (ValueError, TypeError, KeyError, OverflowError) as exc:
         errors.append("load_policy_shape_invalid:" + str(exc))
     if policy_result is None or policy_result["status"] != "pass":
         errors.append("predeclared_load_policy_not_met")
@@ -270,7 +274,7 @@ def main() -> int:
         result = validate(data, commit=args.commit, run_url=args.run_url,
                           attempt=args.attempt, policy=policy)
         result["raw_report_sha256"] = hashlib.sha256(data_bytes).hexdigest()
-    except (ValueError, OSError, TypeError) as exc:
+    except (ValueError, OSError, TypeError, RecursionError) as exc:
         result = {
             "schema": "osiris.p2p_sustained_offline_review.v1",
             "passed_offline_consistency": False,

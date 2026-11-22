@@ -4,7 +4,11 @@ from __future__ import annotations
 import copy
 import hashlib
 import math
+import subprocess
+import sys
+import tempfile
 import unittest
+from pathlib import Path
 
 from check_p2p_sustained_evidence import validate
 from test_check_p2p_load_acceptance import POLICY, evidence
@@ -94,6 +98,39 @@ def review(data, *, commit=SHA, url=URL, attempt=1):
 
 
 class SustainedCapacityReviewTests(unittest.TestCase):
+    def test_unhashable_host_id_returns_structured_failure(self):
+        data = report()
+        data['hosts'][0]['host_id'] = []
+        result = review(data)
+        self.assertFalse(result['passed_offline_consistency'])
+        self.assertIn('host_record_invalid', result['errors'])
+
+    def test_oversized_numeric_evidence_returns_structured_failure(self):
+        data = traffic_report()
+        data['workload']['duration_seconds'] = 10 ** 400
+        result = review(data)
+        self.assertFalse(result['passed_offline_consistency'])
+        self.assertIn('traffic_on_observation_duration_invalid', result['errors'])
+        self.assertIn('predeclared_load_policy_not_met', result['errors'])
+
+        data = traffic_report()
+        data['delivery_records'][0]['latency_ms'] = 10 ** 400
+        self.assertIn('traffic_on_delivery_invalid', review(data)['errors'])
+
+    def test_deeply_nested_report_writes_failed_cli_verdict(self):
+        checker = Path(__file__).with_name('check_p2p_sustained_evidence.py')
+        with tempfile.TemporaryDirectory() as directory:
+            raw = Path(directory) / 'report.json'
+            output = Path(directory) / 'verdict.json'
+            raw.write_text('[' * 10000 + '0' + ']' * 10000, encoding='utf-8')
+            result = subprocess.run(
+                [sys.executable, str(checker), '--report', str(raw), '--commit', SHA,
+                 '--run-url', URL, '--attempt', '1', '--output', str(output)],
+                capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(result.returncode, 1)
+            self.assertIn('cannot_read_or_parse_report', output.read_text(encoding='utf-8'))
+
     def test_requested_runtime_is_consistent_across_all_hosts(self):
         for count in (None, 1, 2, 4):
             data = report()
