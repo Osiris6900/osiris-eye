@@ -242,6 +242,39 @@ class StreamingFeedGate:
             raise FeedRejected("feed not entitled")
         self._touch((provider, instrument_id), self._utc(now, "now"))
 
+    def seed_cursor(
+        self,
+        *,
+        provider: str,
+        instrument_id: str,
+        sequence: int,
+        event_time: datetime,
+        price: str,
+        gap_open: bool,
+    ) -> None:
+        """Restore a persisted cursor so the next ingest or resync is checked.
+
+        This does not accept a price. Freshness, entitlement and ordering are
+        enforced by :meth:`ingest` and :meth:`resync` on the following tick.
+        """
+        if instrument_id not in self._entitlements.get(provider, frozenset()):
+            raise FeedRejected("feed not entitled")
+        if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 0:
+            raise FeedRejected("invalid sequence")
+        try:
+            parsed_price = Decimal(price)
+        except (InvalidOperation, ValueError, TypeError):
+            raise FeedRejected("invalid price") from None
+        if not parsed_price.is_finite() or parsed_price <= 0:
+            raise FeedRejected("price must be finite and positive")
+        event = self._utc(event_time, "event_time")
+        key = (provider, instrument_id)
+        self._last[key] = (sequence, event, event, parsed_price)
+        if gap_open:
+            self._gapped.add(key)
+        else:
+            self._gapped.discard(key)
+
     def latest_sequence(self, provider: str, instrument_id: str) -> int | None:
         previous = self._last.get((provider, instrument_id))
         return None if previous is None else previous[0]
