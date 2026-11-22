@@ -312,7 +312,9 @@ DEFAULT_IDENTITY_DB_PATH = "./data/osiris-p2p.sqlite3"
 PEER_NODE_LIST_LIMIT = 50
 OPEN_POSITION_LIMIT = 50
 PAPER_ORDER_LIMIT = 20
-_ORDER_STATES = frozenset({"accepted", "partially_filled", "filled", "cancelled", "rejected"})
+_ORDER_STATES = frozenset({
+    "accepted", "partially_filled", "filled", "cancelled", "rejected", "expired",
+})
 _OPEN_ORDER_STATES = frozenset({"accepted", "partially_filled"})
 _ORDER_SIDES = frozenset({"BUY", "SELL"})
 _ORDER_ID_TEXT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")

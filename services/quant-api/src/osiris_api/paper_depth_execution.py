@@ -94,6 +94,8 @@ def replay_depth_state(conn):
                 fills[payload["client_fill_id"]] = (key, payload)
         elif event == "order_cancelled":
             state["orders"][key].update(state="cancelled", leaves=Fraction(0))
+        elif event == "order_expired":
+            state["orders"][key].update(state="expired", leaves=Fraction(0))
         elif event == "depth_snapshot_admitted":
             book, policy = payload["book"], payload["policy"]
             if policy != _policy(policy["participation_bps"], policy["min_latency_ms"], policy["max_age_ms"]):
