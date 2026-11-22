@@ -22,6 +22,12 @@ from typing import Any
 from fastapi import APIRouter, Body, HTTPException
 
 from .decimal_safety import bounded_decimal, validate_decimal_bounds
+from .paper_event_bus import (
+    PaperEventBus,
+    dispatch_committed,
+    stage_journal_event,
+    take_pending,
+)
 from .risk import RiskLimits, check_execution
 
 # There is no branch that submits a broker order. A true value still refuses.
@@ -81,20 +87,20 @@ def _audit_live_refusal() -> None:
             conn.row_factory = sqlite3.Row
             conn.execute("BEGIN IMMEDIATE")
             if conn.execute("SELECT 1 FROM paper_exec_meta WHERE id=1").fetchone() is None:
-                conn.rollback()
+                _rollback(conn)
                 return
             _verify_audit(conn)
             if _reconcile_breaks(conn):
-                conn.rollback()
+                _rollback(conn)
                 return
             _append_audit(conn, "live_execution_refused", None, {
                 "live_execution": False, "broker_order_submitted": False,
             })
-            conn.commit()
+            _commit(conn)
         except Exception:
             if conn is not None:
                 try:
-                    conn.rollback()
+                    _rollback(conn)
                 except sqlite3.Error:
                     pass
         finally:
@@ -321,7 +327,21 @@ def _append_audit(
            VALUES (?,?,?,?,?,?)""",
         (seq, client_order_id, event, encoded, prev, digest),
     )
+    stage_journal_event(conn, seq, event, client_order_id, payload)
     return seq, digest
+
+
+def _commit(conn: sqlite3.Connection) -> None:
+    """Commit the journal and its bus rows together, then wake live readers."""
+    pending = take_pending(conn)
+    conn.commit()
+    if pending:
+        dispatch_committed(_database(), pending)
+
+
+def _rollback(conn: sqlite3.Connection) -> None:
+    take_pending(conn)
+    conn.rollback()
 
 
 def _verify_audit(conn: sqlite3.Connection) -> None:
@@ -962,7 +982,7 @@ def execution_context(
                 "mode": "paper_only",
             }
         finally:
-            conn.rollback()
+            _rollback(conn)
             conn.close()
 
 
@@ -1125,9 +1145,9 @@ def initialize_paper_account(
                 "risk_policy": {field: stored_policy[field] for field in _JOURNAL_POLICY_FIELDS},
             })
             _assert_ready(conn)
-            conn.commit()
+            _commit(conn)
         except Exception:
-            conn.rollback()
+            _rollback(conn)
             raise
         finally:
             conn.close()
@@ -1147,9 +1167,9 @@ def set_kill_switch(active: object) -> dict[str, Any]:
                 "active": active is True, "live_execution": False,
             })
             _assert_ready(conn)
-            conn.commit()
+            _commit(conn)
         except Exception:
-            conn.rollback()
+            _rollback(conn)
             raise
         finally:
             conn.close()
@@ -1291,7 +1311,7 @@ def _submit_new_order(
     _assert_ready(conn)
     if simulate_crash:
         raise RuntimeError("simulated_crash_before_commit")
-    conn.commit()
+    _commit(conn)
     stored = conn.execute(
         "SELECT * FROM paper_exec_orders WHERE client_order_id=?", (key,)
     ).fetchone()
@@ -1367,7 +1387,7 @@ def submit_paper_order(
                     "broker_order_submitted": False,
                 })
                 _assert_ready(conn)
-                conn.commit()
+                _commit(conn)
                 if not same:
                     conflict = True
                 else:
@@ -1384,7 +1404,7 @@ def submit_paper_order(
                     origin_reference=origin_reference,
                 )
         except Exception:
-            conn.rollback()
+            _rollback(conn)
             raise
         finally:
             conn.close()
@@ -1418,7 +1438,7 @@ def _allocated_fee(order_fee: Decimal, leaves: Decimal, fill_qty: Decimal, charg
 def _reject_fill(conn: sqlite3.Connection, key: str, event: str, payload: dict[str, Any]) -> None:
     _append_audit(conn, event, key, payload)
     _assert_ready(conn)
-    conn.commit()
+    _commit(conn)
 
 
 def apply_paper_fill(
@@ -1479,7 +1499,7 @@ def _apply_paper_fill(
                     _assert_ready(conn)
                     if simulate_crash:
                         raise RuntimeError("simulated_crash_before_commit")
-                    conn.commit()
+                    _commit(conn)
                     return {**_public(order, stored_fill, replay=depth_plan["replayed"]),
                             "depth": receipt, "execution_authorized": False}
                 fill_qty = _number(receipt["quantity"], positive=True)
@@ -1507,7 +1527,7 @@ def _apply_paper_fill(
                     "broker_order_submitted": False,
                 })
                 _assert_ready(conn)
-                conn.commit()
+                _commit(conn)
                 if same:
                     result = _public(order, existing, replay=True)
                 else:
@@ -1629,7 +1649,7 @@ def _apply_paper_fill(
                             _assert_ready(conn)
                             if simulate_crash:
                                 raise RuntimeError("simulated_crash_before_commit")
-                            conn.commit()
+                            _commit(conn)
                             stored = conn.execute(
                                 "SELECT * FROM paper_exec_orders WHERE client_order_id=?", (key,)
                             ).fetchone()
@@ -1640,7 +1660,7 @@ def _apply_paper_fill(
                             if depth_plan is not None:
                                 result.update(depth=depth_plan["receipt"], execution_authorized=False)
         except Exception:
-            conn.rollback()
+            _rollback(conn)
             raise
         finally:
             conn.close()
@@ -1679,7 +1699,7 @@ def cancel_paper_order(
                     "live_execution": False, "broker_order_submitted": False,
                 })
                 _assert_ready(conn)
-                conn.commit()
+                _commit(conn)
                 result = _public(order, _latest_fill(conn, key), replay=True)
             else:
                 try:
@@ -1690,7 +1710,7 @@ def cancel_paper_order(
                         "live_execution": False, "broker_order_submitted": False,
                     })
                     _assert_ready(conn)
-                    conn.commit()
+                    _commit(conn)
                     error = "invalid_order_transition"
                 else:
                     conn.execute(
@@ -1707,13 +1727,13 @@ def cancel_paper_order(
                     _assert_ready(conn)
                     if simulate_crash:
                         raise RuntimeError("simulated_crash_before_commit")
-                    conn.commit()
+                    _commit(conn)
                     stored = conn.execute(
                         "SELECT * FROM paper_exec_orders WHERE client_order_id=?", (key,)
                     ).fetchone()
                     result = _public(stored, _latest_fill(conn, key), replay=False)
         except Exception:
-            conn.rollback()
+            _rollback(conn)
             raise
         finally:
             conn.close()
@@ -1774,12 +1794,12 @@ def mark_to_market(marks: Any, *, observed_at: object, now: object) -> dict[str,
                 "live_execution": False, "broker_order_submitted": False,
             })
             _assert_ready(conn)
-            conn.commit()
+            _commit(conn)
             unrealized = conn.execute(
                 "SELECT unrealized_pnl FROM paper_exec_meta WHERE id=1"
             ).fetchone()["unrealized_pnl"]
         except Exception:
-            conn.rollback()
+            _rollback(conn)
             raise
         finally:
             conn.close()
@@ -1879,7 +1899,7 @@ def reconciliation_report(*, record_mismatch: bool = False) -> dict[str, Any]:
             conn.execute("BEGIN IMMEDIATE")
             account = conn.execute("SELECT * FROM paper_exec_meta WHERE id=1").fetchone()
             if account is None:
-                conn.rollback()
+                _rollback(conn)
                 return {
                     "initialized": False, "passed": False, "breaks": ["account_not_initialized"],
                     "mismatches": [{
@@ -1892,7 +1912,7 @@ def reconciliation_report(*, record_mismatch: bool = False) -> dict[str, Any]:
             try:
                 _verify_audit(conn)
             except ValueError:
-                conn.rollback()
+                _rollback(conn)
                 return {
                     "initialized": True, "passed": False, "breaks": ["audit_chain_corrupt"],
                     "mismatches": [{
@@ -1919,12 +1939,12 @@ def reconciliation_report(*, record_mismatch: bool = False) -> dict[str, Any]:
                     or last["payload"] != encoded
                 ):
                     _append_audit(conn, "reconciliation_mismatch", None, payload)
-                conn.commit()
+                _commit(conn)
             else:
-                conn.rollback()
+                _rollback(conn)
             return report
         except Exception:
-            conn.rollback()
+            _rollback(conn)
             raise
         finally:
             conn.close()
@@ -2530,3 +2550,49 @@ def api_reconcile():
 @router.post("/paper/execution/recover")
 def api_recover():
     return _guard(recover)
+
+
+def _event_bus() -> PaperEventBus:
+    return PaperEventBus(_database())
+
+
+def event_bus_status() -> dict[str, Any]:
+    return _event_bus().health()
+
+
+def pull_bus_events(stream: str, consumer: str, limit: int = 100) -> dict[str, Any]:
+    return _event_bus().pull(consumer, stream, limit=limit)
+
+
+def replay_bus_events(
+    stream: str, consumer: str, from_seq: int = 0, limit: int = 100,
+) -> dict[str, Any]:
+    return _event_bus().replay(consumer, stream, from_seq=from_seq, limit=limit)
+
+
+def ack_bus_events(stream: str, consumer_id: Any, seq: Any) -> dict[str, Any]:
+    if type(seq) is not int:
+        raise ValueError("invalid_sequence")
+    if not isinstance(consumer_id, str):
+        raise ValueError("invalid_consumer_id")
+    return _event_bus().ack(consumer_id, stream, seq)
+
+
+@router.get("/paper/execution/event-bus")
+def api_event_bus():
+    return _guard(event_bus_status)
+
+
+@router.get("/paper/execution/events/{stream}")
+def api_bus_pull(stream: str, consumer: str, limit: int = 100):
+    return _guard(pull_bus_events, stream, consumer, limit)
+
+
+@router.get("/paper/execution/events/{stream}/replay")
+def api_bus_replay(stream: str, consumer: str, from_seq: int = 0, limit: int = 100):
+    return _guard(replay_bus_events, stream, consumer, from_seq, limit)
+
+
+@router.post("/paper/execution/events/{stream}/ack")
+def api_bus_ack(stream: str, p: dict = Body(...)):
+    return _guard(ack_bus_events, stream, p.get("consumer_id"), p.get("seq"))
