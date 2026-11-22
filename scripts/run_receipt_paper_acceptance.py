@@ -26,6 +26,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from osiris_api import paper_execution as execution
 from osiris_api.admin_centre import paper_status
 from osiris_api.data_store import ResearchStore
+from osiris_api.instrument_master import InstrumentMasterStore
 from osiris_api.paper_receipt_execution import execute_receipted_observation
 from osiris_api.receipt_gated_retry import AdmissionDecision, ReceiptRetryScheduler
 from osiris_api.recipient_receipt_ledger import RecipientReceiptLedger
@@ -103,10 +104,21 @@ def run() -> dict:
         nodes = Nodes(binary, directory)
         environment = {
             "OSIRIS_PAPER_EXECUTION_DB": str(directory / "paper.db"),
+            "OSIRIS_INSTRUMENT_DB_PATH": str(directory / "instruments.db"),
+            "OSIRIS_INSTRUMENT_FIXTURE": str(
+                ROOT / "services/quant-api/src/osiris_api/instrument_master_fixture.json"
+            ),
             "OSIRIS_P2P_INGEST_ENABLED": "1",
             "OSIRIS_RECEIPT_PAPER_ENABLED": "1",
         }
         with patch.dict(os.environ, environment):
+            # Reuse the catalog's explicit research fixture. A verified receipt
+            # does not make an unregistered instrument tradable.
+            instrument = "TEST"
+            catalog = InstrumentMasterStore(environment["OSIRIS_INSTRUMENT_DB_PATH"])
+            catalog.ensure_seeded()
+            instrument_provenance = catalog.assess(instrument, price="100", quantity="2")
+            require(instrument_provenance["ok"], "research_instrument_not_tradable")
             execution.initialize_paper_account("1000")
             try:
                 recipients = directory / "recipients.txt"
@@ -202,14 +214,14 @@ def run() -> dict:
                     )
                     observation = {
                         "schema": "osiris.observation.v1",
-                        "instrument": "PAPER-TEST",
+                        "instrument": instrument,
                         "provider": provider,
                         "observed_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
                         "payload": raw,
                         "payload_sha256": hashlib.sha256(raw.encode()).hexdigest(),
                     }
                     key = ":".join(
-                        (provider, "PAPER-TEST", observation["payload_sha256"])
+                        (provider, instrument, observation["payload_sha256"])
                     )
                     scheduler.schedule(observation, recipient, now=int(now.timestamp()))
                     outcomes = scheduler.advance(
@@ -241,7 +253,7 @@ def run() -> dict:
                                 "entitlement_reference": "no-vendor-rights-claimed",
                                 "redistribution_rights": "permitted",
                                 "availability_timestamps_required": True,
-                                "instruments": ["PAPER-TEST"],
+                                "instruments": [instrument],
                                 "quality_review": {
                                     "status": "passed",
                                     "reviewer": "synthetic-fixture-only",
@@ -434,6 +446,14 @@ def run() -> dict:
                 else:
                     raise RuntimeError("revocation_bypassed")
                 canonical = execution.snapshot()
+                for row in canonical["audit"]:
+                    if row["event"] in {"order_decided", "fill_recorded", "mark_to_market"}:
+                        payload = json.loads(row["payload"])
+                        require(
+                            payload.get("instrument_master_version")
+                            == instrument_provenance["catalog_version"],
+                            "receipt_instrument_catalog_provenance_mismatch",
+                        )
                 require(
                     canonical["fill_count"] == 2 and execution.reconcile()["passed"],
                     "final_reconciliation_failed",
@@ -469,6 +489,7 @@ def run() -> dict:
         "final_account": canonical,
         "scope": "two-local-rust-nodes-and-independent-local-python-processes",
         "synthetic_market_and_strategy": True,
+        "instrument_provenance": instrument_provenance,
         "kernel_credentials_checked": True,
         "independent_hosts_verified": False,
         "independent_review_verified": False,

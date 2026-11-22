@@ -5,13 +5,17 @@ import json
 import os
 import socket
 import struct
+import subprocess
+import sys
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
 from osiris_api import paper_execution as execution
 from osiris_api.control_plane.database import digest
 from osiris_api.data_store import ResearchStore
+from osiris_api.instrument_master import InstrumentMasterStore, instrument_db_path
 from osiris_api.paper_receipt_execution import execute_receipted_observation
 from osiris_api.receipt_gated_retry import AdmissionDecision, ReceiptRetryScheduler
 from osiris_api.recipient_receipt_ledger import RecipientReceiptLedger
@@ -22,7 +26,7 @@ from osiris_api.verified_receipt_unix import receive_verified_receipt
 NOW = datetime(2026, 11, 12, 19, 0, tzinfo=UTC)
 
 
-def acknowledge(consumer, event):
+def acknowledge(consumer, event, *, now=NOW):
     left, right = socket.socketpair()
     try:
         raw = json.dumps(event).encode()
@@ -32,7 +36,7 @@ def acknowledge(consumer, event):
             consumer,
             expected_rust_pid=os.getpid(),
             expected_rust_uid=os.getuid(),
-            now=int(NOW.timestamp()),
+            now=int(now.timestamp()),
         )
     finally:
         left.close()
@@ -40,8 +44,13 @@ def acknowledge(consumer, event):
 
 
 @pytest.fixture
-def flow(tmp_path, monkeypatch):
+def flow(tmp_path, monkeypatch, request):
+    configuration = getattr(request, "param", {})
+    symbol = configuration.get("symbol", "TEST")
+    now = datetime.now(UTC) if configuration.get("wall_clock") else NOW
     monkeypatch.setenv("OSIRIS_PAPER_EXECUTION_DB", str(tmp_path / "execution.db"))
+    monkeypatch.setenv("OSIRIS_INSTRUMENT_DB_PATH", str(tmp_path / "instruments.db"))
+    monkeypatch.delenv("OSIRIS_INSTRUMENT_FIXTURE", raising=False)
     monkeypatch.setenv("OSIRIS_P2P_INGEST_ENABLED", "1")
     monkeypatch.setenv("OSIRIS_RECEIPT_PAPER_ENABLED", "1")
     monkeypatch.delenv("OSIRIS_ENABLE_LIVE_EXECUTION", raising=False)
@@ -52,15 +61,15 @@ def flow(tmp_path, monkeypatch):
     raw = json.dumps({"last": "100", "source_mode": "synthetic"})
     observation = {
         "schema": "osiris.observation.v1",
-        "instrument": "TEST",
+        "instrument": symbol,
         "provider": "synthetic-fixture",
-        "observed_at": NOW.isoformat(),
+        "observed_at": now.isoformat(),
         "payload": raw,
         "payload_sha256": hashlib.sha256(raw.encode()).hexdigest(),
     }
-    key = ":".join((observation["provider"], "TEST", observation["payload_sha256"]))
+    key = ":".join((observation["provider"], symbol, observation["payload_sha256"]))
     policy = AdmissionDecision({"recipient"}, set())
-    assert scheduler.schedule(observation, "recipient", now=int(NOW.timestamp()))
+    assert scheduler.schedule(observation, "recipient", now=int(now.timestamp()))
     scheduler.advance(
         publish=lambda *_: {
             "status": "tracked",
@@ -69,7 +78,7 @@ def flow(tmp_path, monkeypatch):
         },
         allowed_providers={"synthetic-fixture"},
         policy=policy,
-        now=int(NOW.timestamp()),
+        now=int(now.timestamp()),
     )
     event = {
         "schema": VERIFIED_EVENT_SCHEMA,
@@ -79,7 +88,7 @@ def flow(tmp_path, monkeypatch):
         "recipient_peer_id": "recipient",
         "message_id": "message",
         "envelope_sha256": "a" * 64,
-        "accepted_at": int(NOW.timestamp()),
+        "accepted_at": int(now.timestamp()),
     }
     args = {
         "observation_key": key,
@@ -92,18 +101,18 @@ def flow(tmp_path, monkeypatch):
         "quantity": "1",
         "fee": "1",
         "risk_service_available": True,
-        "now": NOW,
+        "now": now,
         "feed_policy": {
             "synthetic-fixture": {
                 "authorized_source": "disposable-fixture-only",
                 "entitlement_reference": "synthetic-only",
                 "redistribution_rights": "permitted",
                 "availability_timestamps_required": True,
-                "instruments": ["TEST"],
+                "instruments": [symbol],
                 "quality_review": {
                     "status": "passed",
                     "reviewer": "fixture",
-                    "reviewed_at": NOW.isoformat(),
+                    "reviewed_at": now.isoformat(),
                 },
             }
         },
@@ -114,12 +123,12 @@ def flow(tmp_path, monkeypatch):
 
 def ready(flow):
     scheduler, consumer, _store, event, args = flow
-    assert acknowledge(consumer, event) == "applied"
+    assert acknowledge(consumer, event, now=args["now"]) == "applied"
     scheduler.advance(
         publish=lambda *_: pytest.fail("republished acknowledged observation"),
         allowed_providers=args["allowed_providers"],
         policy=args["policy"],
-        now=int(NOW.timestamp()),
+        now=int(args["now"].timestamp()),
     )
 
 
@@ -157,6 +166,72 @@ def test_receipt_to_risk_fill_reconciliation_and_restart(flow):
     assert replay["replayed"] is True
     assert replay["order"]["risk_decision_id"] == first["order"]["risk_decision_id"]
     assert execution.snapshot()["fill_count"] == 1
+
+
+@pytest.mark.parametrize(
+    "flow", [{"symbol": "TEST", "wall_clock": True},
+             {"symbol": "PAPER-TEST", "wall_clock": True}], indirect=True,
+)
+def test_acceptance_child_preserves_instrument_gate_across_crash_and_recovery(flow, tmp_path):
+    """Exercise the CI child entrypoint with registered and formerly used fixtures."""
+    ready(flow)
+    scheduler, consumer, store, _event, args = flow
+    child_input = tmp_path / "child.json"
+    child_input.write_text(json.dumps({
+        "ledger": consumer.ledger.path,
+        "scheduler": scheduler.path,
+        "research": store.database_path,
+        "sender": "sender",
+        "trusted": ["recipient"],
+        "arguments": {
+            **args, "quantity": "2", "policy": None,
+            "allowed_providers": list(args["allowed_providers"]), "now": None,
+            "source_mode": "synthetic",
+        },
+    }))
+    script = Path(__file__).resolve().parents[3] / "scripts/run_receipt_paper_acceptance.py"
+    command = [sys.executable, str(script), "--child", str(child_input)]
+    crashed = subprocess.run(
+        [*command, "--crash-after-order"], capture_output=True, text=True, timeout=30,
+    )
+    symbol = args["observation_key"].split(":")[1]
+    if symbol == "PAPER-TEST":
+        # Keep the original failing fixture unknown: never widen the catalog
+        # or bypass its gate to make the receipt acceptance pass.
+        assert crashed.returncode == 1
+        assert "unknown_instrument" in crashed.stderr
+        assert execution.snapshot()["fill_count"] == 0
+        assert execution.snapshot()["marks"] == []
+        assert execution.snapshot()["cash"] == "1000"
+        return
+
+    assert crashed.returncode == 73, crashed.stderr
+    assert execution.snapshot()["fill_count"] == 1
+    recovered = subprocess.run(command, capture_output=True, text=True, timeout=30)
+    assert recovered.returncode == 0, recovered.stderr
+    result = json.loads(recovered.stdout)
+    assert result["replayed"] is True
+    assert result["account"]["cash"] == "799"
+    assert result["account"]["unrealized_pnl"] == "-1"
+    assert result["reconciliation"]["passed"] is True
+    assert execution.snapshot()["fill_count"] == 1
+    catalog = InstrumentMasterStore(instrument_db_path())
+    provenance = catalog.assess(symbol, price="100", quantity="2")
+    assert provenance["ok"] is True
+    assert result["order"]["symbol"] == symbol
+    events = {
+        row["event"]: json.loads(row["payload"])
+        for row in execution.snapshot()["audit"]
+        if row["event"] in {"order_decided", "fill_recorded", "mark_to_market"}
+    }
+    assert set(events) == {"order_decided", "fill_recorded", "mark_to_market"}
+    assert all(row["instrument_master_version"] == provenance["catalog_version"]
+               for row in events.values())
+    assert events["order_decided"]["instrument_id"] == provenance["instrument_id"]
+    assert events["fill_recorded"]["instrument_version"] == provenance["instrument_version"]
+    assert events["mark_to_market"]["instrument_versions"] == {
+        symbol: provenance["instrument_version"],
+    }
 
 
 @pytest.mark.parametrize("control", ["kill", "risk-down", "revoked", "rights", "stale", "future"])
