@@ -1257,7 +1257,40 @@ def operations_status(
         "live_trading_authorized": False,
         "nodes": _operations_nodes(network if isinstance(network, Mapping) else None, generated),
         "paper_trading": trading,
+        "event_bus": _event_bus_view() if paper_allowed else _event_bus_denied(),
     }
+
+
+def _event_bus_denied() -> dict[str, Any]:
+    return {
+        "schema": "osiris.paper_event_bus.v1",
+        "available": False,
+        "reason": "permission_denied",
+        "streams": [],
+        "consumers": [],
+        "live_execution": False,
+        "live_trading_authorized": False,
+        "broker_order_submitted": False,
+    }
+
+
+def _event_bus_view() -> dict[str, Any]:
+    """Lag per consumer. A missing ledger stays unavailable and is not created."""
+    try:
+        from .paper_event_bus import health_if_configured
+
+        return health_if_configured()
+    except (OSError, sqlite3.Error, ValueError):
+        return {
+            "schema": "osiris.paper_event_bus.v1",
+            "available": False,
+            "reason": "event_bus_unavailable",
+            "streams": [],
+            "consumers": [],
+            "live_execution": False,
+            "live_trading_authorized": False,
+            "broker_order_submitted": False,
+        }
 
 
 def _hidden_exposure(status: str = "unavailable_without_marks") -> dict[str, Any]:
