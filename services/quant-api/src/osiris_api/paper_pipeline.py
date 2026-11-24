@@ -231,7 +231,14 @@ def run_paper_pipeline(
             observed_at=observed.isoformat(), now=decision_time.isoformat(),
         )
     execution.mark_to_market(
-        {symbol: price}, observed_at=observed.isoformat(), now=decision_time.isoformat(),
+        {symbol: {
+            "price": price,
+            "source": provider,
+            "event_time": observed.isoformat(),
+            "received_time": decision_time.isoformat(),
+        }},
+        observed_at=observed.isoformat(),
+        now=decision_time.isoformat(),
     )
     result = _account_result({
         "pipeline_run_id": run_id, "schema": "osiris.paper_pipeline.v1",
