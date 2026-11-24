@@ -309,6 +309,9 @@ def test_approved_workflow_submits_one_paper_fill(db):
 
 
 def test_http_routes_stay_paper_only(db):
+    from datetime import datetime
+    from osiris_api.control_plane.clock import TrustedClock, install_runtime_clock
+    install_runtime_clock(TrustedClock(lambda: datetime.fromisoformat(NOW), source_id="osiris.test"))
     client = TestClient(app)
     opened = client.post("/paper/execution/initialize", json={
         "initial_cash": "1000",
@@ -319,14 +322,14 @@ def test_http_routes_stay_paper_only(db):
     assert opened.json()["live_execution"] is False
     live = client.post("/paper/execution/orders", json={
         "client_order_id": "live-1", "symbol": "BTC", "side": "BUY",
-        "quantity": "1", "price": "100", "observed_at": FRESH, "now": NOW,
+        "quantity": "1", "price": "100", "observed_at": FRESH,
         "live_execution": True,
     })
     assert live.status_code == 422
     assert live.json()["detail"] == "live_execution_disabled"
     filled = client.post("/paper/execution/orders", json={
         "client_order_id": "http-1", "symbol": "BTC", "side": "BUY",
-        "quantity": "1", "price": "100", "observed_at": FRESH, "now": NOW,
+        "quantity": "1", "price": "100", "observed_at": FRESH,
     })
     assert filled.status_code == 200
     assert filled.json()["status"] == "filled"
@@ -335,7 +338,7 @@ def test_http_routes_stay_paper_only(db):
     assert halted.status_code == 200
     blocked = client.post("/paper/execution/orders", json={
         "client_order_id": "http-2", "symbol": "BTC", "side": "BUY",
-        "quantity": "1", "price": "10", "observed_at": FRESH, "now": NOW,
+        "quantity": "1", "price": "10", "observed_at": FRESH,
     })
     assert blocked.json()["reason"] == "kill_switch_active"
     snap = client.get("/paper/execution/snapshot")

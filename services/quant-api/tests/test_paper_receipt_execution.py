@@ -280,6 +280,8 @@ def test_origin_is_bound_to_canonical_audit_and_cannot_change_on_replay(flow):
 
 
 def test_http_order_submission_cannot_set_internal_origin_reference(flow):
+    from osiris_api.control_plane.clock import TrustedClock, install_runtime_clock
+    install_runtime_clock(TrustedClock(lambda: NOW, source_id="osiris.test"))
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
@@ -295,7 +297,6 @@ def test_http_order_submission_cannot_set_internal_origin_reference(flow):
             "price": "100",
             "origin_reference": "a" * 64,
             "observed_at": NOW.isoformat(),
-            "now": NOW.isoformat(),
         },
     )
     assert response.status_code == 200

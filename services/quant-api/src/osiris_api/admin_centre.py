@@ -1250,11 +1250,13 @@ def operations_status(
             "daily_loss_gate": _daily_loss_view("permission_denied"),
             "live_trading_authorized": False,
         }
+    from .control_plane.clock import current_clock_health
     return {
         "schema": OPERATIONS_SCHEMA,
         "generated_at": generated,
         "read_only": True,
         "live_trading_authorized": False,
+        "clock_health": current_clock_health(),
         "nodes": _operations_nodes(network if isinstance(network, Mapping) else None, generated),
         "paper_trading": trading,
     }
