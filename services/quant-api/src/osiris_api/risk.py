@@ -103,6 +103,8 @@ def check_execution(
     kill_switch_active: object = True,
     market_data_fresh: object = False,
     risk_service_available: object = False,
+    symbol: object = None,
+    as_of: object = None,
 ) -> tuple[bool, str, bool]:
     """Paper-only execution gate. Never authorizes a live broker order.
 
@@ -117,6 +119,16 @@ def check_execution(
     )
     if not clear:
         return False, gate, False
+    if symbol is not None:
+        # Imported here so the numeric gate can stay importable without the catalog.
+        from .instrument_master import assess_order
+
+        decision = assess_order(
+            symbol, price=price, quantity=quantity,
+            as_of=as_of if isinstance(as_of, str) else None,
+        )
+        if not decision["ok"]:
+            return False, decision["reason"], False
 
     if any(
         not _is_finite_number(value)

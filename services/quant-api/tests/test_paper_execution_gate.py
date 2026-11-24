@@ -15,6 +15,7 @@ BASE = PaperOrderContext(
     feed_authenticated=True,
     feed_entitled=True,
     kill_switch_active=False,
+    symbol="BTC",
 )
 
 

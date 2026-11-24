@@ -74,6 +74,7 @@ def evaluate_paper_workflow(
                 kill_switch_active=kill_switch_active,
                 market_data_fresh=market_data_fresh,
                 risk_service_available=risk_service_available,
+                symbol=normalized_symbol,
             )
     else:
         # A former permissive research-only branch could approve a paper order
