@@ -173,7 +173,7 @@ def test_connection_options(request: Request, response: Response, payload: dict 
     db = database()
     principal(request, db, "operations")
     if set(payload) != {"expected_version"}:
-        raise HTTPException(422, "invalid_connection_test_request")
+        raise HTTPException(422, "invalid_connection_request")
     try:
         result = Connections(db).test_broker(**payload)
     except ValueError as error:
@@ -257,9 +257,24 @@ def market_regime_view(
     return dashboard_response(run(regime_diagnostic, history), request, response)
 
 
+@router.get("/market/regime/oos")
+def market_regime_oos_view(
+    request: Request, response: Response,
+    provider: str = Query(..., min_length=1, max_length=64),
+    symbol: str = Query(..., min_length=1, max_length=64),
+    start: str = Query(..., min_length=20, max_length=64),
+    end: str = Query(..., min_length=20, max_length=64),
+    asset_class: str = Query(..., min_length=1, max_length=32),
+):
+    from .market_views import regime_oos
+
+    history = dashboard_bars(request, response, provider, symbol, start, end, asset_class)
+    return dashboard_response(run(regime_oos, history), request, response)
+
+
 @router.post("/backtest/simulate")
 def simulate_backtest(request: Request, payload: dict = Body(...)):
-    from .agents import execute_tool
+    from ..agents import execute_tool
 
     db = database()
     principal(request, db, "research-read")
@@ -343,7 +358,7 @@ def login(request: Request, response: Response, payload: dict = Body(...)):
         payload.get("code"),
         actor["config_digest"],
     )
-    return {"session_token": token, "authorization_scheme": "Session", "expires_seconds": 900}
+    return {"session_token": token, "authorization_scheme": "Session", "expires_in": 900}
 
 
 @router.post("/auth/logout")
@@ -352,7 +367,7 @@ def logout(request: Request):
     actor = principal(request, db)
     header = request.headers.get("authorization", "")
     if not header.startswith("Session "):
-        raise HTTPException(401, "session_required")
+        raise HTTPException(403, "session_required")
     run(identities(db).logout, header[8:], actor["config_digest"])
     return {"revoked": True}
 
@@ -374,7 +389,7 @@ def agent_request(request: Request, payload: dict = Body(...)):
 @router.post("/agents/{request_id}/approve")
 def agent_approve(request_id: str, request: Request):
     db = database()
-    actor = principal(request, db, "review")
+    principal(request, db, "review")
     return run(ResearchAgents(db).approve, request_id, actor["actor"], actor["role"])
 
 
@@ -412,9 +427,7 @@ def finish(job_id: str, request: Request, payload: dict = Body(...)):
 def acquire(request: Request, payload: dict = Body(...)):
     db = database()
     actor = principal(request, db, "operations")
-    return run(
-        Coordinator(db).acquire, payload.get("name"), actor["actor"], ttl=payload.get("ttl", 30)
-    )
+    return {"lease": run(Coordinator(db).acquire, payload.get("name"), actor["actor"], ttl=payload.get("ttl", 30))}
 
 
 @router.post("/leases/write")
