@@ -124,7 +124,7 @@ def dashboard(request: Request, response: Response):
     from ..paper_pipeline_status import get_paper_pipeline_status
 
     db = database()
-    actor = principal(request, db)
+    principal(request, db)
     network = admin_centre.network_status(
         outbox_counts=_outbox_counts(), identity_registry=_identity_registry(),
     )
@@ -488,6 +488,46 @@ def get_feature_snapshot(snapshot_id: str, request: Request):
     return snapshot
 
 
+@router.post("/model-drift/evaluate")
+def evaluate_model_drift(request: Request, payload: dict = Body(...)):
+    from .drift import ModelDriftMonitor
+
+    db = database()
+    actor = principal(request, db, "research")
+    if set(payload) != {"id", "payload"}:
+        raise HTTPException(422, "invalid_model_drift_envelope")
+    return run(
+        ModelDriftMonitor(db).evaluate,
+        payload["id"],
+        actor["actor"],
+        payload["payload"],
+    )
+
+
+@router.get("/model-drift/reports/{report_id}")
+def get_model_drift_report(report_id: str, request: Request):
+    from .drift import ModelDriftMonitor
+
+    db = database()
+    principal(request, db, "research-read")
+    report = run(ModelDriftMonitor(db).get, report_id)
+    if report is None:
+        raise HTTPException(404, "model_drift_report_not_found")
+    return report
+
+
+@router.get("/model-drift/quarantines/{model_id}")
+def get_model_quarantine(model_id: str, request: Request):
+    from .drift import ModelDriftMonitor
+
+    db = database()
+    principal(request, db, "research-read")
+    quarantine = run(ModelDriftMonitor(db).quarantine, model_id)
+    if quarantine is None:
+        raise HTTPException(404, "model_quarantine_not_found")
+    return quarantine
+
+
 @router.post("/models/{model_id}/predict")
 def predict(model_id: str, request: Request, payload: dict = Body(...)):
     db = database()
@@ -622,7 +662,7 @@ def tag_order(order_id: str, request: Request, payload: dict = Body(...)):
     from .accounting import AttributionService
 
     db = database()
-    principal(request, db, "research")
+    actor = principal(request, db, "research")
     run(
         AttributionService(db).tag_order,
         order_id,
