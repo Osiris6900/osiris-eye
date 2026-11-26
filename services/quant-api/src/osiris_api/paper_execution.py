@@ -1,9 +1,10 @@
 """Durable paper execution. Live broker routing is disabled and not configurable.
 
 Orders are risk-gated, idempotent, and stored in SQLite. A working order can
-fill in parts. Each move follows the paper state machine. A crash before commit
-leaves the previous state in place. Restart reads the same cash, positions,
-P&L, and audit chain. This is a simulation ledger, not a production trading system.
+fill in parts until its day session ends. Each move follows the paper state
+machine. A crash before commit leaves the previous state in place. Restart
+reads the same cash, positions, P&L, and audit chain. This is a simulation
+ledger, not a production trading system.
 """
 from __future__ import annotations
 
@@ -12,7 +13,7 @@ import json
 import math
 import os
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, time, timedelta, timezone
 from decimal import Context, Decimal, Inexact, InvalidOperation, localcontext
 from fractions import Fraction
 from pathlib import Path
@@ -60,8 +61,9 @@ LIVE_EXECUTION_ENABLED = False
 DAILY_LOSS_BASIS = "realized_plus_adverse_unrealized"
 
 # Paper-only lifecycle. "new" is transient and is never stored.
+# Resting orders are day orders. "expired" is terminal and cannot fill again.
 ORDER_STATES = (
-    "new", "accepted", "partially_filled", "filled", "cancelled", "rejected",
+    "new", "accepted", "partially_filled", "filled", "cancelled", "rejected", "expired",
 )
 OPEN_ORDER_STATES = frozenset({"accepted", "partially_filled"})
 JOURNAL_SCHEMA = "osiris.paper_order_journal.v2"
@@ -72,11 +74,12 @@ _JOURNAL_POLICY_FIELDS = (
 )
 _ORDER_TRANSITIONS = {
     "new": frozenset({"accepted", "rejected"}),
-    "accepted": frozenset({"partially_filled", "filled", "cancelled"}),
-    "partially_filled": frozenset({"partially_filled", "filled", "cancelled"}),
+    "accepted": frozenset({"partially_filled", "filled", "cancelled", "expired"}),
+    "partially_filled": frozenset({"partially_filled", "filled", "cancelled", "expired"}),
     "filled": frozenset(),
     "cancelled": frozenset(),
     "rejected": frozenset(),
+    "expired": frozenset(),
 }
 
 router = APIRouter()
@@ -230,7 +233,8 @@ def _connect() -> sqlite3.Connection:
         status TEXT NOT NULL, reason TEXT NOT NULL, limits_evaluated INTEGER NOT NULL,
         risk_decision_id TEXT NOT NULL, created_at TEXT NOT NULL,
         state TEXT NOT NULL, filled_quantity TEXT NOT NULL, leaves_quantity TEXT NOT NULL,
-        execution_mode TEXT NOT NULL)""")
+        execution_mode TEXT NOT NULL, time_in_force TEXT NOT NULL DEFAULT 'day',
+        expires_at TEXT NOT NULL DEFAULT '', venue TEXT NOT NULL DEFAULT '')""")
     conn.execute("""CREATE TABLE IF NOT EXISTS paper_exec_fills (
         seq INTEGER PRIMARY KEY, client_order_id TEXT NOT NULL,
         client_fill_id TEXT NOT NULL UNIQUE,
@@ -263,6 +267,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
         ("filled_quantity", "filled_quantity TEXT NOT NULL DEFAULT '0'"),
         ("leaves_quantity", "leaves_quantity TEXT NOT NULL DEFAULT '0'"),
         ("execution_mode", "execution_mode TEXT NOT NULL DEFAULT 'immediate'"),
+        ("time_in_force", "time_in_force TEXT NOT NULL DEFAULT 'day'"),
+        ("expires_at", "expires_at TEXT NOT NULL DEFAULT ''"),
+        ("venue", "venue TEXT NOT NULL DEFAULT ''"),
     ):
         if name not in orders:
             conn.execute(f"ALTER TABLE paper_exec_orders ADD COLUMN {ddl}")
@@ -304,6 +311,127 @@ def _parse_time(value: object) -> datetime | None:
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         return None
     return parsed.astimezone(timezone.utc)
+
+
+def _column(row: sqlite3.Row, name: str, default: str) -> str:
+    return row[name] if name in row.keys() else default
+
+
+def _normalize_time_in_force(value: object) -> str:
+    """Canonical paper orders are day orders, the same rule as the paper broker.
+
+    GTC does not fit this book: nothing here keeps a resting order alive across
+    sessions, and the paper broker adapter rejects any time in force but day.
+    """
+    if value is None:
+        return "day"
+    if not isinstance(value, str) or value.strip().lower() != "day":
+        raise ValueError("invalid_time_in_force")
+    return "day"
+
+
+def _normalize_venue(value: object) -> str:
+    if value is None or value == "":
+        return ""
+    if not isinstance(value, str):
+        raise ValueError("invalid_venue")
+    venue = value.strip().upper()
+    if not venue or len(venue) > 64:
+        raise ValueError("invalid_venue")
+    return venue
+
+
+def _utc_day_end(instant: datetime) -> datetime:
+    """First instant of the next UTC date. A day order is not fillable then."""
+    day = instant.astimezone(timezone.utc).date()
+    return datetime.combine(day + timedelta(days=1), time.min, tzinfo=timezone.utc)
+
+
+def _clock_text(now: object) -> str:
+    parsed = _parse_time(now)
+    if parsed is None:
+        raise ValueError("decision_clock_required")
+    return parsed.isoformat()
+
+
+def _day_session_expiry(now: object, venue: str) -> tuple[str, str | None]:
+    """Deadline for a resting day order, or a reason it cannot rest.
+
+    A venue uses the exchange-calendar session that contains the decision
+    clock. Without a venue, the deadline is the next UTC midnight of that
+    same clock. The deadline is fixed at accept time.
+    """
+    instant = _parse_time(now)
+    if instant is None:
+        return "", "decision_clock_required"
+    if not venue:
+        return _utc_day_end(instant).isoformat(), None
+    from .exchange_calendar import ExchangeCalendarStore
+    try:
+        status = ExchangeCalendarStore().status(
+            venue, instant.isoformat(), as_of=instant.isoformat(),
+        )
+    except (ValueError, OSError, sqlite3.Error):
+        return "", "calendar_data_unavailable"
+    if status.get("is_open") is True:
+        close_text = status.get("session_close")
+        close = _parse_time(close_text) if isinstance(close_text, str) else None
+        if close is not None and close > instant:
+            return close_text, None
+    if status.get("calendar_data_available") is True:
+        return "", "session_not_open"
+    return "", "calendar_data_unavailable"
+
+
+def _order_expiry_deadline(order: sqlite3.Row) -> datetime | None:
+    stored = _parse_time(_column(order, "expires_at", ""))
+    if stored is not None:
+        return stored
+    if _column(order, "time_in_force", "day") != "day" or order["execution_mode"] != "working":
+        return None
+    created = _parse_time(order["created_at"])
+    if created is None:
+        return None
+    return _utc_day_end(created)
+
+
+def _resting_day_expired(order: sqlite3.Row, now: object) -> bool:
+    if order["state"] not in OPEN_ORDER_STATES:
+        return False
+    current = _parse_time(now)
+    deadline = _order_expiry_deadline(order)
+    if current is None or deadline is None:
+        return False
+    return current >= deadline
+
+
+def _expire_open_order(conn: sqlite3.Connection, order: sqlite3.Row, *, as_of: str) -> None:
+    """Move one open day order to expired and drop its reserved remainder."""
+    order_transition(order["state"], "expired")
+    conn.execute(
+        """UPDATE paper_exec_orders
+           SET status='expired', state='expired', leaves_quantity='0'
+           WHERE client_order_id=?""",
+        (order["client_order_id"],),
+    )
+    _append_audit(conn, "order_expired", order["client_order_id"], {
+        "filled_quantity": order["filled_quantity"],
+        "released_quantity": order["leaves_quantity"],
+        "time_in_force": _column(order, "time_in_force", "day"),
+        "expires_at": _column(order, "expires_at", ""),
+        "as_of": as_of,
+        "live_execution": False,
+        "broker_order_submitted": False,
+    })
+
+
+def _expire_if_due(conn: sqlite3.Connection, order: sqlite3.Row, now: object) -> bool:
+    if order["state"] == "expired":
+        return True
+    if not _resting_day_expired(order, now):
+        return False
+    _expire_open_order(conn, order, as_of=_clock_text(now))
+    return True
 
 
 def _limits_from_row(row: sqlite3.Row) -> RiskLimits:
@@ -633,6 +761,8 @@ def _order_breaks(conn: sqlite3.Connection) -> list[str]:
         actual = filled_by_order.get(key, Decimal("0"))
         if state not in ORDER_STATES or state == "new":
             breaks.append(f"order_state:{key}")
+        if _column(order, "time_in_force", "day") != "day":
+            breaks.append(f"time_in_force:{key}")
         if actual != filled:
             breaks.append(f"filled_quantity:{key}")
         if fee_by_order.get(key, Decimal("0")) > Decimal(order["fee"]):
@@ -650,6 +780,8 @@ def _order_breaks(conn: sqlite3.Connection) -> list[str]:
             breaks.append(f"filled_residue:{key}")
         elif state == "cancelled" and (leaves != 0 or filled > qty):
             breaks.append(f"cancelled_residue:{key}")
+        elif state == "expired" and (leaves != 0 or filled >= qty):
+            breaks.append(f"expired_residue:{key}")
         if order["execution_mode"] not in ("immediate", "working"):
             breaks.append(f"execution_mode:{key}")
         for fill in conn.execute(
@@ -750,6 +882,9 @@ def _journal_projection_breaks(conn: sqlite3.Connection) -> list[str]:
                         "reason", "execution_mode", "created_at",
                     )
                 }
+                for field in ("time_in_force", "expires_at", "venue"):
+                    if field in payload:
+                        orders[key][field] = payload[field]
                 orders[key].update({
                     "risk_decision_id": row["row_hash"],
                     "limits_evaluated": int(payload["limits_evaluated"] is True),
@@ -801,6 +936,14 @@ def _journal_projection_breaks(conn: sqlite3.Connection) -> list[str]:
                     raise ValueError("journal_cancel_quantity_mismatch")
                 order_transition(order["state"], "cancelled")
                 order.update({"state": "cancelled", "status": "cancelled", "leaves_quantity": "0"})
+            elif event == "order_expired":
+                order = orders[key]
+                if payload["filled_quantity"] != order["filled_quantity"] or (
+                    payload["released_quantity"] != order["leaves_quantity"]
+                ):
+                    raise ValueError("journal_expire_quantity_mismatch")
+                order_transition(order["state"], "expired")
+                order.update({"state": "expired", "status": "expired", "leaves_quantity": "0"})
             elif event == "mark_to_market":
                 for symbol, price in payload["marks"].items():
                     marks[symbol] = {"symbol": symbol, "price": price, "observed_at": payload["observed_at"]}
@@ -864,6 +1007,9 @@ def _public(order: sqlite3.Row, fill: sqlite3.Row | None, *, replay: bool) -> di
         "filled_quantity": order["filled_quantity"],
         "leaves_quantity": order["leaves_quantity"],
         "execution_mode": order["execution_mode"],
+        "time_in_force": _column(order, "time_in_force", "day"),
+        "expires_at": _column(order, "expires_at", ""),
+        "venue": _column(order, "venue", ""),
         "reason": order["reason"],
         "limits_evaluated": bool(order["limits_evaluated"]),
         "risk_decision_id": order["risk_decision_id"],
@@ -1213,8 +1359,10 @@ def _submit_new_order(
     conn: sqlite3.Connection, *, key: str, symbol: str, side: str,
     qty: Decimal, px: Decimal, cost: Decimal, qty_s: str, px_s: str, fee_s: str,
     observed_at: object, now: object, risk_service_available: object,
-    kill_switch_active: object, working: bool, simulate_crash: bool,
+    kill_switch_active: object,     working: bool, simulate_crash: bool,
     origin_reference: str | None = None,
+    time_in_force: str = "day",
+    venue: str = "",
 ) -> dict[str, Any]:
     account = conn.execute("SELECT * FROM paper_exec_meta WHERE id=1").fetchone()
     effective_kill = bool(account["kill_switch"]) or kill_switch_active is not False
@@ -1260,6 +1408,7 @@ def _submit_new_order(
     realized_delta = Decimal("0")
     filled_quantity = Decimal("0")
     leaves_quantity = Decimal("0")
+    expires_at = ""
     execution_mode = "working" if working else "immediate"
     if not approved:
         status = "instrument_rejected" if reason in _INSTRUMENT_REASONS else "risk_rejected"
@@ -1279,9 +1428,16 @@ def _submit_new_order(
             reason = _execution_reject(side, qty, px, cost, held)
             state = order_transition("new", "rejected")
         elif working:
-            status = "accepted"
-            state = order_transition("new", "accepted")
-            leaves_quantity = qty
+            deadline, session_reason = _day_session_expiry(now, venue)
+            if session_reason is not None:
+                status = "execution_rejected"
+                reason = session_reason
+                state = order_transition("new", "rejected")
+            else:
+                expires_at = deadline
+                status = "accepted"
+                state = order_transition("new", "accepted")
+                leaves_quantity = qty
         else:
             applied = _persist_application(conn, account, symbol, side, qty, px, cost)
             if applied is None:
@@ -1299,6 +1455,7 @@ def _submit_new_order(
         "state": state, "execution_mode": execution_mode,
         "symbol": symbol, "side": side, "quantity": qty_s, "price": px_s, "fee": fee_s,
         "created_at": now if isinstance(now, str) else "",
+        "time_in_force": time_in_force, "expires_at": expires_at, "venue": venue,
         "live_execution": False, "broker_order_submitted": False,
         **instrument_fields,
     }
@@ -1324,11 +1481,12 @@ def _submit_new_order(
         """INSERT INTO paper_exec_orders(
             client_order_id, symbol, side, quantity, price, fee, status, reason,
             limits_evaluated, risk_decision_id, created_at, state, filled_quantity,
-            leaves_quantity, execution_mode)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            leaves_quantity, execution_mode, time_in_force, expires_at, venue)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (key, symbol, side, qty_s, px_s, fee_s, status, reason,
          1 if limits_evaluated else 0, digest, created, state,
-         _canonical(filled_quantity), _canonical(leaves_quantity), execution_mode),
+         _canonical(filled_quantity), _canonical(leaves_quantity), execution_mode,
+         time_in_force, expires_at, venue),
     )
     _assert_ready(conn)
     if simulate_crash:
@@ -1358,8 +1516,12 @@ def submit_paper_order(
     working: bool = False,
     simulate_crash: bool = False,
     origin_reference: str | None = None,
+    time_in_force: object = None,
+    venue: object = None,
 ) -> dict[str, Any]:
     _refuse_live(live_execution)
+    tif = _normalize_time_in_force(time_in_force)
+    bound_venue = _normalize_venue(venue)
     if origin_reference is not None and (
         not isinstance(origin_reference, str) or len(origin_reference) != 64
         or any(char not in "0123456789abcdef" for char in origin_reference)
@@ -1401,7 +1563,8 @@ def submit_paper_order(
                 same = (
                     prior["symbol"], prior["side"], prior["quantity"], prior["price"], prior["fee"],
                     prior["execution_mode"],
-                ) == (normalized_symbol, normalized_side, qty_s, px_s, fee_s, mode)
+                    _column(prior, "time_in_force", "day"), _column(prior, "venue", ""),
+                ) == (normalized_symbol, normalized_side, qty_s, px_s, fee_s, mode, tif, bound_venue)
                 same = same and _order_origin_reference(conn, prior) == origin_reference
                 event = "idempotent_replay" if same else "idempotency_conflict"
                 _append_audit(conn, event, key, {
@@ -1426,6 +1589,8 @@ def submit_paper_order(
                     working=working is True,
                     simulate_crash=simulate_crash,
                     origin_reference=origin_reference,
+                    time_in_force=tif,
+                    venue=bound_venue,
                 )
         except Exception:
             conn.rollback()
@@ -1599,7 +1764,9 @@ def _apply_paper_fill(
                     problem = "kill_switch_active"
                 if problem is None and not _fresh(account, observed_at, now):
                     problem = "stale_market_data"
-                if order["state"] not in OPEN_ORDER_STATES:
+                if _expire_if_due(conn, order, now):
+                    problem = "order_expired"
+                elif order["state"] not in OPEN_ORDER_STATES:
                     problem = "invalid_order_transition"
                 if problem is None:
                     problem = _fill_risk_reason(conn, account, order, fill_qty, fill_px, now)
@@ -1610,7 +1777,7 @@ def _apply_paper_fill(
                     )
                     _reject_fill(conn, key, event, {
                         "client_fill_id": fill_id, "reason": problem,
-                        "state": order["state"],
+                        "state": "expired" if problem == "order_expired" else order["state"],
                         "live_execution": False, "broker_order_submitted": False,
                         **instrument_fields,
                     })
@@ -1711,8 +1878,13 @@ def cancel_paper_order(
     client_order_id: Any,
     live_execution: object = False,
     simulate_crash: bool = False,
+    now: object = None,
 ) -> dict[str, Any]:
-    """Cancel the remainder of an open paper order. A second cancel replays."""
+    """Cancel the remainder of an open paper order. A second cancel replays.
+
+    ``now`` is the decision clock. A day order whose session has already ended
+    expires instead, and the cancel is refused.
+    """
     _refuse_live(live_execution)
     key = _text_id(client_order_id, "invalid_client_order_id")
     error: str | None = None
@@ -1736,6 +1908,14 @@ def cancel_paper_order(
                 _assert_ready(conn)
                 conn.commit()
                 result = _public(order, _latest_fill(conn, key), replay=True)
+            elif _expire_if_due(conn, order, now):
+                _append_audit(conn, "cancel_rejected", key, {
+                    "from": "expired", "to": "cancelled", "reason": "order_expired",
+                    "live_execution": False, "broker_order_submitted": False,
+                })
+                _assert_ready(conn)
+                conn.commit()
+                error = "order_expired"
             else:
                 try:
                     order_transition(order["state"], "cancelled")
@@ -1777,6 +1957,45 @@ def cancel_paper_order(
     if result is None:
         raise RuntimeError("paper_cancel_result_missing")
     return result
+
+
+def expire_paper_orders(*, now: object = None, simulate_crash: bool = False) -> dict[str, Any]:
+    """Expire resting day orders whose session has ended at ``now``.
+
+    The clock is injected. A second call at the same instant writes nothing.
+    Partial fills stay on the order. The unfilled quantity is no longer
+    reserved cash or shares, and the order cannot fill or reopen.
+    """
+    _refuse_live(False)
+    as_of = _clock_text(now)
+    expired: list[str] = []
+    with _lock:
+        conn = _connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            _assert_ready(conn)
+            rows = conn.execute(
+                """SELECT * FROM paper_exec_orders
+                   WHERE state IN ('accepted', 'partially_filled')
+                   ORDER BY client_order_id"""
+            ).fetchall()
+            for order in rows:
+                if _resting_day_expired(order, as_of):
+                    _expire_open_order(conn, order, as_of=as_of)
+                    expired.append(order["client_order_id"])
+            _assert_ready(conn)
+            if simulate_crash:
+                raise RuntimeError("simulated_crash_before_commit")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+    return {
+        "expired": expired, "as_of": as_of, "live_execution": False,
+        "broker_order_submitted": False, "mode": "paper_only",
+    }
 
 
 def _normalize_symbol(symbol: Any) -> str:
@@ -1913,6 +2132,8 @@ def _build_reconciliation_report(conn: sqlite3.Connection, account: sqlite3.Row)
             "client_order_id": row["client_order_id"], "symbol": row["symbol"],
             "side": row["side"], "state": row["state"],
             "filled_quantity": row["filled_quantity"], "leaves_quantity": row["leaves_quantity"],
+            "time_in_force": _column(row, "time_in_force", "day"),
+            "expires_at": _column(row, "expires_at", ""),
         }
         for row in conn.execute(
             """SELECT * FROM paper_exec_orders
@@ -2038,6 +2259,8 @@ def _snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
                 "status": row["status"], "symbol": row["symbol"], "side": row["side"],
                 "quantity": row["quantity"], "filled_quantity": row["filled_quantity"],
                 "leaves_quantity": row["leaves_quantity"],
+                "time_in_force": _column(row, "time_in_force", "day"),
+                "expires_at": _column(row, "expires_at", ""),
             }
             for row in conn.execute("SELECT * FROM paper_exec_orders ORDER BY client_order_id")
         ],
@@ -2047,6 +2270,8 @@ def _snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
                 "symbol": row["symbol"], "side": row["side"], "state": row["state"],
                 "quantity": row["quantity"], "filled_quantity": row["filled_quantity"],
                 "leaves_quantity": row["leaves_quantity"], "price": row["price"],
+                "time_in_force": _column(row, "time_in_force", "day"),
+                "expires_at": _column(row, "expires_at", ""),
             }
             for row in conn.execute(
                 """SELECT * FROM paper_exec_orders
@@ -2532,6 +2757,8 @@ def api_submit(p: dict = Body(...)):
         kill_switch_active=p.get("kill_switch_active") is True,
         live_execution=p.get("live_execution") is True,
         working=p.get("working") is True,
+        time_in_force=p.get("time_in_force"),
+        venue=p.get("venue"),
     )
 
 
@@ -2561,6 +2788,12 @@ def api_reconciliation_report_record():
     return _guard(reconciliation_report, record_mismatch=True)
 
 
+@router.post("/paper/execution/orders/expire")
+def api_expire(p: dict | None = Body(default=None)):
+    payload = p or {}
+    return _guard(expire_paper_orders, now=payload.get("now"))
+
+
 @router.post("/paper/execution/orders/{client_order_id}/cancel")
 def api_cancel(client_order_id: str, p: dict | None = Body(default=None)):
     payload = p or {}
@@ -2568,6 +2801,7 @@ def api_cancel(client_order_id: str, p: dict | None = Body(default=None)):
         cancel_paper_order,
         client_order_id=client_order_id,
         live_execution=payload.get("live_execution") is True,
+        now=payload.get("now"),
     )
 
 
