@@ -241,6 +241,9 @@ def test_live_execution_stays_refused_when_the_loss_gate_would_block(db):
 
 
 def test_http_mark_down_rejection_stays_paper_only(db):
+    from datetime import datetime
+    from osiris_api.control_plane.clock import TrustedClock, install_runtime_clock
+    install_runtime_clock(TrustedClock(lambda: datetime.fromisoformat(NOW), source_id="osiris.test"))
     client = TestClient(app)
     opened = client.post("/paper/execution/initialize", json={
         "initial_cash": "1000",
@@ -250,17 +253,17 @@ def test_http_mark_down_rejection_stays_paper_only(db):
     assert opened.status_code == 200
     first = client.post("/paper/execution/orders", json={
         "client_order_id": "open", "symbol": "BTC", "side": "BUY",
-        "quantity": "2", "price": "100", "observed_at": NOW, "now": NOW,
+        "quantity": "2", "price": "100", "observed_at": NOW,
     })
     assert first.status_code == 200
     assert first.json()["status"] == "filled"
     marked = client.post("/paper/execution/marks", json={
-        "marks": {"BTC": "90"}, "observed_at": NOW, "now": NOW,
+        "marks": {"BTC": "90"}, "observed_at": NOW,
     })
     assert marked.status_code == 200
     blocked = client.post("/paper/execution/orders", json={
         "client_order_id": "add", "symbol": "BTC", "side": "BUY",
-        "quantity": "1", "price": "100", "observed_at": NOW, "now": NOW,
+        "quantity": "1", "price": "100", "observed_at": NOW,
     })
     assert blocked.status_code == 200
     body = blocked.json()
