@@ -15,7 +15,7 @@ from .phase5_backtesting import run_portfolio_backtest
 from .phase10_systems import (monitor_portfolio_risk, audit_vendor_failover, score_alpha_hypotheses, allocate_risk_budget, audit_agent_governance, analyze_execution_quality, simulate_systemic_stress, evaluate_strategy_approval)
 
 from .phase9_systems import audit_global_instruments, analyze_counterparty_risk, process_corporate_actions, estimate_portfolio_capacity, aggregate_derivatives_exposure, audit_financial_graph, simulate_disaster_recovery, benchmark_performance
-from .phase8_systems import audit_data_lineage, audit_backtest_integrity, portfolio_risk_governor, catalyst_impact_scenarios, observe_model_health, reconcile_paper_trades, audit_security_resilience, orchestrate_research_workflow
+from .phase8_systems import audit_data_lineage, audit_backtest_integrity, portfolio_risk_governor, catalyst_impact_scenarios, observe_model_health, audit_security_resilience, orchestrate_research_workflow
 from .phase7_market_intelligence import (cross_asset_alpha, options_flow_intelligence, liquidity_forecast, detect_market_anomalies, offline_rl_evaluation, trade_surveillance)
 from .phase6_intelligence import (walk_forward_validation, portfolio_risk_diagnostics as phase6_portfolio_risk_diagnostics, execution_intelligence, model_validation, macro_intelligence, rank_strategies)
 from .institutional_modules import portfolio_risk, options_surface_audit, cross_market_correlation, alternative_data_intake, agent_research_proposal, command_center_snapshot
@@ -315,7 +315,12 @@ def phase8_model_observability(p: dict[str, Any] = Body(...)):
 
 @app.post("/paper/trading/reconcile")
 def phase8_paper_reconciliation(p: dict[str, Any] = Body(...)):
-    return guarded(reconcile_paper_trades, p.get("orders", []), p.get("fills", []), p.get("positions", []))
+    from .paper_execution import reconcile_broker_book, reject_caller_supplied_book
+
+    rejected = reject_caller_supplied_book(p)
+    if rejected is not None:
+        return rejected
+    return guarded(reconcile_broker_book, now=p.get("now"))
 
 @app.post("/platform/security/resilience-audit")
 def phase8_security_resilience(p: dict[str, Any] = Body(...)):
@@ -680,15 +685,19 @@ def api_phase10_strategy_approval(p: dict[str, Any] = Body(...)):
 
 
 from .phase11_systems import (
-    reconcile_ledger, simulate_order_lifecycle, calibrate_transaction_costs,
+    simulate_order_lifecycle, calibrate_transaction_costs,
     options_greeks_risk, margin_funding_stress, plan_position_exit,
     evaluate_model_rollout, evaluate_kill_switch,
 )
 
 @app.post("/portfolio/ledger/reconcile")
 def api_phase11_ledger(p: dict[str, Any] = Body(...)):
-    return guarded(reconcile_ledger, p.get("positions", []), p.get("broker_positions", []),
-                   p.get("cash", 0), p.get("broker_cash", 0), p.get("tolerance", 1e-6))
+    from .paper_execution import reconcile_broker_book, reject_caller_supplied_book
+
+    rejected = reject_caller_supplied_book(p)
+    if rejected is not None:
+        return rejected
+    return guarded(reconcile_broker_book, now=p.get("now"))
 
 @app.post("/execution/orders/lifecycle-audit")
 def api_phase11_order_lifecycle(p: dict[str, Any] = Body(...)):
