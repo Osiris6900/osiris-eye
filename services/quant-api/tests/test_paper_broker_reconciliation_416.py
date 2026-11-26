@@ -18,6 +18,7 @@ from osiris_api.paper_execution import (
     apply_paper_fill,
     broker_book_digest,
     broker_reconciliation_history,
+    expire_paper_orders,
     initialize_paper_account,
     reconcile,
     reconcile_broker_book,
@@ -471,3 +472,25 @@ def test_routes_reject_caller_numbers_and_empty_body_uses_the_book(db, tmp_path,
     assert replay.status_code == 200
     assert replay.json()[0]["payload"]["status"] == "clean"
     assert replay.json()[0]["payload"]["live_trading_authorized"] is False
+
+
+def test_expired_partial_day_order_reconciles_released_reservation(db, tmp_path, monkeypatch):
+    """Expiry and independent reconciliation agree on fills and released cash."""
+    _init()
+    _working()
+    assert _fill(quantity="1")["state"] == "partially_filled"
+    expiry = "2026-11-09T00:00:00+00:00"
+    assert expire_paper_orders(now=expiry)["expired"] == ["buy-1"]
+    _write(tmp_path, monkeypatch, _book(
+        as_of=expiry, cash="900", buying_power="900",
+        positions=[{"symbol": "BTC", "quantity": "1"}],
+        fills=[{
+            "execution_id": "fill-1", "client_order_id": "buy-1", "symbol": "BTC",
+            "side": "BUY", "quantity": "1", "price": "100",
+        }],
+        open_orders=[],
+    ))
+    report = reconcile_broker_book(now=expiry)
+    assert report["status"] == "clean"
+    assert report["breaks"] == []
+    assert reconcile()["passed"] is True
