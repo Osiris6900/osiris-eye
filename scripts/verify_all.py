@@ -50,10 +50,13 @@ ENGINEERING_CHECKS = [
     ("python-tests", ["python", "-m", "pytest", "-q", "services/quant-api/tests", "tests/test_ultra_fast_feed.py", "--junitxml", "@artifacts@/python-tests.xml"], None),
     ("native-process", ["python", "scripts/test_native_feed_process.py"], None),
     ("peer-receipts", ["python", "scripts/test_p2p_delivery_receipts.py"], None),
+    ("outbound-recovery", ["python", "scripts/test_p2p_outbound_queue.py"], None),
+    ("soak-cleanup", ["python", "scripts/test_p2p_soak_cleanup.py"], None),
     ("receipt-paper", ["python", "scripts/run_receipt_paper_acceptance.py", "--output", "@artifacts@/receipt-paper/receipt-paper.json"], None),
     ("receipt-artifact-integrity", ["python", "scripts/verify_receipt_paper_artifact.py", "--artifact-dir", "@artifacts@/receipt-paper", "--commit", "@commit@"], None),
     ("market-paper", ["python", "scripts/run_market_paper_acceptance.py", "--output", "@artifacts@/market-paper.json"], None),
     ("local-paper-dr", ["python", "scripts/run_paper_dr_exercise.py", "--output-dir", "@artifacts@/paper-dr"], None),
+    ("local-paper-service-dr", ["python", "scripts/run_paper_service_dr_exercise.py", "--output-dir", "@artifacts@/paper-service-dr"], None),
     ("local-dr-integrity", ["python", "scripts/verify_paper_dr_artifacts.py", "@artifacts@/paper-dr"], None),
     ("portable-recovery", ["python", "-m", "unittest", "discover", "-s", "scripts", "-p", "test_check_paper_cross_runner_restore.py"], None),
     ("paper-failures", ["python", "-m", "unittest", "discover", "-s", "scripts", "-p", "test_run_paper_failure_exercise.py"], None),
@@ -71,11 +74,11 @@ WORKSTREAM_CHECKS = {
     "W03": ["python-tests", "frontend-tests", "frontend-build", "browser"],
     "W04": ["python-tests", "frontend-tests", "browser"], "W05": ["python-tests", "security-intake"],
     "W06": ["python-tests", "recovery-intakes"], "W07": ["python-tests"],
-    "W08": ["rust-p2p", "peer-receipts", "receipt-paper", "python-tests"], "W09": ["python-tests"],
+    "W08": ["rust-p2p", "peer-receipts", "outbound-recovery", "soak-cleanup", "receipt-paper", "python-tests"], "W09": ["python-tests"],
     "W10": ["python-tests"], "W11": ["python-tests"], "W12": ["python-tests"],
     "W13": ["python-tests", "market-paper", "paper-failures"], "W14": ["python-tests", "browser"],
     "W15": ["python-tests", "browser"], "W16": ["python-tests", "market-paper", "receipt-paper"],
-    "W17": ["python-tests"], "W18": ["python-tests", "recovery-intakes", "local-paper-dr", "local-dr-integrity", "portable-recovery"],
+    "W17": ["python-tests"], "W18": ["python-tests", "recovery-intakes", "local-paper-dr", "local-paper-service-dr", "local-dr-integrity", "portable-recovery"],
     "W19": ["python-tests", "security-intake"], "W20": ["rust-native", "native-process", "python-tests"],
 }
 
@@ -84,7 +87,7 @@ WORKSTREAM_CHECKS = {
 RELEASE_GATE_CHECKS = {
     "T01": ["release-inventory", "dependency-advisories", "python-lock", "license-provenance", "p2p-workflows", "supply-chain-sbom"],
     "T02": ["p2p-workflows"], "T03": ["rust-p2p", "peer-receipts"],
-    "T04": ["rust-p2p", "peer-receipts"], "T05": ["rust-p2p"],
+    "T04": ["rust-p2p", "peer-receipts", "outbound-recovery", "soak-cleanup"], "T05": ["rust-p2p"],
     "T06": ["security-intake"], "T07": ["python-tests", "vendor-intake"],
     "T08": ["python-tests"], "T09": ["vendor-intake"], "T10": ["python-tests"],
     "T11": ["python-tests", "model-archive"], "T12": ["python-tests", "model-archive"],
@@ -93,8 +96,8 @@ RELEASE_GATE_CHECKS = {
     "T15": ["python-tests", "market-paper", "receipt-paper", "receipt-artifact-integrity"],
     "T16": ["python-tests", "paper-failures", "receipt-paper", "receipt-artifact-integrity"],
     "T17": ["browser", "peer-receipts", "python-tests"],
-    "T18": ["local-paper-dr", "local-dr-integrity", "portable-recovery", "recovery-intakes"],
-    "T19": ["receipt-paper", "receipt-artifact-integrity", "market-paper", "peer-receipts", "paper-failures"],
+    "T18": ["local-paper-dr", "local-paper-service-dr", "local-dr-integrity", "portable-recovery", "recovery-intakes"],
+    "T19": ["receipt-paper", "receipt-artifact-integrity", "market-paper", "peer-receipts", "outbound-recovery", "soak-cleanup", "paper-failures"],
     "T20": ["release-inventory", "release-evidence-contracts", "security-intake", "vendor-intake"],
 }
 

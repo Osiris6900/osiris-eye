@@ -9,12 +9,14 @@ mod announcement;
 
 use revocation::{apply_synced_revocation, RevocationRegistry, RevocationSyncMessage, SyncedRevocation};
 use rejection_log::RejectionLogThrottle;
-use e2ee::{create_key_binding, decrypt_for_recipient, encrypt_for_recipient, verify_key_binding, EncryptedEnvelope, KeyBindingRecord, TransportKeyPair};
+use e2ee::{create_key_binding, decrypt_for_recipient, verify_envelope_for_forwarding, verify_key_binding, EncryptedEnvelope, KeyBindingRecord, TransportKeyPair};
+#[cfg(test)]
+use e2ee::encrypt_for_recipient;
 use peer_auth::{deny_peer, is_peer_allowed, parse_revoked_peers, parse_trusted_peers, read_peer_setting, run_if_peer_allowed};
 use peer_cache::{CachedPeer, PeerCache};
 use peer_key_store::PeerKeyStore;
 use osiris_p2p_node::delivery_receipt::{
-    create_receipt, AdmissionPolicy, DeliveryReceipt, PendingReceipts, MAX_RECEIPT_BYTES, RECEIPT_TOPIC,
+    create_receipt, verify_receipt_for_forwarding, AdmissionPolicy, DeliveryReceipt, PendingReceipts, MAX_RECEIPT_BYTES, RECEIPT_TOPIC,
 };
 use osiris_p2p_node::verified_receipt_bridge::VerifiedReceiptBridge;
 use std::{collections::{HashMap, HashSet}, env, error::Error, fs::{self, OpenOptions}, io::{BufRead, BufReader as StdBufReader, Write}, net::SocketAddr, path::PathBuf, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
@@ -26,6 +28,9 @@ macro_rules! emit {
     }};
 }
 
+mod outbound_publish;
+
+use osiris_p2p_node::outbound_queue::{OutboundQueue, MAX_QUEUE_AGE_SECONDS};
 use futures::StreamExt;
 use libp2p::{
     allow_block_list, autonat, connection_limits, dcutr, gossipsub, identify, identity, relay, upnp,
@@ -252,6 +257,337 @@ fn admit_decrypted_observation(
         .map_err(EncryptedObservationError::Storage)? {
         true => Ok(observation),
         false => Err(EncryptedObservationError::Replay),
+    }
+}
+
+fn gossip_config() -> Result<gossipsub::Config, gossipsub::ConfigBuilderError> {
+    gossipsub::ConfigBuilder::default()
+        .heartbeat_interval(Duration::from_secs(1))
+        // A wide lazy-gossip cohort lets key announcements converge without
+        // requiring a full mesh. Application admission must precede forwarding.
+        .gossip_lazy(25)
+        .max_transmit_size(2 * 1024 * 1024)
+        .validation_mode(gossipsub::ValidationMode::Strict)
+        .validate_messages()
+        .build()
+}
+
+#[derive(Debug, PartialEq)]
+struct GossipRejection {
+    reason: &'static str,
+    detail: Option<&'static str>,
+}
+
+impl From<&'static str> for GossipRejection {
+    fn from(reason: &'static str) -> Self { Self { reason, detail: None } }
+}
+
+struct GossipAdmission<'a> {
+    local_peer: &'a PeerId,
+    trusted_peers: &'a Option<HashSet<PeerId>>,
+    revoked_peers: &'a Option<HashSet<PeerId>>,
+    peer_key_store: &'a PeerKeyStore,
+    revocation_registry: Option<&'a RevocationRegistry>,
+    e2ee_enabled: bool,
+    transport_key_epoch: u64,
+    transport_key: &'a TransportKeyPair,
+    max_observation_age: Option<u64>,
+    now: u64,
+}
+
+fn gossip_sender_binding(
+    admission: &GossipAdmission<'_>, source: &PeerId, minimum_epoch: u64,
+) -> Result<e2ee::VerifiedKeyBinding, GossipRejection> {
+    let record = admission.peer_key_store.get(&source.to_string())
+        .map_err(|_| "sender_key_store_unavailable")?
+        .ok_or("sender_key_binding_missing")?;
+    let binding = verify_key_binding(&record, admission.now, minimum_epoch)?;
+    if binding.peer_id != *source { return Err("sender_key_binding_mismatch".into()); }
+    Ok(binding)
+}
+
+fn valid_gossip_peer(value: &str) -> bool {
+    value.len() <= 128 && value.parse::<PeerId>()
+        .is_ok_and(|peer| peer.to_string() == value)
+}
+
+fn validate_revocation_gossip(
+    data: &[u8], source: &PeerId, registry: Option<&RevocationRegistry>,
+) -> Result<(), GossipRejection> {
+    let message: RevocationSyncMessage = serde_json::from_slice(data)
+        .map_err(|_| "invalid_revocation_message")?;
+    let valid_cursor = |cursor: &Option<String>| cursor.as_deref().is_none_or(valid_gossip_peer);
+    let valid_request = |request: &str| request.len() == 64
+        && request.bytes().all(|byte| byte.is_ascii_hexdigit());
+    let records = match &message {
+        RevocationSyncMessage::SyncRequest => return Ok(()),
+        RevocationSyncMessage::SyncRequestPage { after_peer_id } => {
+            return if valid_cursor(after_peer_id) { Ok(()) }
+                   else { Err("invalid_revocation_cursor".into()) };
+        }
+        RevocationSyncMessage::SyncRequestPageV2 { request_id, requester_peer_id, after_peer_id } => {
+            return if valid_request(request_id) && requester_peer_id == &source.to_string()
+                && valid_cursor(after_peer_id) { Ok(()) }
+                else { Err("invalid_revocation_request_binding".into()) };
+        }
+        RevocationSyncMessage::Record(record) => std::slice::from_ref(record),
+        RevocationSyncMessage::Snapshot(records) if records.len() <= 16_384 => records.as_slice(),
+        RevocationSyncMessage::SnapshotPage { records, next_cursor }
+            if records.len() <= REVOCATION_SYNC_PAGE_SIZE && valid_cursor(next_cursor) => records.as_slice(),
+        RevocationSyncMessage::SnapshotPageV2 {
+            request_id, requester_peer_id, responder_peer_id, records, next_cursor,
+        } if valid_request(request_id) && valid_gossip_peer(requester_peer_id)
+            && responder_peer_id == &source.to_string()
+            && records.len() <= REVOCATION_SYNC_PAGE_SIZE && valid_cursor(next_cursor) => records.as_slice(),
+        _ => return Err("invalid_revocation_page".into()),
+    };
+    let registry = registry.ok_or("revocation_authority_not_configured")?;
+    for record in records {
+        registry.verify_for_forwarding(record).map_err(|_| "invalid_revocation_record")?;
+    }
+    Ok(())
+}
+
+/// Validate before GossipSub can forward. Transit ciphertext has public
+/// signature/time checks only; its plaintext is validated by its recipient.
+/// Local receipt/paging correlation stays in the application handlers below.
+fn validate_gossip_for_forwarding(
+    message: &gossipsub::Message, propagation_source: &PeerId, admission: &GossipAdmission<'_>,
+) -> Result<(), GossipRejection> {
+    let source = message.source.as_ref().ok_or("signed_publisher_required")?;
+    if !is_peer_allowed(source, admission.trusted_peers, admission.revoked_peers)
+        || !is_peer_allowed(propagation_source, admission.trusted_peers, admission.revoked_peers) {
+        return Err("peer_not_allowed".into());
+    }
+    if message.data.len() > 2 * 1024 * 1024 { return Err("gossip_message_too_large".into()); }
+    match message.topic.as_str() {
+        TOPIC_NAME => {
+            if admission.e2ee_enabled { return Err("e2ee_required".into()); }
+            parse_observation(&message.data, admission.max_observation_age)?;
+        }
+        KEY_BINDING_TOPIC_NAME => {
+            let record: KeyBindingRecord = serde_json::from_slice(&message.data)
+                .map_err(|_| "invalid_key_binding_record")?;
+            let previous = admission.peer_key_store.get(&source.to_string())
+                .map_err(|_| "sender_key_store_unavailable")?;
+            let minimum_epoch = previous.as_ref().map_or(1, |record| record.key_epoch);
+            let verified = verify_key_binding(&record, admission.now, minimum_epoch)?;
+            if verified.peer_id != *source { return Err("key_binding_publisher_mismatch".into()); }
+            if let Some(previous) = previous.filter(|previous| previous.key_epoch == record.key_epoch) {
+                if previous.identity_public_key != record.identity_public_key
+                    || previous.transport_public_key != record.transport_public_key
+                    || previous.issued_at > record.issued_at {
+                    return Err("key_binding_conflict_or_rollback".into());
+                }
+            }
+        }
+        ENCRYPTED_TOPIC_NAME => {
+            let envelope: EncryptedEnvelope = serde_json::from_slice(&message.data)
+                .map_err(|_| "invalid_encrypted_envelope")?;
+            let binding = gossip_sender_binding(admission, source, envelope.sender_key_epoch)?;
+            verify_envelope_for_forwarding(&envelope, &binding, admission.now)?;
+            let recipient: PeerId = envelope.recipient_peer_id.parse()
+                .map_err(|_| "invalid_encrypted_recipient")?;
+            if admission.revoked_peers.as_ref().is_some_and(|peers| peers.contains(&recipient)) {
+                return Err("encrypted_recipient_revoked".into());
+            }
+            if recipient == *admission.local_peer {
+                if !admission.e2ee_enabled { return Err("local_e2ee_disabled".into()); }
+                let plaintext = decrypt_for_recipient(
+                    &envelope, &binding, admission.local_peer, admission.transport_key_epoch,
+                    admission.transport_key.private_key(), admission.now,
+                )?;
+                parse_observation(&plaintext, admission.max_observation_age)
+                    .map_err(|detail| GossipRejection { reason: "invalid_plaintext_observation", detail: Some(detail) })?;
+            }
+        }
+        RECEIPT_TOPIC => {
+            if message.data.len() > MAX_RECEIPT_BYTES { return Err("receipt_too_large".into()); }
+            let receipt: DeliveryReceipt = serde_json::from_slice(&message.data)
+                .map_err(|_| "invalid_receipt_json")?;
+            let binding = gossip_sender_binding(admission, source, 1)?;
+            verify_receipt_for_forwarding(&receipt, source, &binding.identity_public_key, admission.now)?;
+        }
+        REVOCATION_TOPIC_NAME => validate_revocation_gossip(
+            &message.data, source, admission.revocation_registry,
+        )?,
+        _ => return Err("unknown_gossip_topic".into()),
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod gossip_forwarding_tests {
+    use super::*;
+    use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
+
+    struct Fixture {
+        directory: PathBuf,
+        local: PeerId,
+        transport: TransportKeyPair,
+        sender: identity::Keypair,
+        store: PeerKeyStore,
+        trusted: Option<HashSet<PeerId>>,
+        revoked: Option<HashSet<PeerId>>,
+        now: u64,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            let directory = env::temp_dir().join(format!("osiris-gossip-gate-{}-{}",
+                std::process::id(), PeerId::random()));
+            fs::create_dir_all(&directory).unwrap();
+            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+            let sender = identity::Keypair::generate_ed25519();
+            let sender_transport = TransportKeyPair::generate();
+            let mut store = PeerKeyStore::open(directory.join("bindings.sqlite3")).unwrap();
+            let record = create_key_binding(&sender, &sender_transport.public_key, 1, now - 10, now + 600).unwrap();
+            store.upsert_verified(&record).unwrap();
+            Self { directory, local: PeerId::random(), transport: TransportKeyPair::generate(),
+                sender, store, trusted: None, revoked: None, now }
+        }
+
+        fn admission(&self) -> GossipAdmission<'_> {
+            GossipAdmission { local_peer: &self.local, trusted_peers: &self.trusted,
+                revoked_peers: &self.revoked, peer_key_store: &self.store,
+                revocation_registry: None, e2ee_enabled: false, transport_key_epoch: 1,
+                transport_key: &self.transport, max_observation_age: None, now: self.now }
+        }
+
+        fn source(&self) -> PeerId { PeerId::from(self.sender.public()) }
+
+        fn message(&self, topic: &str, data: Vec<u8>) -> gossipsub::Message {
+            gossipsub::Message { source: Some(self.source()), data, sequence_number: Some(1),
+                topic: gossipsub::IdentTopic::new(topic).hash() }
+        }
+
+        fn observation(&self) -> ObservationEnvelope {
+            ObservationEnvelope { schema: "osiris.observation.v1".into(), instrument: "GATE-TEST".into(),
+                provider: "synthetic-gate-test".into(), observed_at: "1970-01-01T00:00:00Z".into(),
+                payload: "payload".into(), payload_sha256: format!("{:x}", Sha256::digest(b"payload")) }
+        }
+
+        fn encrypted(&self, recipient: PeerId, plaintext: &[u8]) -> EncryptedEnvelope {
+            encrypt_for_recipient(&self.sender, 1, &recipient.to_string(), &self.transport.public_key,
+                1, plaintext, self.now - 1, self.now + 60).unwrap()
+        }
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) { let _ = fs::remove_dir_all(&self.directory); }
+    }
+
+    #[test]
+    fn actual_gossip_config_requires_manual_admission() {
+        assert!(gossip_config().unwrap().validate_messages());
+    }
+
+    #[test]
+    fn both_signed_publisher_and_forwarder_must_be_allowed() {
+        let mut fixture = Fixture::new();
+        let source = fixture.source();
+        let relay = PeerId::random();
+        let mut message = fixture.message(TOPIC_NAME, serde_json::to_vec(&fixture.observation()).unwrap());
+        fixture.trusted = Some(HashSet::from([source, relay]));
+        assert!(validate_gossip_for_forwarding(&message, &relay, &fixture.admission()).is_ok());
+        fixture.trusted = Some(HashSet::from([source]));
+        assert_eq!(validate_gossip_for_forwarding(&message, &relay, &fixture.admission()).unwrap_err().reason,
+            "peer_not_allowed");
+        fixture.trusted = Some(HashSet::from([relay]));
+        assert_eq!(validate_gossip_for_forwarding(&message, &relay, &fixture.admission()).unwrap_err().reason,
+            "peer_not_allowed");
+        fixture.trusted = Some(HashSet::from([source, relay]));
+        for revoked in [source, relay] {
+            fixture.revoked = Some(HashSet::from([revoked]));
+            assert_eq!(validate_gossip_for_forwarding(&message, &relay, &fixture.admission()).unwrap_err().reason,
+                "peer_not_allowed");
+        }
+        message.source = None;
+        assert_eq!(validate_gossip_for_forwarding(&message, &relay, &fixture.admission()).unwrap_err().reason,
+            "signed_publisher_required");
+    }
+
+    #[test]
+    fn malformed_stale_plaintext_and_plaintext_in_e2ee_mode_do_not_forward() {
+        let fixture = Fixture::new();
+        let mut observation = fixture.observation();
+        observation.payload_sha256 = "0".repeat(64);
+        let message = fixture.message(TOPIC_NAME, serde_json::to_vec(&observation).unwrap());
+        assert_eq!(validate_gossip_for_forwarding(&message, &fixture.source(), &fixture.admission()).unwrap_err().reason,
+            "payload_hash_mismatch");
+        let message = fixture.message(TOPIC_NAME, serde_json::to_vec(&fixture.observation()).unwrap());
+        let mut admission = fixture.admission();
+        admission.max_observation_age = Some(300);
+        assert_eq!(validate_gossip_for_forwarding(&message, &fixture.source(), &admission).unwrap_err().reason,
+            "stale_observation");
+        admission.e2ee_enabled = true;
+        assert_eq!(validate_gossip_for_forwarding(&message, &fixture.source(), &admission).unwrap_err().reason,
+            "e2ee_required");
+        let message = fixture.message("unknown/topic", b"{}".to_vec());
+        assert_eq!(validate_gossip_for_forwarding(&message, &fixture.source(), &admission).unwrap_err().reason,
+            "unknown_gossip_topic");
+    }
+
+    #[test]
+    fn opaque_ciphertext_can_relay_but_tampering_cannot() {
+        let fixture = Fixture::new();
+        // The relay cannot parse this inner value, and is not its recipient.
+        let mut envelope = fixture.encrypted(PeerId::random(), b"opaque to this relay");
+        let message = fixture.message(ENCRYPTED_TOPIC_NAME, serde_json::to_vec(&envelope).unwrap());
+        assert!(validate_gossip_for_forwarding(&message, &fixture.source(), &fixture.admission()).is_ok());
+        let first = if envelope.ciphertext.starts_with('A') { "B" } else { "A" };
+        envelope.ciphertext.replace_range(0..1, first);
+        let message = fixture.message(ENCRYPTED_TOPIC_NAME, serde_json::to_vec(&envelope).unwrap());
+        assert_eq!(validate_gossip_for_forwarding(&message, &fixture.source(), &fixture.admission()).unwrap_err().reason,
+            "envelope_signature_invalid");
+    }
+
+    #[test]
+    fn local_ciphertext_requires_valid_fresh_observation_before_forwarding() {
+        let fixture = Fixture::new();
+        let envelope = fixture.encrypted(fixture.local, &serde_json::to_vec(&fixture.observation()).unwrap());
+        let message = fixture.message(ENCRYPTED_TOPIC_NAME, serde_json::to_vec(&envelope).unwrap());
+        let mut admission = fixture.admission();
+        admission.e2ee_enabled = true;
+        assert!(validate_gossip_for_forwarding(&message, &fixture.source(), &admission).is_ok());
+        admission.max_observation_age = Some(300);
+        assert_eq!(validate_gossip_for_forwarding(&message, &fixture.source(), &admission).unwrap_err(),
+            GossipRejection { reason: "invalid_plaintext_observation", detail: Some("stale_observation") });
+    }
+
+    #[test]
+    fn valid_receipts_for_another_sender_forward_without_local_pending_state() {
+        let fixture = Fixture::new();
+        let mut receipt = create_receipt(&fixture.sender, &PeerId::random(),
+            &STANDARD_NO_PAD.encode([7u8; 16]), &"a".repeat(64), fixture.now).unwrap();
+        let message = fixture.message(RECEIPT_TOPIC, serde_json::to_vec(&receipt).unwrap());
+        assert!(validate_gossip_for_forwarding(&message, &fixture.source(), &fixture.admission()).is_ok());
+        receipt.envelope_sha256 = "b".repeat(64);
+        let message = fixture.message(RECEIPT_TOPIC, serde_json::to_vec(&receipt).unwrap());
+        assert_eq!(validate_gossip_for_forwarding(&message, &fixture.source(), &fixture.admission()).unwrap_err().reason,
+            "receipt_signature_invalid");
+    }
+
+    #[test]
+    fn foreign_requester_revocation_pages_do_not_require_local_request_state() {
+        let fixture = Fixture::new();
+        let authority = ed25519_dalek::SigningKey::from_bytes(&[4; 32]);
+        let public: String = authority.verifying_key().as_bytes().iter().map(|byte| format!("{byte:02x}")).collect();
+        let registry = RevocationRegistry::open(fixture.directory.join("revocations.json"), public).unwrap();
+        let mut page = RevocationSyncMessage::SnapshotPageV2 {
+            request_id: "a".repeat(64), requester_peer_id: PeerId::random().to_string(),
+            responder_peer_id: fixture.source().to_string(), records: Vec::new(), next_cursor: None,
+        };
+        let mut admission = fixture.admission();
+        admission.revocation_registry = Some(&registry);
+        let message = fixture.message(REVOCATION_TOPIC_NAME, serde_json::to_vec(&page).unwrap());
+        assert!(validate_gossip_for_forwarding(&message, &fixture.source(), &admission).is_ok());
+        if let RevocationSyncMessage::SnapshotPageV2 { responder_peer_id, .. } = &mut page {
+            *responder_peer_id = PeerId::random().to_string();
+        }
+        let message = fixture.message(REVOCATION_TOPIC_NAME, serde_json::to_vec(&page).unwrap());
+        assert_eq!(validate_gossip_for_forwarding(&message, &fixture.source(), &admission).unwrap_err().reason,
+            "invalid_revocation_page");
     }
 }
 
@@ -745,6 +1081,14 @@ mod tests {
         assert!(!super::reconnect_backoff_active(&failures, &peer, tick));
         assert!(failures.is_empty());
     }
+    #[test] fn bootstrap_reconnect_interval_keeps_default_and_allows_fast_recovery() {
+        assert_eq!(super::bootstrap_reconnect_interval(None), 15);
+        assert_eq!(super::bootstrap_reconnect_interval(Some("invalid")), 15);
+        assert_eq!(super::bootstrap_reconnect_interval(Some("0")), 1);
+        assert_eq!(super::bootstrap_reconnect_interval(Some("1")), 1);
+        assert_eq!(super::bootstrap_reconnect_interval(Some("5")), 5);
+        assert_eq!(super::bootstrap_reconnect_interval(Some("301")), 300);
+    }
     #[test] fn reconnect_backoff_attempt_counter_saturates() {
         let peer = PeerId::random();
         let mut failures = std::collections::HashMap::new();
@@ -1051,6 +1395,10 @@ fn parse_interval_secs(raw: Option<&str>, default: u64, min: u64, max: u64) -> u
         .clamp(min, max)
 }
 
+fn bootstrap_reconnect_interval(raw: Option<&str>) -> u64 {
+    parse_interval_secs(raw, 15, 1, 300)
+}
+
 fn parse_per_peer_limit(raw: Option<&str>) -> Result<u32, Box<dyn Error>> {
     match raw {
         None | Some("4") => Ok(4),
@@ -1203,9 +1551,8 @@ struct ReconnectFailure {
 }
 
 /// How many upcoming reconnect ticks to skip after this failure.
-/// The sequence is 1, 2, 4, then 8 ticks. The reconnect timer is at least
-/// 5 seconds, so a shorter wall-clock delay would already have expired
-/// before the next tick. A success clears the entry.
+/// The sequence is 1, 2, 4, then 8 ticks, independent of the configured
+/// reconnect interval. A success clears the entry.
 fn reconnect_skip_ticks(attempts: u32) -> u32 {
     1u32 << attempts.saturating_sub(1).min(3)
 }
@@ -1537,6 +1884,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     if delivery_receipts_enabled && !e2ee_enabled {
         return Err("OSIRIS_DELIVERY_RECEIPTS requires OSIRIS_E2EE_ENABLED=1".into());
     }
+    let outbound_queue_path = env::var_os("OSIRIS_P2P_OUTBOUND_DB").map(PathBuf::from);
+    if outbound_queue_path.is_some() && (!e2ee_enabled || max_observation_age.is_none()) {
+        return Err("OSIRIS_P2P_OUTBOUND_DB requires E2EE and an explicit observation freshness limit".into());
+    }
     let transport_key = load_or_create_transport_key()?;
     let transport_key_epoch = match env::var("OSIRIS_TRANSPORT_KEY_EPOCH") {
         Ok(value) => value.parse::<u64>()?,
@@ -1547,17 +1898,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
     let mut local_key_binding = create_key_binding(&key, &transport_key.public_key, transport_key_epoch, now, now + 30 * 24 * 60 * 60)?;
 
-    let gossipsub_config = gossipsub::ConfigBuilder::default()
-        .heartbeat_interval(Duration::from_secs(1))
-        // Bounded-degree meshes leave most subscribers of a large cohort
-        // reliant on IHAVE/IWANT gossip. Three samples per heartbeat cannot
-        // distribute control-plane bindings to ~100 peers within startup
-        // deadlines; widen lazy gossip so re-announcements converge quickly.
-        .gossip_lazy(25)
-        .max_transmit_size(2 * 1024 * 1024)
-        .validation_mode(gossipsub::ValidationMode::Strict)
-        .build()?;
-    gossipsub_config.validate_messages();
+    let gossipsub_config = gossip_config()?;
 
     let gossipsub = gossipsub::Behaviour::new(
         gossipsub::MessageAuthenticity::Signed(key.clone()),
@@ -1683,6 +2024,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut reconnect_tick_count: u64 = 0;
     let bootstrap_peers = parse_bootstrap_peers(read_peer_setting("OSIRIS_BOOTSTRAP_PEERS")?.as_deref())?;
     let trusted_peers = parse_trusted_peers(read_peer_setting("OSIRIS_TRUSTED_PEERS")?.as_deref())?;
+    if outbound_queue_path.is_some() && trusted_peers.is_none() {
+        return Err("OSIRIS_P2P_OUTBOUND_DB requires an explicit trusted peer allowlist".into());
+    }
+    let mut outbound_queue = outbound_queue_path.map(OutboundQueue::open).transpose()?;
+    if let Some(queue) = outbound_queue.as_ref() {
+        let counts = queue.counts()?;
+        emit!("outbound_queue_enabled=true queued={} held={} payload_bytes={}",
+              counts.queued, counts.held, counts.payload_bytes);
+    }
     // Server-mode kademlia auto-bootstraps whenever the routing table gains
     // entries, and its internal query dials bypass the allowlist: every
     // discovered peer gets dialed and then disconnected by policy. In
@@ -1827,11 +2177,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         emit!("peer_authentication=open");
     }
     emit!("peer_revocation=local revoked_peers={}", revoked_peers.as_ref().map_or(0, |peers| peers.len()));
-    let reconnect_interval_secs = parse_interval_secs(
+    let reconnect_interval_secs = bootstrap_reconnect_interval(
         env::var("OSIRIS_BOOTSTRAP_RECONNECT_INTERVAL_SECS").ok().as_deref(),
-        15,
-        5,
-        300,
     );
     // How often the node walks the DHT to discover new peers on the internet.
     let dht_walk_interval_secs = parse_interval_secs(
@@ -1918,6 +2265,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     )?;
     let mut receipt_tick = tokio::time::interval(Duration::from_secs(5));
     receipt_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut outbound_tick = tokio::time::interval(Duration::from_millis(250));
+    outbound_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut outbound_woken_peers = HashSet::new();
     emit!("delivery_receipts_enabled={delivery_receipts_enabled} receipt_topic={RECEIPT_TOPIC}");
     emit!("verified_receipt_bridge={}", if receipt_bridge.is_some() { "enabled" } else { "disabled" });
 
@@ -1937,6 +2287,70 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
             _ = rejection_log_tick.tick() => {
                 emit_diagnostic_lines(rejection_log_throttle.flush_elapsed(Instant::now()));
+            }
+            _ = outbound_tick.tick(), if outbound_queue.is_some() => {
+                let queue = outbound_queue.as_mut().expect("enabled outbound queue");
+                let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+                // Bound synchronous SQLite/crypto work per swarm turn. A crash
+                // after claiming leaves these records held, never auto-reissued.
+                for item in queue.claim_due(now, 8)? {
+                    let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+                    let recipient: PeerId = item.recipient.parse()?;
+                    if now < item.enqueued_at {
+                        if !queue.hold(item.id, "clock_rollback")? { return Err("outbound_queue_claim_missing".into()); }
+                        emit!("outbound_observation_held id={} recipient={recipient} reason=clock_rollback", item.id);
+                        continue;
+                    }
+                    if now.saturating_sub(item.enqueued_at) >= MAX_QUEUE_AGE_SECONDS {
+                        if !queue.complete(item.id)? { return Err("outbound_queue_claim_missing".into()); }
+                        emit!("outbound_observation_rejected id={} recipient={recipient} reason=queue_expired", item.id);
+                        continue;
+                    }
+                    let recipients = match outbound_publish::recipients() {
+                        Ok(recipients) => recipients,
+                        Err(reason) => {
+                            if !queue.hold(item.id, reason)? { return Err("outbound_queue_claim_missing".into()); }
+                            emit!("outbound_observation_held id={} recipient={recipient} reason={reason}", item.id);
+                            continue;
+                        }
+                    };
+                    if !recipients.contains(&recipient) {
+                        if !queue.complete(item.id)? { return Err("outbound_queue_claim_missing".into()); }
+                        emit!("outbound_observation_rejected id={} recipient={recipient} reason=recipient_removed", item.id);
+                        continue;
+                    }
+                    let result = outbound_publish::Publisher {
+                        swarm: &mut swarm, topic: &encrypted_topic, identity: &key,
+                        transport_key_epoch, key_store: &peer_key_store,
+                        trusted: &trusted_peers, revoked: &revoked_peers, max_observation_age,
+                        queue_enqueued_at: Some(item.enqueued_at),
+                        queue_storage: Some(queue),
+                        receipts_enabled: delivery_receipts_enabled,
+                        pending_receipts: &mut pending_receipts, peer_metrics: &mut peer_metrics,
+                    }.send(recipient, &item.observation)?;
+                    match result {
+                        outbound_publish::SendResult::Published => {
+                            if !queue.complete(item.id)? { return Err("outbound_queue_claim_missing".into()); }
+                        }
+                        outbound_publish::SendResult::Unsent(reason) => {
+                            let deferred_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+                            let retry = queue.defer_unsent(item.id, deferred_at)?;
+                            if retry {
+                                emit!("outbound_observation_deferred id={} recipient={recipient} reason={reason}", item.id);
+                            } else {
+                                emit!("outbound_observation_held id={} recipient={recipient} reason=retry_limit_reached", item.id);
+                            }
+                        }
+                        outbound_publish::SendResult::Rejected(reason) => {
+                            if !queue.complete(item.id)? { return Err("outbound_queue_claim_missing".into()); }
+                            emit!("outbound_observation_rejected id={} recipient={recipient} reason={reason}", item.id);
+                        }
+                        outbound_publish::SendResult::Ambiguous => {
+                            if !queue.hold(item.id, "publication_uncertain")? { return Err("outbound_queue_claim_missing".into()); }
+                            emit!("outbound_observation_held id={} recipient={recipient} reason=publication_uncertain", item.id);
+                        }
+                    }
+                }
             }
             _ = receipt_tick.tick(), if delivery_receipts_enabled => {
                 for (recipient, message_id) in pending_receipts.expire(Instant::now()) {
@@ -2273,6 +2687,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 SwarmEvent::ConnectionClosed { peer_id, cause, num_established, .. } => {
                     emit!("peer_disconnected={peer_id} cause={cause:?} remaining={num_established}");
                     if num_established == 0 {
+                        outbound_woken_peers.remove(&peer_id);
                         peer_metrics.disconnected(&peer_id.to_string());
                         active_relay_reservations.remove(&peer_id);
                         if let Some(listener) = relay_listeners.remove(&peer_id) {
@@ -2313,6 +2728,22 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         continue;
                     }
                     emit!("gossipsub_subscribed peer={subscribed_peer_id} topic={topic}");
+                    if topic.as_str() == ENCRYPTED_TOPIC_NAME {
+                        if let Some(queue) = outbound_queue.as_mut() {
+                            // Only a configured, allowed recipient's first subscription
+                            // on this connection cohort can accelerate its deferred work.
+                            let is_recipient = outbound_publish::recipients()
+                                .is_ok_and(|recipients| recipients.contains(&subscribed_peer_id));
+                            if is_recipient && outbound_woken_peers.insert(subscribed_peer_id) {
+                                let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+                                let woken = queue.wake_deferred_recipient(&subscribed_peer_id.to_string(), now)?;
+                                if woken > 0 {
+                                    emit!("outbound_observation_rearmed recipient={subscribed_peer_id} count={woken}");
+                                    outbound_tick.reset_immediately();
+                                }
+                            }
+                        }
+                    }
                     // One connection subscribes to several topics. Announcing
                     // on each event floods all subscribers during cohort startup.
                     if topic.as_str() == KEY_BINDING_TOPIC_NAME {
@@ -2332,8 +2763,42 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     }
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message {
-                    propagation_source, message, ..
+                    propagation_source, message_id, message,
                 })) => {
+                    let validation = validate_gossip_for_forwarding(&message, &propagation_source, &GossipAdmission {
+                        local_peer: &peer_id, trusted_peers: &trusted_peers, revoked_peers: &revoked_peers,
+                        peer_key_store: &peer_key_store, revocation_registry: revocation_registry.as_ref(),
+                        e2ee_enabled, transport_key_epoch, transport_key: &transport_key, max_observation_age,
+                        now: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+                    });
+                    // Exactly one decision for every message: valid transit
+                    // data may forward even if it is not addressed to this node.
+                    // Local receipt/replay/paging handlers do not decide relay authorization.
+                    let acceptance = match &validation {
+                        Ok(()) => gossipsub::MessageAcceptance::Accept,
+                        Err(error) if matches!(error.reason, "sender_key_binding_missing"
+                            | "sender_key_store_unavailable" | "revocation_authority_not_configured"
+                            | "local_e2ee_disabled") => gossipsub::MessageAcceptance::Ignore,
+                        Err(_) => gossipsub::MessageAcceptance::Reject,
+                    };
+                    swarm.behaviour_mut().gossipsub.report_message_validation_result(
+                        &message_id, &propagation_source, acceptance,
+                    );
+                    if let Err(error) = validation {
+                        let source = message.source.as_ref().unwrap_or(&propagation_source);
+                        if error.reason == "peer_not_allowed" {
+                            emit_diagnostic_lines(rejection_log_throttle.rejected(
+                                message.topic.as_str(), &source.to_string(), "peer_not_allowed", Instant::now(),
+                            ));
+                        } else {
+                            let prefix = if message.topic.as_str() == ENCRYPTED_TOPIC_NAME {
+                                "encrypted_message_rejected"
+                            } else { "gossip_message_rejected" };
+                            emit!("{prefix} peer={source} topic={} reason={} detail={}",
+                                message.topic, error.reason, error.detail.unwrap_or("none"));
+                        }
+                        continue;
+                    }
                     let authenticated_source = message.source.unwrap_or(propagation_source);
 
                     if message.topic.as_str() == RECEIPT_TOPIC {
@@ -2788,102 +3253,36 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         }
                     };
                     if e2ee_enabled {
-                        let recipients_raw = if let Some(path) = env::var_os("OSIRIS_E2EE_RECIPIENTS_FILE") {
-                            match fs::read_to_string(PathBuf::from(path)) {
-                                Ok(value) => value,
-                                Err(error) => {
-                                    emit!("publish_rejected reason=recipient_file_read_error error={error}");
-                                    continue;
-                                }
+                        let recipients = match outbound_publish::recipients() {
+                            Ok(recipients) => recipients,
+                            Err(reason) => {
+                                emit!("publish_rejected reason={reason}");
+                                continue;
                             }
-                        } else {
-                            env::var("OSIRIS_E2EE_RECIPIENTS").unwrap_or_default()
                         };
-                        if recipients_raw.len() > 16_384 {
-                            emit!("publish_rejected reason=recipient_configuration_too_large");
-                            continue;
-                        }
-                        let mut unique_recipients = HashSet::new();
-                        let recipients: Vec<String> = recipients_raw
-                            .split(',')
-                            .map(str::trim)
-                            .filter(|value| !value.is_empty())
-                            .filter(|value| unique_recipients.insert((*value).to_owned()))
-                            .map(str::to_owned)
-                            .collect();
-                        if recipients.is_empty() || recipients.len() > 128 {
-                            emit!("publish_rejected reason=e2ee_recipient_count_out_of_range");
-                            continue;
-                        }
                         let plaintext = serde_json::to_vec(&envelope)?;
                         for recipient in recipients {
-                            let recipient_peer: PeerId = match recipient.parse() {
-                                Ok(peer) => peer,
-                                Err(_) => {
-                                    emit!("publish_rejected reason=invalid_e2ee_recipient");
-                                    continue;
-                                }
-                            };
-                            if !is_peer_allowed(&recipient_peer, &trusted_peers, &revoked_peers) {
-                                emit!("publish_rejected recipient={recipient_peer} reason=recipient_not_allowed");
+                            if !is_peer_allowed(&recipient, &trusted_peers, &revoked_peers) {
+                                emit!("publish_rejected recipient={recipient} reason=recipient_not_allowed");
                                 continue;
                             }
-                            if delivery_receipts_enabled && !pending_receipts.has_capacity() {
-                                emit!("publish_deferred recipient={recipient_peer} reason=receipt_tracking_capacity");
-                                continue;
-                            }
-                            let Some(binding_record) = peer_key_store.get(&recipient_peer.to_string())? else {
-                                emit!("publish_deferred recipient={recipient_peer} reason=recipient_key_binding_missing");
-                                continue;
-                            };
-                            let recipient_binding = match verify_key_binding(
-                                &binding_record,
-                                SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-                                binding_record.key_epoch,
-                            ) {
-                                Ok(binding) => binding,
-                                Err(error) => {
-                                    emit!("publish_rejected recipient={recipient_peer} reason=recipient_key_binding_invalid error={error}");
-                                    continue;
+                            if let Some(queue) = outbound_queue.as_mut() {
+                                let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+                                match queue.enqueue(&recipient.to_string(), &plaintext, now) {
+                                    Ok(inserted) => emit!("outbound_observation_queued recipient={recipient} duplicate={}", !inserted),
+                                    Err(reason) => emit!("publish_rejected recipient={recipient} reason={reason}"),
                                 }
-                            };
-                            let created_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-                            let encrypted = match encrypt_for_recipient(
-                                &key,
-                                transport_key_epoch,
-                                &recipient_peer.to_string(),
-                                &recipient_binding.transport_public_key,
-                                recipient_binding.key_epoch,
-                                &plaintext,
-                                created_at,
-                                created_at + 3600,
-                            ) {
-                                Ok(encrypted) => encrypted,
-                                Err(error) => {
-                                    emit!("publish_rejected recipient={recipient_peer} reason=encryption_error error={error}");
-                                    continue;
-                                }
-                            };
-                            let message_id = encrypted.message_id.clone();
-                            let bytes = serde_json::to_vec(&encrypted)?;
-                            let envelope_sha256 = format!("{:x}", Sha256::digest(&bytes));
-                            match swarm.behaviour_mut().gossipsub.publish(encrypted_topic.clone(), bytes) {
-                                Ok(_) => {
-                                    if delivery_receipts_enabled {
-                                        match pending_receipts.track(
-                                            recipient_peer, message_id.clone(), envelope_sha256.clone(), Instant::now(),
-                                        ) {
-                                            Ok(()) => {
-                                                peer_metrics.sent(&recipient_peer.to_string(), &message_id, Instant::now());
-                                                emit!("encrypted_observation_published recipient={recipient_peer} message_id={message_id} envelope_sha256={envelope_sha256} receipts_tracked=true");
-                                            },
-                                            Err(reason) => emit!("observation_delivery_unconfirmed recipient={recipient_peer} message_id={message_id} reason={reason}"),
-                                        }
-                                    } else {
-                                        emit!("encrypted_observation_published recipient={recipient_peer} message_id={message_id}");
-                                    }
-                                }
-                                Err(error) => emit!("encrypted_observation_deferred recipient={recipient_peer} error={error}"),
+                            } else {
+                                // Preserve the existing direct path when queue storage is unconfigured.
+                                let _ = outbound_publish::Publisher {
+                                    swarm: &mut swarm, topic: &encrypted_topic, identity: &key,
+                                    transport_key_epoch, key_store: &peer_key_store,
+                                    trusted: &trusted_peers, revoked: &revoked_peers, max_observation_age,
+                                    queue_enqueued_at: None,
+                                    queue_storage: None,
+                                    receipts_enabled: delivery_receipts_enabled,
+                                    pending_receipts: &mut pending_receipts, peer_metrics: &mut peer_metrics,
+                                }.send(recipient, &plaintext)?;
                             }
                         }
                     } else {

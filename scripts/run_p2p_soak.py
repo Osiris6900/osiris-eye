@@ -54,7 +54,12 @@ DIAGNOSTIC_PREFIXES = (
     'key_binding_refreshed', 'key_binding_refresh_deferred',
     'outgoing_connection_error', 'incoming_connection_error',
     'bootstrap_reconnect_error', 'bootstrap_reconnect_attempt',
+    'outbound_observation_queued', 'outbound_observation_deferred',
+    'outbound_observation_held', 'outbound_observation_rejected', 'outbound_observation_rearmed',
+    'outbound_observation_retry',
 )
+STANDARD_RECONNECT_SECONDS = 5
+QUEUED_PUBLISHER_RECONNECT_SECONDS = 1
 _DIAGNOSTIC_REASON = re.compile(r'\breason=([a-z_]{1,64})(?:\s|$)')
 _DIAGNOSTIC_COUNT = re.compile(r'\bcount=(\d+)(?:\s|$)')
 
@@ -62,7 +67,7 @@ _DIAGNOSTIC_COUNT = re.compile(r'\bcount=(\d+)(?:\s|$)')
 def classify_node_diagnostic(line):
     """Return `(counter_key, amount)` for one node stdout line.
 
-    Suppressed aggregates add their `count`. A missing or zero count fails
+    Aggregated diagnostics add their `count`. A missing or zero count fails
     closed. Lines that are not diagnostics return None.
     """
     prefix = next((item for item in DIAGNOSTIC_PREFIXES if line.startswith(item + ' ')), None)
@@ -70,10 +75,12 @@ def classify_node_diagnostic(line):
         return None
     reason = _DIAGNOSTIC_REASON.search(line)
     amount = 1
-    if prefix == 'peer_not_allowed_rejected_suppressed':
+    if prefix in ('peer_not_allowed_rejected_suppressed', 'outbound_observation_rearmed'):
         count = _DIAGNOSTIC_COUNT.search(line)
         if count is None or int(count[1]) < 1:
-            raise ValueError('invalid_suppressed_rejection_count')
+            reason = ('invalid_suppressed_rejection_count' if prefix == 'peer_not_allowed_rejected_suppressed'
+                      else 'invalid_outbound_rearmed_count')
+            raise ValueError(reason)
         amount = int(count[1])
     return prefix + (':' + reason[1] if reason else ''), amount
 
@@ -87,10 +94,29 @@ def measurement_class(metadata, local_agents):
             else 'single_host_process_regression')
 
 
+
+def runtime_config(worker_threads, publisher_outbound_queue=False):
+    """Bound the requested node runtime without weakening resource policy."""
+    if worker_threads is not None and (type(worker_threads) is not int or worker_threads not in (1, 2, 4)):
+        raise ValueError('node_worker_threads_must_be_1_2_or_4')
+    return {
+        'node_worker_threads_requested': worker_threads,
+        'tokio_worker_threads_env': str(worker_threads) if worker_threads is not None else None,
+        'observed_runtime_worker_count_verified': False,
+        **({
+            'publisher_outbound_queue': True,
+            'publisher_bootstrap_reconnect_seconds': QUEUED_PUBLISHER_RECONNECT_SECONDS,
+        } if publisher_outbound_queue else {}),
+    }
+
+
 class Agent:
     def __init__(self, args, state):
         self.args, self.state = args, Path(state)
+        self.runtime = runtime_config(getattr(args, 'node_worker_threads', None),
+                                      getattr(args, 'publisher_outbound_queue', False))
         self.nodes = {}
+        self.node_readers = {}
         self.lock = threading.Lock()
         self.done = threading.Event()
         self.expected_stops = set()
@@ -112,6 +138,10 @@ class Agent:
         directory = self.state / str(index)
         directory.mkdir(mode=0o700, exist_ok=True)
         env = {k: v for k, v in os.environ.items() if not k.startswith('OSIRIS_')}
+        # The default is deliberately unset, not an inherited unrecorded value.
+        env.pop('TOKIO_WORKER_THREADS', None)
+        if self.runtime['tokio_worker_threads_env'] is not None:
+            env['TOKIO_WORKER_THREADS'] = self.runtime['tokio_worker_threads_env']
         env.update({
             'OSIRIS_NODE_KEY': str(directory / 'identity'),
             'OSIRIS_TRANSPORT_KEY': str(directory / 'transport'),
@@ -125,7 +155,7 @@ class Agent:
             'OSIRIS_MAX_CONNECTIONS_PER_PEER': '1',
             'OSIRIS_PEER_CACHE_DIAL_ON_START': '0', 'OSIRIS_DHT_WALK_INTERVAL_SECS': '3600',
             'OSIRIS_HEALTH_HTTP_ADDR': '127.0.0.1:0',
-            'OSIRIS_BOOTSTRAP_RECONNECT_INTERVAL_SECS': '5',
+            'OSIRIS_BOOTSTRAP_RECONNECT_INTERVAL_SECS': str(STANDARD_RECONNECT_SECONDS),
             'OSIRIS_LISTEN_ADDR': f'/ip4/0.0.0.0/tcp/{self.args.port if index == 0 else 0}',
         })
         if bootstrap:
@@ -135,19 +165,26 @@ class Agent:
             # The declared soak is a publisher/recipient star. Prevent DHT and
             # Identify discovery from silently turning it into a full mesh.
             env['OSIRIS_TRUSTED_PEERS'] = recipient
+            if self.runtime.get('publisher_outbound_queue'):
+                env['OSIRIS_P2P_OUTBOUND_DB'] = str(directory.resolve() / 'outbound.sqlite3')
+                env['OSIRIS_MAX_OBSERVATION_AGE_SECS'] = '120'
+                env['OSIRIS_BOOTSTRAP_RECONNECT_INTERVAL_SECS'] = str(
+                    self.runtime['publisher_bootstrap_reconnect_seconds'])
         proc = subprocess.Popen([str(self.args.binary)], env=env, cwd=directory,
                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, text=True, bufsize=1)
         self.nodes[index] = proc
         self.expected_stops.discard(index)
-        threading.Thread(target=self.read_node, args=(index, proc), daemon=True).start()
+        reader = threading.Thread(target=self.read_node, args=(index, proc), daemon=True)
+        self.node_readers[proc.pid] = reader
+        reader.start()
 
     def read_node(self, index, proc):
         for line in proc.stdout:
             try:
                 classified = classify_node_diagnostic(line)
-            except ValueError:
-                self.emit('fatal', reason='invalid_suppressed_rejection_count', node=index)
+            except ValueError as error:
+                self.emit('fatal', reason=str(error), node=index)
                 classified = None
             if classified is not None:
                 key, amount = classified
@@ -189,6 +226,12 @@ class Agent:
                 match = re.search(r'payload_sha256=([0-9a-f]{64})', line)
                 if match:
                     self.emit('delivery', digest=match[1])
+            elif line.startswith('outbound_observation_retry '):
+                match = re.search(r'\bobservation_sha256=([0-9a-f]{64})(?:\s|$)', line)
+                if match is None:
+                    self.emit('fatal', reason='invalid_outbound_retry_digest', node=index)
+                else:
+                    self.emit('outbound_retry', node=index, digest=match[1])
             elif line.startswith(('publish_rejected ', 'publish_deferred ')):
                 # Rejections are diagnostic only: without a digest correlation,
                 # they cannot subtract a message from lost/pending accounting.
@@ -201,6 +244,7 @@ class Agent:
     def stop_node(self, index):
         self.expected_stops.add(index)
         proc = self.nodes[index]
+        self.close_node_stdin(proc)
         proc.terminate()
         try:
             proc.wait(timeout=8)
@@ -209,6 +253,84 @@ class Agent:
             proc.wait(timeout=5)
         with self.lock:
             self.live_links = {key: value for key, value in self.live_links.items() if key[0] != index}
+        self.close_node_streams(proc)
+
+    @staticmethod
+    def close_node_stdin(proc):
+        # Tokio's blocking stdin worker also needs EOF to let the process exit
+        # after its async signal handler finishes.
+        if proc.stdin is not None:
+            try:
+                proc.stdin.close()
+            except (BrokenPipeError, OSError):
+                pass
+
+    def close_node_streams(self, proc, *, deadline=None):
+        reader = self.node_readers.get(proc.pid)
+        if reader is not None:
+            reader.join(timeout=2 if deadline is None else max(0, deadline - time.monotonic()))
+            if reader.is_alive():
+                raise RuntimeError('node_reader_not_drained:' + str(proc.pid))
+        if proc.stdout is not None:
+            proc.stdout.close()
+
+    def cleanup(self):
+        # A second group signal must not raise SystemExit halfway through the
+        # parent waits and leave terminated children orphaned under PID 1.
+        kinds = (signal.SIGTERM, signal.SIGHUP)
+        mask = signal.pthread_sigmask(signal.SIG_BLOCK, kinds)
+        try:
+            previous = {kind: signal.signal(kind, signal.SIG_IGN) for kind in kinds}
+        finally:
+            signal.pthread_sigmask(signal.SIG_SETMASK, mask)
+        try:
+            self.done.set()
+            self.expected_stops.update(self.nodes)
+            nodes = list(self.nodes.values())
+            # Signal the entire cohort before waiting for any one child. The
+            # grace period bounds all children together, rather than each node.
+            for proc in nodes:
+                self.close_node_stdin(proc)
+                if proc.poll() is None:
+                    try:
+                        proc.terminate()
+                    except ProcessLookupError:
+                        pass
+            deadline = time.monotonic() + 8
+            pending = []
+            for proc in nodes:
+                try:
+                    proc.wait(timeout=max(0, deadline - time.monotonic()))
+                except subprocess.TimeoutExpired:
+                    pending.append(proc)
+            for proc in pending:
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+            deadline = time.monotonic() + 5
+            failed = []
+            for proc in pending:
+                try:
+                    proc.wait(timeout=max(0, deadline - time.monotonic()))
+                except subprocess.TimeoutExpired:
+                    failed.append(proc.pid)
+            if failed:
+                raise RuntimeError('node_cleanup_not_reaped:' + ','.join(map(str, failed)))
+            deadline = time.monotonic() + 2
+            reader_errors = []
+            for proc in nodes:
+                try:
+                    self.close_node_streams(proc, deadline=deadline)
+                except RuntimeError as error:
+                    reader_errors.append(str(error))
+            if reader_errors:
+                raise RuntimeError(';'.join(reader_errors))
+            with self.lock:
+                self.live_links.clear()
+        finally:
+            for kind, handler in previous.items():
+                signal.signal(kind, handler)
 
     def sample(self):
         now = time.monotonic()
@@ -260,12 +382,14 @@ class Agent:
         commit, clean = revision()
         self.emit('metadata', commit_sha=commit, clean_worktree=clean,
                   binary_sha256=digest_file(self.args.binary),
-                  host_fingerprint=digest_file('/proc/sys/kernel/random/boot_id'))
+                  host_fingerprint=digest_file('/proc/sys/kernel/random/boot_id'),
+                  runtime_config=self.runtime)
         def interrupted(_signum, _frame):
             raise SystemExit(1)
         signal.signal(signal.SIGTERM, interrupted)
         signal.signal(signal.SIGHUP, interrupted)
         threading.Thread(target=self.monitor, daemon=True).start()
+        finished = False
         try:
             for line in sys.stdin:
                 command = json.loads(line)
@@ -289,14 +413,16 @@ class Agent:
                     self.start(0)
                 elif action == 'finish':
                     self.emit('metrics', **self.sample())
-                    self.emit('finished')
-                    return
+                    finished = True
+                    break
                 else:
                     raise ValueError('unknown command')
         finally:
-            self.done.set()
-            for index in list(self.nodes):
-                self.stop_node(index)
+            self.cleanup()
+        if finished:
+            # The controller may release/close an agent only after every node
+            # was waited for. Resource sampling still ends before shutdown.
+            self.emit('finished')
 
 
 class Controller:
@@ -306,6 +432,9 @@ class Controller:
         self.failure = None
         self.stage = 'starting'
         self.deliveries, self.sent, self.samples = {}, {}, []
+        self.delivery_counts = {}
+        self.retry_counts = {}
+        self.queued_observations = {}
         self.sources = {}
         self.finished, self.listeners = set(), set()
         self.subscriptions = set()
@@ -354,7 +483,22 @@ class Controller:
         elif kind == 'disconnected':
             self.subscriptions.discard((host, event['node'], event['peer']))
         elif kind == 'delivery':
-            self.deliveries.setdefault(event['digest'], time.monotonic())
+            # Only the intended sink can prove recipient decryption. A
+            # publisher reporting plaintext must not be relabelled as Host B.
+            if host != 'host-b':
+                raise RuntimeError('unexpected_decryption_recipient')
+            digest = event['digest']
+            if not isinstance(digest, str) or digest not in self.sent:
+                raise RuntimeError('untracked_delivery_observation')
+            self.delivery_counts[digest] = self.delivery_counts.get(digest, 0) + 1
+            self.deliveries.setdefault(digest, time.monotonic())
+        elif kind == 'outbound_retry':
+            observation_digest = event.get('digest')
+            digest = self.queued_observations.get(observation_digest)
+            if (host == 'host-b' or not isinstance(observation_digest, str)
+                    or digest is None or self.sources.get(digest) != host):
+                raise RuntimeError('untracked_or_wrong_host_outbound_retry')
+            self.retry_counts[digest] = self.retry_counts.get(digest, 0) + 1
         elif kind == 'metrics':
             self.metrics[host] = event
         elif kind == 'finished':
@@ -387,13 +531,21 @@ class Controller:
         digest = hashlib.sha256(payload.encode()).hexdigest()
         if digest in self.sent:
             raise ValueError('duplicate_workload_id')
-        self.sent[digest] = time.monotonic()
-        self.sources[digest] = host
-        self.command(host, action='publish', node=node, observation={
+        observation = {
             'schema': 'osiris.observation.v1', 'instrument': 'OSIRIS-SOAK',
             'observed_at': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
             'provider': 'synthetic-soak', 'payload': payload, 'payload_sha256': digest,
-        })
+        }
+        # This is the exact canonical observation byte digest emitted by the
+        # Rust queue. It is separate from the application payload digest.
+        canonical = json.dumps(observation, separators=(',', ':')).encode()
+        observation_digest = hashlib.sha256(canonical).hexdigest()
+        if observation_digest in self.queued_observations:
+            raise ValueError('duplicate_queued_observation')
+        self.queued_observations[observation_digest] = digest
+        self.sent[digest] = time.monotonic()
+        self.sources[digest] = host
+        self.command(host, action='publish', node=node, observation=observation)
         return digest
 
     def sample_outage(self, start, delivered):
@@ -420,17 +572,57 @@ class Controller:
             try:
                 proc.wait(timeout=30)
             except subprocess.TimeoutExpired:
-                os.killpg(proc.pid, 15)
+                # Give the agent parent a chance to reap its own children. A
+                # group-wide termination can interrupt a child-reaping phase.
+                proc.terminate()
                 try:
                     proc.wait(timeout=10)
                 except subprocess.TimeoutExpired:
                     os.killpg(proc.pid, 9)
-                    proc.wait()
+                    proc.wait(timeout=5)
+
+
+
+def workload_records(controller, workload, start, *, outage_start_ms, restart_ms, recovered_ms, complete=True):
+    """Retain actual publish times, including observations lost during downtime."""
+    records = []
+    for digest in workload:
+        elapsed = int((controller.sent[digest] - start) * 1000)
+        in_outage = (outage_start_ms is not None and outage_start_ms <= elapsed
+                     and (recovered_ms is None or elapsed < recovered_ms))
+        sink_down = (outage_start_ms is not None and outage_start_ms <= elapsed
+                     and (restart_ms is None or elapsed < restart_ms))
+        delivery_time = controller.deliveries.get(digest)
+        count = controller.delivery_counts.get(digest, 0)
+        records.append({
+            'payload_sha256': digest,
+            'outcome': ('delivered' if digest in controller.deliveries
+                        else ('lost' if complete else 'pending_at_abort')),
+            'source_host': controller.sources[digest], 'recipient_host': 'host-b',
+            'published_elapsed_ms': elapsed, 'during_outage': in_outage,
+            'while_sink_stopped': sink_down,
+            'delivery_count': count, 'duplicate_deliveries': max(0, count - 1),
+            'definitely_unsent_retry_attempts': controller.retry_counts.get(digest, 0),
+            'delivered_elapsed_ms': int((delivery_time - start) * 1000) if delivery_time is not None else None,
+            'delivered_after_restart': (delivery_time is not None and restart_ms is not None
+                                        and delivery_time >= start + restart_ms / 1000),
+            'outage_publication_delivered_after_restart': (in_outage and delivery_time is not None
+                and restart_ms is not None and delivery_time >= start + restart_ms / 1000),
+            'latency_ms': ((controller.deliveries[digest] - controller.sent[digest]) * 1000
+                           if digest in controller.deliveries else None),
+        })
+    return records
 
 
 def measure(args):
     c = Controller()
-    base = [sys.executable, str(Path(__file__).resolve()), '--agent', '--binary', str(args.binary)]
+    publisher_queue = getattr(args, 'publisher_outbound_queue', False)
+    runtime = runtime_config(args.node_worker_threads, publisher_queue)
+    runtime_args = ([] if args.node_worker_threads is None
+                    else ['--node-worker-threads', str(args.node_worker_threads)])
+    if publisher_queue:
+        runtime_args.append('--publisher-outbound-queue')
+    base = [sys.executable, str(Path(__file__).resolve()), '--agent', '--binary', str(args.binary), *runtime_args]
     extra_hosts = {}
     for specification in args.extra_host:
         host, target = specification.split('=', 1)
@@ -443,7 +635,8 @@ def measure(args):
     local_count = args.peers // host_count
     c.launch('host-a', base + ['--count', str(local_count), '--controller-pid', str(os.getpid())])
     remote_args = ['python3', args.remote_script, '--agent', '--binary', args.remote_binary,
-                   '--count', str(args.peers - local_count * (host_count-1)), '--port', str(args.port)]
+                   '--count', str(args.peers - local_count * (host_count-1)), '--port', str(args.port),
+                   *runtime_args]
     if args.local_agents:
         remote_args = [sys.executable, str(Path(__file__).resolve()), *remote_args[2:]]
         c.launch('host-b', remote_args)
@@ -452,13 +645,22 @@ def measure(args):
                             shlex.join(remote_args)])
     for host, target in extra_hosts.items():
         peer_args = ['python3', args.remote_script, '--agent', '--binary', args.remote_binary,
-                     '--count', str(local_count)]
+                     '--count', str(local_count), *runtime_args]
         if args.local_agents:
             c.launch(host, [sys.executable, str(Path(__file__).resolve()), *peer_args[2:]])
         else:
             c.launch(host, ['ssh', '-T', *args.ssh_option, target, shlex.join(peer_args)])
+    workload, start, outage_start, restart_ms, recovered_ms = [], None, None, None, None
     try:
         c.wait(lambda: len(c.metadata) == host_count, stage='agent_metadata')
+        if any(metadata.get('runtime_config') != runtime
+               or type(metadata['runtime_config'].get('node_worker_threads_requested')) is not type(args.node_worker_threads)
+               or metadata['runtime_config'].get('observed_runtime_worker_count_verified') is not False
+               or metadata['runtime_config'].get('publisher_outbound_queue') is not runtime.get('publisher_outbound_queue')
+               or type(metadata['runtime_config'].get('publisher_bootstrap_reconnect_seconds'))
+               is not type(runtime.get('publisher_bootstrap_reconnect_seconds'))
+               for metadata in c.metadata.values()):
+            raise RuntimeError('agents_require_same_requested_runtime')
         commit, clean = revision()
         if any(m['commit_sha'] != commit or not m['clean_worktree'] for m in c.metadata.values()):
             if not args.local_agents:
@@ -492,6 +694,9 @@ def measure(args):
         restarted_time = None
         recovery_seen = False
         recovery_warmup = None
+        recovered_ms = None
+        restart_ms = None
+        traffic_on = args.traffic_during_outage
         next_message = start
         period = (args.duration - 10) / args.messages
         next_status = start
@@ -500,10 +705,13 @@ def measure(args):
             now = time.monotonic()
             elapsed = now - start
             if not stopped and elapsed >= args.duration / 2:
-                # This experiment declares a drained restart, not in-flight
-                # durability. A real pre-outage delivery failure still fails.
-                c.wait(lambda: all(d in c.deliveries for d in workload),
-                       30, stage='pre_outage_drain')
+                # Legacy runs intentionally drain and pause. Traffic-on mode
+                # keeps scheduled workload on and retains every loss. Its optional
+                # node queue retries only definitely-unsent attempts; the controller
+                # never submits the same workload observation a second time.
+                if not traffic_on:
+                    c.wait(lambda: all(d in c.deliveries for d in workload),
+                           30, stage='pre_outage_drain')
                 outage_start = int((time.monotonic() - start) * 1000)
                 c.command('host-b', action='stop_sink')
                 c.wait(lambda: c.sink_stopped, 15, stage='sink_stop')
@@ -516,16 +724,19 @@ def measure(args):
                 c.command('host-b', action='restart_sink')
                 restarted = True
                 restarted_time = now
-            # Pause scheduled workload during the outage; probes continue. This
-            # measures recovery, not guaranteed in-flight message durability.
+                restart_ms = int((now - start) * 1000)
+            # Recovery still requires fresh delivery from every publisher in
+            # both modes. Only the default mode pauses its scheduled workload.
             if (stopped and recovery_seen and recovery_warmup is None
                     and all((h, n, sink) in c.subscriptions for h, n in senders)):
                 recovery_warmup = [c.publish(h, n, f'{run_id}-recovery-warmup-{i}')
                                    for i, (h, n) in enumerate(senders)]
             all_recovered = (recovery_warmup is not None
                              and all(d in c.deliveries for d in recovery_warmup))
-            paused = stopped and not all_recovered
+            paused = stopped and not all_recovered and not traffic_on
             if stopped and all_recovered:
+                if recovered_ms is None:
+                    recovered_ms = int((time.monotonic() - start) * 1000)
                 c.stage = 'measurement'
             if now >= next_message and len(workload) < args.messages and not paused:
                 h, n = senders[len(workload) % len(senders)]
@@ -552,10 +763,10 @@ def measure(args):
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline and not all(d in c.deliveries for d in workload):
             c.drain(.1)
-        ended_at = datetime.now(timezone.utc)
         for host in c.agents:
             c.command(host, action='finish')
         c.wait(lambda: len(c.finished) == host_count, 30)
+        ended_at = datetime.now(timezone.utc)
         latencies = [(c.deliveries[d]-c.sent[d])*1000 for d in workload if d in c.deliveries]
         host_records = []
         for host, metadata in c.metadata.items():
@@ -567,39 +778,55 @@ def measure(args):
             ).hexdigest()
             host_records.append({
                 'host_id': host,
+                'runtime_config': metadata['runtime_config'],
                 'binary_sha256': metadata['binary_sha256'],
                 'host_fingerprint_commitment': fingerprint_commitment,
                 **{k: metrics[k] for k in ('rss_peak_bytes', 'cpu_percent', 'disk_growth_bytes')},
             })
         independent = len({m['host_fingerprint'] for m in c.metadata.values()}) == host_count
+        records = workload_records(c, workload, start, outage_start_ms=outage_start,
+                                   restart_ms=restart_ms, recovered_ms=recovered_ms)
         evidence = {
             'schema': 'osiris.p2p_load_acceptance.v1',
+            'runtime_config': runtime,
             'measurement_class': measurement_class(c.metadata, args.local_agents),
             'commit_sha': commit, 'clean_worktree': clean,
             'workflow_url': args.workflow_url, 'attempt': args.attempt, 'operator': 'github-actions',
             'started_at': started_at.isoformat(), 'ended_at': ended_at.isoformat(),
             'workload': {'peers': len(c.peers), 'messages': len(workload), 'fanout': 1,
-                         'duration_seconds': (ended_at-started_at).total_seconds()},
+                         'duration_seconds': (ended_at-started_at).total_seconds(),
+                         'messages_while_sink_stopped': sum(r['while_sink_stopped'] for r in records),
+                         'messages_during_outage': sum(r['during_outage'] for r in records),
+                         'definitely_unsent_retry_attempts': sum(
+                             r['definitely_unsent_retry_attempts'] for r in records)},
             'delivery': {'sent': len(workload), 'delivered': len(latencies),
-                         'lost': len(workload)-len(latencies), 'rejected': 0, 'pending': 0},
+                         'lost': len(workload)-len(latencies), 'rejected': 0, 'pending': 0,
+                         'duplicate_deliveries': sum(r['duplicate_deliveries'] for r in records),
+                         'delivered_after_restart': sum(r['delivered_after_restart'] for r in records),
+                         'outage_publications_delivered_after_restart': sum(
+                             r['outage_publication_delivered_after_restart'] for r in records)},
             'latency_ms': {'count': len(latencies), 'p50': percentile(latencies, .5),
                            'p95': percentile(latencies, .95), 'p99': percentile(latencies, .99),
                            'max': max(latencies, default=0)},
             'hosts': host_records, 'outage': {'kind': 'bootstrap', 'outage_start_ms': outage_start,
+                                             'sink_restart_ms': restart_ms,
+                                             'all_publishers_recovered_ms': recovered_ms,
                                              'samples': c.samples},
-            'delivery_records': [
-                {'payload_sha256': d, 'outcome': 'delivered' if d in c.deliveries else 'lost',
-                 'source_host': c.sources[d], 'recipient_host': 'host-b',
-                 'latency_ms': (c.deliveries[d]-c.sent[d])*1000 if d in c.deliveries else None}
-                for d in workload
-            ],
+            'delivery_records': records,
             'measurement_notes': {
                 'latency': 'controller monotonic write-to-observed-decryption, includes SSH observer transport',
                 'resources': 'aggregate node and agent RSS; peak one-second CPU as share of host logical CPUs',
                 'controller_resources_included_on_host_a': True,
-                'workload_paused_during_outage': True, 'outage_probes_excluded_from_workload': True,
-                'workload_drained_before_outage': True,
-                'all_publishers_decryption_rechecked_before_resuming': True,
+                'traffic_during_outage': traffic_on,
+                'traffic_mode': 'continuous_during_outage' if traffic_on else 'drained_restart',
+                'workload_retransmissions': sum(r['definitely_unsent_retry_attempts'] for r in records),
+                'controller_workload_retransmissions': 0,
+                'retry_scope': 'node attempts after a definitely-unsent result; accepted or ambiguous sends are never reissued',
+                'publication_cadence': 'best-effort controller cadence; stop acknowledgement and event processing may delay scheduling',
+                'delivery_observation_cutoff': 'controller stops collecting when all agents report finished; later or undrained events remain unmeasured',
+                'workload_paused_during_outage': not traffic_on, 'outage_probes_excluded_from_workload': True,
+                'workload_drained_before_outage': not traffic_on,
+                'all_publishers_decryption_rechecked_before_resuming': not traffic_on,
                 'diagnostic_counts': {h: c.metrics[h]['diagnostic_counts'] for h in c.metrics},
                 'state_preserved_across_sink_restart': True,
                 'topology': 'recipient-bootstrap star; publishers trust only recipient',
@@ -611,11 +838,19 @@ def measure(args):
         return evidence
     except Exception:
         args.partial = {
-            'stage': c.stage,
+            'stage': c.stage, 'runtime_config': runtime,
             'metadata': c.metadata, 'host_metrics': c.metrics,
             'observed_peer_count': len(c.peers), 'known_delivery_count': len(c.deliveries),
             'submitted_including_warmup_and_probes': len(c.sent),
             'outage_samples': c.samples,
+            'observation_complete': False,
+            'measurement_started_at': started_at.isoformat() if start is not None else None,
+            'traffic_mode': 'continuous_during_outage' if args.traffic_during_outage else 'drained_restart',
+            'outage_start_ms': outage_start, 'sink_restart_ms': restart_ms,
+            'all_publishers_recovered_ms': recovered_ms,
+            'workload_delivery_records': (workload_records(c, workload, start,
+                outage_start_ms=outage_start, restart_ms=restart_ms, recovered_ms=recovered_ms, complete=False)
+                if start is not None else []),
             'binding_readiness': [
                 {'host': h, 'node': n,
                  'recipient_binding': (h, n, c.peers.get(('host-b', 0))) in c.bindings,
@@ -634,6 +869,10 @@ def main():
     p.add_argument('--agent', action='store_true')
     p.add_argument('--binary', type=Path, required=True)
     p.add_argument('--count', type=int, default=2)
+    p.add_argument('--node-worker-threads', type=int, choices=(1, 2, 4),
+                   help='explicit TOKIO_WORKER_THREADS on every node; default unsets it')
+    p.add_argument('--publisher-outbound-queue', action='store_true',
+                   help='persist publisher observations and retry only definitely-unsent attempts')
     p.add_argument('--controller-pid', type=int)
     p.add_argument('--port', type=int, default=0)
     p.add_argument('--ssh-target')
@@ -647,6 +886,8 @@ def main():
     p.add_argument('--messages', type=int, default=10000)
     p.add_argument('--duration', type=int, default=900)
     p.add_argument('--local-agents', action='store_true')
+    p.add_argument('--traffic-during-outage', action='store_true',
+                   help='keep scheduled workload on during sink outage and retain actual losses')
     p.add_argument('--workflow-url', default='https://github.com/Osiris6900/osiris-eye/actions')
     p.add_argument('--attempt', type=int, default=1)
     p.add_argument('--evidence', type=Path)
