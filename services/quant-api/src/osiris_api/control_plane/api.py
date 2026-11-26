@@ -22,7 +22,7 @@ from .identity import IdentityService
 from .models import ModelService
 from .observability import Observability
 from .replication import Replicator
-from .secrets import EncryptedSecrets
+from .secrets import KeyConfigurationError, open_identity_store
 
 router = APIRouter(prefix="/control-plane", tags=["platform-control-plane"])
 SCOPES = {
@@ -46,8 +46,9 @@ def database() -> Database:
 
 def identities(db: Database) -> IdentityService:
     try:
-        key = base64.b64decode(os.getenv("OSIRIS_CONTROL_MASTER_KEY", ""), validate=True)
-        return IdentityService(EncryptedSecrets(db, key))
+        return IdentityService(open_identity_store(db))
+    except KeyConfigurationError as exc:
+        raise HTTPException(503, exc.code) from None
     except ValueError:
         raise HTTPException(503, "external_control_master_key_required") from None
 

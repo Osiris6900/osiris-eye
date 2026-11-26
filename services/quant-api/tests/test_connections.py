@@ -203,7 +203,9 @@ def test_switch_to_ghost_serializes_with_inflight_broker_probe(service):
 @pytest.fixture
 def api(tmp_path, monkeypatch):
     monkeypatch.setenv("OSIRIS_CONTROL_DB", str(tmp_path / "api.sqlite3"))
-    monkeypatch.setenv("OSIRIS_CONTROL_MASTER_KEY", base64.b64encode(b"k" * 32).decode())
+    monkeypatch.setenv("OSIRIS_CONTROL_MASTER_KEY", base64.b64encode(os.urandom(32)).decode())
+    monkeypatch.setenv("OSIRIS_CONTROL_MASTER_KEY_ID", "identity-master-1")
+    monkeypatch.setenv("OSIRIS_CONTROL_MASTER_KEY_VERSION", "1")
     monkeypatch.setenv("OSIRIS_ADMIN_TOKENS", json.dumps({role: "fixture-" + role for role in ("operator", "viewer")}))
     for name in ENV:
         monkeypatch.delenv(name, raising=False)
