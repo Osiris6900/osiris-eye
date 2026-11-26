@@ -159,11 +159,11 @@ def test_broker_rejects_missing_and_stale_marks_despite_caller_freshness(tmp_pat
         observed_at="2020-01-01T00:00:00+00:00",
         now="2020-01-01T00:00:00+00:00",
     )
-    with pytest.raises(ValueError, match="stale_market_data"):
+    with pytest.raises(ValueError, match="timestamp_untrusted"):
         service.submit(_order(client_order_id="order-2"), **FAVORABLE)
     assert transport.calls == []
     reasons = [row["reason"] for row in _decisions()]
-    assert reasons == ["stale_market_data", "stale_market_data"]
+    assert reasons == ["stale_market_data", "timestamp_untrusted"]
     assert all(row["inputs"]["market_data_fresh"] is False for row in _decisions())
     assert reconcile()["passed"] is True
 
@@ -355,20 +355,20 @@ def test_authorize_paper_order_rejects_missing_or_breached_gross():
         quantity=1, price=1, current_position_notional=0, daily_pnl=0,
         observation_time_ms=1000, decision_time_ms=1200,
         model_approved=True, feed_authenticated=True, feed_entitled=True,
-        kill_switch_active=False, current_gross_exposure=0,
+        kill_switch_active=False, symbol="BTC", current_gross_exposure=0,
     )
     assert authorize_paper_order(base) == (True, "approved_for_simulation_only")
     missing = PaperOrderContext(
         quantity=1, price=1, current_position_notional=0, daily_pnl=0,
         observation_time_ms=1000, decision_time_ms=1200,
         model_approved=True, feed_authenticated=True, feed_entitled=True,
-        kill_switch_active=False,
+        kill_switch_active=False, symbol="BTC",
     )
     assert authorize_paper_order(missing) == (False, "exposure_input_missing")
     breached = PaperOrderContext(
         quantity=1, price=1, current_position_notional=0, daily_pnl=0,
         observation_time_ms=1000, decision_time_ms=1200,
         model_approved=True, feed_authenticated=True, feed_entitled=True,
-        kill_switch_active=False, current_gross_exposure=100_000,
+        kill_switch_active=False, symbol="BTC", current_gross_exposure=100_000,
     )
     assert authorize_paper_order(breached) == (False, "exposure_budget_exceeded")

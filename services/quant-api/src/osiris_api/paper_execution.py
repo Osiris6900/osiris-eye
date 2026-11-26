@@ -2464,14 +2464,14 @@ def mark_to_market(
             )
             verdict = _timestamp_verdict(provenance, account, observed, now)
             tokens = _bind_provenance(provenance, clock_healthy=True, verdict=verdict)
-            if verdict == "timestamp_untrusted":
-                raise ValueError("timestamp_untrusted")
             decisions: list[tuple[dict[str, Any], bool, str]] = []
             for item in parsed:
                 ok, reason = _screen_observation(
                     conn, account, item, now=now, max_jump_multiple=multiple,
                     enforce_sequence=True, enforce_time_order=True,
                 )
+                if verdict == "timestamp_untrusted":
+                    ok, reason = False, "timestamp_untrusted"
                 decisions.append((item, ok, reason))
             if any(not ok for _, ok, _reason in decisions):
                 for item, ok, reason in decisions:

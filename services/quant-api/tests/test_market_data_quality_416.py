@@ -85,13 +85,13 @@ def test_same_timestamp_replacement_within_the_jump_band_stays_allowed(db):
 def test_out_of_order_tick_does_not_replace_the_last_good_mark(db):
     mark_to_market({"BTC": "100"}, observed_at=NOW_S, now=NOW_S)
     before = snapshot()["marks"]
-    with pytest.raises(ValueError, match="out_of_order_observation"):
+    with pytest.raises(ValueError, match="timestamp_untrusted"):
         mark_to_market({"BTC": "50"}, observed_at=EARLIER, now=NOW_S)
     assert snapshot()["marks"] == before
     rejected = [
         row for row in snapshot()["audit"] if row["event"] == "market_observation_rejected"
     ]
-    assert "out_of_order_observation" in rejected[-1]["payload"]
+    assert "timestamp_untrusted" in rejected[-1]["payload"]
     assert reconcile()["passed"] is True
 
 
