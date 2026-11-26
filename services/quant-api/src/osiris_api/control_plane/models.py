@@ -172,7 +172,7 @@ class ModelService:
             alias,
             {
                 "model_id": model_id,
-                "artifact_sha256": item["value"]["artifact_sha256"],
+                "artifact_sha256": decision["artifact_sha256"],
                 "scope": "paper-research",
             },
             expected_version=decision["previous_version"],
