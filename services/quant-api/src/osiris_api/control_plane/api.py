@@ -257,6 +257,21 @@ def market_regime_view(
     return dashboard_response(run(regime_diagnostic, history), request, response)
 
 
+@router.get("/market/regime/oos")
+def market_regime_oos_view(
+    request: Request, response: Response,
+    provider: str = Query(..., min_length=1, max_length=64),
+    symbol: str = Query(..., min_length=1, max_length=64),
+    start: str = Query(..., min_length=20, max_length=64),
+    end: str = Query(..., min_length=20, max_length=64),
+    asset_class: str = Query(..., min_length=1, max_length=32),
+):
+    from .market_views import regime_oos
+
+    history = dashboard_bars(request, response, provider, symbol, start, end, asset_class)
+    return dashboard_response(run(regime_oos, history), request, response)
+
+
 @router.post("/backtest/simulate")
 def simulate_backtest(request: Request, payload: dict = Body(...)):
     from .agents import execute_tool

@@ -337,23 +337,40 @@ class MarketViews:
         return result
 
 
-def regime_diagnostic(history: dict) -> dict:
-    """Descriptive per-observation thresholds, not fitted predictions or OOS approval."""
+_REGIME_THRESHOLDS = {
+    "crisis_drawdown": 0.2,
+    "volatile_per_observation_log_return_std": 0.03,
+    "trend_efficiency": 0.5,
+}
+_REGIME_WINDOW = 20
+_REGIME_GROUPS = {
+    "trending_up": "trending",
+    "trending_down": "trending",
+    "ranging": "ranging",
+    "volatile": "stressed",
+    "crisis": "stressed",
+}
+
+
+def _normalized_regime_bars(history: dict, minimum: int) -> list[dict]:
     bars = history.get("bars")
     if (
         history.get("mode") not in {"public", "synthetic", "sandbox"}
         or not isinstance(bars, list)
-        or not 21 <= len(bars) <= 50000
+        or not minimum <= len(bars) <= 50000
     ):
-        raise ValueError("at_least_21_bars_required_for_regime")
+        raise ValueError(f"at_least_{minimum}_bars_required_for_regime")
     normalized = [normalize_bar(row, history["symbol"]) for row in bars]
-    closes = [row["close"] for row in normalized]
     now = datetime.now(UTC)
     if any(parse_market_time(row["available_at"]) > now for row in normalized) or any(
         parse_market_time(b["event_time"]) <= parse_market_time(a["event_time"])
             for a, b in pairwise(normalized)
     ):
         raise ValueError("unavailable_or_unordered_regime_bars")
+    return normalized
+
+
+def _regime_metrics(closes: list[float]) -> dict:
     returns = [math.log(b) - math.log(a) for a, b in pairwise(closes)]
     volatility, movement = pstdev(returns), sum(abs(r) for r in returns)
     efficiency = sum(returns) / movement if movement else 0.0
@@ -373,9 +390,21 @@ def regime_diagnostic(history: dict) -> dict:
         else "ranging"
     )
     return {
+        "label": label,
+        "per_observation_volatility": volatility,
+        "directional_efficiency": efficiency,
+        "max_drawdown": drawdown,
+    }
+
+
+def regime_diagnostic(history: dict) -> dict:
+    """Descriptive per-observation thresholds, not fitted predictions or OOS approval."""
+    normalized = _normalized_regime_bars(history, 21)
+    metrics = _regime_metrics([row["close"] for row in normalized])
+    return {
         "schema": "osiris.regime-diagnostic.v1",
         "method": "descriptive-log-return-thresholds-v1",
-        "label": label,
+        "label": metrics["label"],
         "provider": history["provider"],
         "symbol": history["symbol"],
         "source_mode": history["mode"],
@@ -384,15 +413,118 @@ def regime_diagnostic(history: dict) -> dict:
         "first_event_time": normalized[0]["event_time"],
         "last_event_time": normalized[-1]["event_time"],
         "last_available_at": max(row["available_at"] for row in normalized),
-        "per_observation_volatility": volatility,
-        "directional_efficiency": efficiency,
-        "max_drawdown": drawdown,
-        "thresholds": {
-            "crisis_drawdown": 0.2,
-            "volatile_per_observation_log_return_std": 0.03,
-            "trend_efficiency": 0.5,
-        },
+        "per_observation_volatility": metrics["per_observation_volatility"],
+        "directional_efficiency": metrics["directional_efficiency"],
+        "max_drawdown": metrics["max_drawdown"],
+        "thresholds": dict(_REGIME_THRESHOLDS),
         "independent_model_approval": False,
         "liquidity_state": "unavailable_without_order_book",
+        "live_execution": False,
+    }
+
+
+def _new_outcome_bucket() -> dict:
+    return {
+        "observations": 0,
+        "return_sum": 0.0,
+        "absolute_return_sum": 0.0,
+        "return_squared_sum": 0.0,
+        "positive": 0,
+        "negative": 0,
+    }
+
+
+def _accumulate_outcome(bucket: dict, value: float) -> None:
+    bucket["observations"] += 1
+    bucket["return_sum"] += value
+    bucket["absolute_return_sum"] += abs(value)
+    bucket["return_squared_sum"] += value * value
+    bucket["positive"] += value > 0
+    bucket["negative"] += value < 0
+
+
+def _outcome_summary(bucket: dict) -> dict:
+    count = bucket["observations"]
+    if not count:
+        return {
+            "observations": 0,
+            "mean_next_log_return": None,
+            "mean_absolute_next_log_return": None,
+            "next_log_return_volatility": None,
+            "positive_next_return_fraction": None,
+            "negative_next_return_fraction": None,
+        }
+    mean = bucket["return_sum"] / count
+    variance = max(bucket["return_squared_sum"] / count - mean * mean, 0.0)
+    return {
+        "observations": count,
+        "mean_next_log_return": mean,
+        "mean_absolute_next_log_return": bucket["absolute_return_sum"] / count,
+        "next_log_return_volatility": math.sqrt(variance),
+        "positive_next_return_fraction": bucket["positive"] / count,
+        "negative_next_return_fraction": bucket["negative"] / count,
+    }
+
+
+def regime_oos(history: dict) -> dict:
+    """Causal fixed-threshold labels with next-bar descriptive OOS outcomes."""
+    normalized = _normalized_regime_bars(history, _REGIME_WINDOW + 2)
+    evaluations = []
+    by_label = {label: _new_outcome_bucket() for label in _REGIME_GROUPS}
+    by_regime = {
+        regime: _new_outcome_bucket() for regime in ("trending", "ranging", "stressed")
+    }
+    overall = _new_outcome_bucket()
+    for outcome_index in range(_REGIME_WINDOW + 1, len(normalized)):
+        label_index = outcome_index - 1
+        features = normalized[label_index - _REGIME_WINDOW : label_index + 1]
+        outcome = normalized[outcome_index]
+        latest_feature = max(features, key=lambda row: parse_market_time(row["available_at"]))
+        if parse_market_time(latest_feature["available_at"]) > parse_market_time(
+            features[-1]["event_time"]
+        ):
+            raise ValueError("regime_feature_not_available_before_outcome")
+        metrics = _regime_metrics([row["close"] for row in features])
+        label = metrics["label"]
+        next_return = math.log(outcome["close"]) - math.log(features[-1]["close"])
+        evaluations.append(
+            {
+                "label_event_time": features[-1]["event_time"],
+                "label_available_at": latest_feature["available_at"],
+                "outcome_event_time": outcome["event_time"],
+                "label": label,
+                "next_log_return": next_return,
+            }
+        )
+        _accumulate_outcome(by_label[label], next_return)
+        _accumulate_outcome(by_regime[_REGIME_GROUPS[label]], next_return)
+        _accumulate_outcome(overall, next_return)
+    return {
+        "schema": "osiris.regime-oos.v1",
+        "method": "fixed-threshold-causal-next-bar-v1",
+        "provider": history["provider"],
+        "symbol": history["symbol"],
+        "source_mode": history["mode"],
+        "bars_sha256": digest(normalized),
+        "history_observations": len(normalized),
+        "feature_window_bars": _REGIME_WINDOW + 1,
+        "evaluated_observations": len(evaluations),
+        "first_label_event_time": evaluations[0]["label_event_time"],
+        "last_outcome_event_time": evaluations[-1]["outcome_event_time"],
+        "evaluations": evaluations,
+        "overall": _outcome_summary(overall),
+        "by_label": {label: _outcome_summary(bucket) for label, bucket in by_label.items()},
+        "by_regime": {
+            regime: _outcome_summary(bucket) for regime, bucket in by_regime.items()
+        },
+        "thresholds": dict(_REGIME_THRESHOLDS),
+        "thresholds_fitted_on_history": False,
+        "causal_feature_availability_enforced": True,
+        "evaluation_horizon": "next_bar",
+        "overlapping_feature_windows": True,
+        "independent_observations": False,
+        "statistical_significance_tested": False,
+        "predictive_model_approved": False,
+        "independent_model_approval": False,
         "live_execution": False,
     }
