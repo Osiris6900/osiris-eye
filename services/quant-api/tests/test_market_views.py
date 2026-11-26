@@ -3,6 +3,7 @@
 import base64
 import json
 import math
+import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
@@ -384,7 +385,9 @@ def test_regime_oos_api_requires_research_access(tmp_path, monkeypatch):
 
 def test_api_intake_requires_mfa_operations_and_read_rejects_viewer(tmp_path, monkeypatch):
     monkeypatch.setenv("OSIRIS_CONTROL_DB", str(tmp_path / "api.db"))
-    monkeypatch.setenv("OSIRIS_CONTROL_MASTER_KEY", base64.b64encode(b"k" * 32).decode())
+    monkeypatch.setenv("OSIRIS_CONTROL_MASTER_KEY", base64.b64encode(os.urandom(32)).decode())
+    monkeypatch.setenv("OSIRIS_CONTROL_MASTER_KEY_ID", "identity-master-1")
+    monkeypatch.setenv("OSIRIS_CONTROL_MASTER_KEY_VERSION", "1")
     monkeypatch.setenv(
         "OSIRIS_ADMIN_TOKENS",
         json.dumps({"operator": "fixture-operator-token", "viewer": "fixture-viewer-token"}),
