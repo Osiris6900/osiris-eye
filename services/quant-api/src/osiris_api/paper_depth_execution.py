@@ -188,6 +188,31 @@ def prepare(conn, order, context):
     decision_ms = service._clock_ms()
     if not policy["min_latency_ms"] <= decision_ms - book["captured_ms"] <= policy["max_age_ms"]:
         raise ValueError("paper_depth_latency_or_freshness_guard")
+    # The mark is the same book's midpoint. Reject it before any snapshot audit.
+    observed = datetime.fromtimestamp(book["captured_ms"] / 1000, UTC)
+    decision_at = datetime.fromtimestamp(decision_ms / 1000, UTC)
+    midpoint = _exact((levels["BUY"][0][0] + levels["SELL"][0][0]) / 2)
+    account = conn.execute("SELECT * FROM paper_exec_meta WHERE id=1").fetchone()
+    ok, reason = ledger._screen_observation(
+        conn, account, {
+            "symbol": order["symbol"],
+            "price": ledger._number(midpoint, positive=True),
+            "source": "coinbase-exchange",
+            "event": observed,
+            "received": decision_at,
+            "available": observed,
+            "sequence": None,
+            "bid": ledger._number(_exact(levels["SELL"][0][0]), positive=True),
+            "ask": ledger._number(_exact(levels["BUY"][0][0]), positive=True),
+            "resync": False,
+        },
+        now=decision_at.isoformat(),
+        max_jump_multiple=ledger.DEFAULT_MAX_MARK_JUMP_MULTIPLE,
+        enforce_sequence=False,
+        enforce_time_order=True,
+    )
+    if not ok:
+        raise ledger.MarketDataRejected(reason, order["symbol"])
     old = state["books"].get(order["symbol"])
     if old and (old["policy"] != policy or old["book"]["sequence"] > book["sequence"]):
         raise ValueError("depth_snapshot_or_policy_rollback")
@@ -206,21 +231,24 @@ def prepare(conn, order, context):
                "price": _exact(selected[0]) if selected else None,
                "quantity": _exact(selected[1]) if selected else "0"}
     # Refresh the target's mark from the same book before independent fill risk.
-    observed = datetime.fromtimestamp(book["captured_ms"] / 1000, UTC).isoformat()
+    observed_at = observed.isoformat()
     midpoint = _exact((levels["BUY"][0][0] + levels["SELL"][0][0]) / 2)
     # A valuation midpoint can be half a tick even when both executable quotes
     # are on the venue grid. Check identity/status/effectivity here; the shared
     # fill path independently enforces the selected execution price and lot.
-    decision = ledger.instrument_decision(order["symbol"], as_of=observed)
+    decision = ledger.instrument_decision(order["symbol"], as_of=observed_at)
     if not decision["ok"]:
         raise ValueError(decision["reason"])
     conn.execute("INSERT INTO paper_exec_marks VALUES (?,?,?) ON CONFLICT(symbol) DO UPDATE SET price=excluded.price,observed_at=excluded.observed_at",
-                 (order["symbol"], midpoint, observed))
+                 (order["symbol"], midpoint, observed_at))
+    ledger._save_mark_cursor(
+        conn, order["symbol"], "coinbase-exchange", int(book["captured_ms"]), None, clear_gap=False,
+    )
     ledger._refresh_unrealized(conn)
     ledger._append_audit(conn, "mark_to_market", None, {"marks": {order["symbol"]: midpoint},
-                           "observed_at": observed, "live_execution": False, "broker_order_submitted": False,
+                           "observed_at": observed_at, "live_execution": False, "broker_order_submitted": False,
                            **ledger._instrument_audit_fields(decision)})
-    return {"receipt": receipt, "replayed": False, "observed_at": observed,
+    return {"receipt": receipt, "replayed": False, "observed_at": observed_at,
             "now": datetime.fromtimestamp(decision_ms / 1000, UTC).isoformat()}
 
 

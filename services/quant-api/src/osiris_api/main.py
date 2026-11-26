@@ -200,8 +200,10 @@ def guarded(fn, *args, **kwargs):
 
 @app.get("/health")
 def health():
+    from .control_plane.clock import current_clock_health
     return {"status": "ok", "mode": "research_only", "live_execution": False,
-            "data_store": "sqlite", "module_count": len(MODULES)}
+            "data_store": "sqlite", "module_count": len(MODULES),
+            "clock_health": current_clock_health()}
 
 
 @app.get("/platform/modules")

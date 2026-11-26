@@ -10,7 +10,8 @@ from decimal import Decimal, InvalidOperation
 from fractions import Fraction
 from urllib.parse import quote, urlencode
 
-from ..risk import RiskLimits, check_execution
+from ..paper_execution import authorize_paper_submission
+from ..risk import RiskLimits
 from .database import Database, digest, identifier
 from .vendors import HttpJson
 
@@ -158,33 +159,18 @@ class AlpacaPaperBroker:
         decision = assess_order(symbol, price=price, quantity=quantity)
         if not decision["ok"]:
             raise ValueError(decision["reason"])
-        allowed, reason, _ = check_execution(
-            side=order["side"],
-            quantity=float(quantity),
-            price=float(price),
-            current_position_notional=position,
-            current_gross_exposure=gross,
-            daily_pnl=daily_pnl,
-            limits=limits,
-            kill_switch_active=kill_switch,
-            market_data_fresh=fresh,
-            risk_service_available=True,
-            symbol=symbol,
-        )
-        if not allowed:
-            raise ValueError(reason)
-        # A float approval can round away a tiny excess at an exact budget.
-        # Compare the original decimal economics without Decimal-context rounding.
-        notional = Fraction(quantity) * Fraction(price)
-        if notional > Fraction(str(limits.max_order_notional)):
-            raise ValueError("max_order_notional_exceeded")
-        if order["side"].upper() == "BUY":
-            if notional > Fraction(str(limits.max_position_notional)) - Fraction(str(position)):
-                raise ValueError("max_position_notional_exceeded")
-            if notional > Fraction(str(limits.max_gross_exposure)) - Fraction(str(gross)):
-                raise ValueError("exposure_budget_exceeded")
-        elif notional > Fraction(str(position)) or notional > Fraction(str(gross)):
-            raise ValueError("invalid_order_or_position")
+        # Exposure, P&L, limits, kill switch, and freshness come from the paper
+        # ledger. These arguments cannot approve an order.
+        _ = (limits, position, gross, daily_pnl, kill_switch, fresh)
+        try:
+            decision = authorize_paper_submission(
+                client_order_id=client_id, symbol=symbol, side=order["side"],
+                quantity=quantity, price=price,
+            )
+        except Exception:  # noqa: BLE001 - a gateway fault must not submit
+            raise ValueError("risk_service_unavailable") from None
+        if decision.get("approved") is not True:
+            raise ValueError(decision.get("reason") or "risk_service_unavailable")
         if not self.enabled:
             raise ValueError("paper_broker_not_enabled")
         fingerprint = digest(order)

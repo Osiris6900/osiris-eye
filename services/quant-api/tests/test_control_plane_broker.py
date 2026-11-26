@@ -1,11 +1,13 @@
 """An upstream client ID cannot override the risk-approved order contract."""
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from threading import Event
 
 import pytest
 
 from osiris_api.control_plane.broker import AlpacaPaperBroker
 from osiris_api.control_plane.database import Database, digest
+from osiris_api.paper_execution import initialize_paper_account, mark_to_market, submit_paper_order
 from osiris_api.risk import RiskLimits
 
 ORDER = {"client_order_id": "order-1", "symbol": "TEST", "side": "BUY",
@@ -38,6 +40,21 @@ def broker(db, transport):
                              enabled=True, transport=transport)
 
 
+def open_book(monkeypatch, tmp_path, *, limits=None, shares="0", price="100"):
+    """Server-side book the broker gate reads. Caller floats are not this."""
+    monkeypatch.setenv("OSIRIS_PAPER_EXECUTION_DB", str(tmp_path / "paper.sqlite3"))
+    monkeypatch.delenv("OSIRIS_ENABLE_LIVE_EXECUTION", raising=False)
+    initialize_paper_account("1000000", limits or RiskLimits(), "86400", "120")
+    stamp = datetime.now(timezone.utc).isoformat()
+    if shares not in {"0", "0.0"}:
+        filled = submit_paper_order(
+            client_order_id="seed-buy", symbol="TEST", side="BUY",
+            quantity=shares, price=price, fee="0", observed_at=stamp, now=stamp,
+        )
+        assert filled["status"] == "filled", filled
+    mark_to_market({"TEST": price}, observed_at=stamp, now=stamp)
+
+
 @pytest.mark.parametrize("changes", [
     {"client_order_id": "another-order"}, {"id": None}, {"id": ["bad"]},
     {"symbol": "OTHER"}, {"side": "sell"}, {"qty": "4"}, {"qty": True},
@@ -52,7 +69,8 @@ def broker(db, transport):
     {"status": "rejected", "filled_qty": "1", "filled_avg_price": "99"},
     {"qty": "1e999999999"}, {"filled_qty": "1e999999999"},
 ])
-def test_unbound_acknowledgement_stays_uncertain_until_valid_reconciliation(tmp_path, changes):
+def test_unbound_acknowledgement_stays_uncertain_until_valid_reconciliation(tmp_path, monkeypatch, changes):
+    open_book(monkeypatch, tmp_path)
     db = Database(str(tmp_path / "broker.db"))
     good = snapshot()
     transport = Transport(snapshot(**changes), good)
@@ -71,7 +89,8 @@ def test_unbound_acknowledgement_stays_uncertain_until_valid_reconciliation(tmp_
     assert all(call[1].startswith("https://paper-api.alpaca.markets/") for call in transport.calls)
 
 
-def test_partial_full_fill_progress_and_exact_decimal_equivalence_survive_restart(tmp_path):
+def test_partial_full_fill_progress_and_exact_decimal_equivalence_survive_restart(tmp_path, monkeypatch):
+    open_book(monkeypatch, tmp_path)
     path = str(tmp_path / "broker.db")
     part = snapshot(status="partially_filled", filled_qty="1.00", filled_avg_price="99")
     full = snapshot(status="filled", filled_qty="3", filled_avg_price="99.5",
@@ -86,7 +105,8 @@ def test_partial_full_fill_progress_and_exact_decimal_equivalence_survive_restar
 
 
 @pytest.mark.parametrize("status", ["new", "pending_new", "accepted", "accepted_for_bidding"])
-def test_pre_execution_state_cannot_hide_already_reported_fills(tmp_path, status):
+def test_pre_execution_state_cannot_hide_already_reported_fills(tmp_path, monkeypatch, status):
+    open_book(monkeypatch, tmp_path)
     db = Database(str(tmp_path / "broker.db"))
     partial = snapshot(status="partially_filled", filled_qty="1", filled_avg_price="99")
     transport = Transport(partial, {**partial, "status": status})
@@ -102,7 +122,8 @@ def test_pre_execution_state_cannot_hide_already_reported_fills(tmp_path, status
     {"id": "different-broker-order"}, {"filled_qty": "0", "filled_avg_price": None},
     {"filled_avg_price": "98"}, {"symbol": "OTHER"},
 ])
-def test_regressing_or_conflicting_snapshot_preserves_last_verified_state(tmp_path, changes):
+def test_regressing_or_conflicting_snapshot_preserves_last_verified_state(tmp_path, monkeypatch, changes):
+    open_book(monkeypatch, tmp_path)
     db = Database(str(tmp_path / "broker.db"))
     part = snapshot(status="partially_filled", filled_qty="1", filled_avg_price="99")
     transport = Transport(part, {**part, **changes})
@@ -118,7 +139,8 @@ def test_regressing_or_conflicting_snapshot_preserves_last_verified_state(tmp_pa
     ("filled", "3", "99"), ("canceled", "1", "99"),
     ("expired", "0", None), ("rejected", "0", None),
 ])
-def test_terminal_orders_cannot_reopen_or_change_execution_progress(tmp_path, terminal, filled, average):
+def test_terminal_orders_cannot_reopen_or_change_execution_progress(tmp_path, monkeypatch, terminal, filled, average):
+    open_book(monkeypatch, tmp_path)
     db = Database(str(tmp_path / "broker.db"))
     final = snapshot(status=terminal, filled_qty=filled, filled_avg_price=average)
     transport = Transport(final, snapshot())
@@ -129,7 +151,8 @@ def test_terminal_orders_cannot_reopen_or_change_execution_progress(tmp_path, te
     assert db.get("broker-orders", "order-1")["value"]["response"] == final
 
 
-def test_sell_acknowledgement_cannot_claim_a_fill_below_the_sell_limit(tmp_path):
+def test_sell_acknowledgement_cannot_claim_a_fill_below_the_sell_limit(tmp_path, monkeypatch):
+    open_book(monkeypatch, tmp_path, shares="3")
     db = Database(str(tmp_path / "broker.db"))
     service = broker(db, Transport(snapshot(side="sell", status="filled", filled_qty="3",
                                            filled_avg_price="99")))
@@ -137,7 +160,8 @@ def test_sell_acknowledgement_cannot_claim_a_fill_below_the_sell_limit(tmp_path)
         service.submit({**ORDER, "side": "SELL"}, **{**CONTEXT, "position": 300, "gross": 300})
 
 
-def test_legacy_client_id_only_record_requires_trusted_intent_before_reconciliation(tmp_path):
+def test_legacy_client_id_only_record_requires_trusted_intent_before_reconciliation(tmp_path, monkeypatch):
+    open_book(monkeypatch, tmp_path)
     db = Database(str(tmp_path / "broker.db"))
     db.put("broker-orders", "order-1", {"fingerprint": digest(ORDER), "status": "submitting"})
     transport = Transport(snapshot())
@@ -148,7 +172,8 @@ def test_legacy_client_id_only_record_requires_trusted_intent_before_reconciliat
     assert not transport.calls
 
 
-def test_concurrent_retry_and_changed_intent_cannot_submit_a_second_order(tmp_path):
+def test_concurrent_retry_and_changed_intent_cannot_submit_a_second_order(tmp_path, monkeypatch):
+    open_book(monkeypatch, tmp_path)
     db = Database(str(tmp_path / "broker.db"))
     started, release = Event(), Event()
 
@@ -174,19 +199,23 @@ def test_concurrent_retry_and_changed_intent_cannot_submit_a_second_order(tmp_pa
     assert len(transport.calls) == 1
 
 
-@pytest.mark.parametrize("order,context,reason", [
+@pytest.mark.parametrize("order,limits,shares,price,reason", [
     ({**ORDER, "quantity": "1", "limit_price": "100.000000000000000001"},
-     {**CONTEXT, "limits": RiskLimits(max_order_notional=100)}, "max_order_notional_exceeded"),
+     RiskLimits(max_order_notional=100), "0", "100", "max_order_notional_exceeded"),
     ({**ORDER, "quantity": "1e-200", "limit_price": "1"},
-     {**CONTEXT, "position": 100, "gross": 100,
-      "limits": RiskLimits(max_position_notional=100)}, "max_position_notional_exceeded"),
+     RiskLimits(max_position_notional=100), "100", "1", "max_position_notional_exceeded"),
     ({**ORDER, "quantity": "1e-200", "limit_price": "1"},
-     {**CONTEXT, "gross": 100, "limits": RiskLimits(max_gross_exposure=100)},
-     "exposure_budget_exceeded"),
-    ({**ORDER, "side": "SELL", "quantity": "1", "limit_price": "100.000000000000000001"},
-     {**CONTEXT, "position": 100, "gross": 100}, "invalid_order_or_position"),
+     RiskLimits(max_gross_exposure=100), "100", "1", "exposure_budget_exceeded"),
+    # One ULP above the held shares. Float quantity collapses to the position.
+    ({**ORDER, "side": "SELL", "quantity": "1.000000000000000001", "limit_price": "100"},
+     RiskLimits(), "1", "100", "invalid_order_or_position"),
 ])
-def test_float_rounding_cannot_authorize_an_order_above_exact_risk_budgets(tmp_path, order, context, reason):
+def test_float_rounding_cannot_authorize_an_order_above_exact_risk_budgets(
+    tmp_path, monkeypatch, order, limits, shares, price, reason,
+):
+    open_book(monkeypatch, tmp_path, limits=limits, shares=shares, price=price)
+    # Favorable caller floats would clear the old gate. The ledger budget does not.
+    context = {**CONTEXT, "limits": RiskLimits(), "position": 1_000_000, "gross": 1_000_000}
     db = Database(str(tmp_path / "broker.db"))
     transport = Transport()
     with pytest.raises(ValueError, match=reason):
@@ -204,8 +233,9 @@ def test_float_rounding_cannot_authorize_an_order_above_exact_risk_budgets(tmp_p
     ("SELL", "100.000000000000000000000000001", "100"),
 ])
 def test_cumulative_average_cannot_hide_invalid_incremental_fill(
-    tmp_path, side, prior_average, next_average
+    tmp_path, monkeypatch, side, prior_average, next_average
 ):
+    open_book(monkeypatch, tmp_path, shares="3" if side == "SELL" else "0")
     db = Database(str(tmp_path / "broker.db"))
     part = snapshot(side=side.lower(), status="partially_filled", filled_qty="1",
                     filled_avg_price=prior_average)
@@ -274,7 +304,8 @@ def test_partial_day_order_can_finish_and_replay_without_further_fills(tmp_path)
     ("BUY", "50", "75"), ("SELL", "150", "125"),
     ("BUY", "100", "100"), ("SELL", "100", "100"),
 ])
-def test_valid_incremental_limit_fills_still_reconcile(tmp_path, side, prior_average, next_average):
+def test_valid_incremental_limit_fills_still_reconcile(tmp_path, monkeypatch, side, prior_average, next_average):
+    open_book(monkeypatch, tmp_path, shares="3" if side == "SELL" else "0")
     db = Database(str(tmp_path / "broker.db"))
     first = snapshot(side=side.lower(), status="partially_filled", filled_qty="1",
                      filled_avg_price=prior_average)

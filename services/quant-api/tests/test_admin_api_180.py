@@ -678,13 +678,16 @@ def test_operations_reports_node_version_and_paper_loss_gate(client, monkeypatch
     assert body["read_only"] is True
     assert body["live_trading_authorized"] is False
     assert set(body) == {
-        "schema", "generated_at", "read_only", "live_trading_authorized", "nodes", "paper_trading",
+        "schema", "generated_at", "read_only", "live_trading_authorized", "clock_health", "nodes", "paper_trading",
         "event_bus",
     }
     assert body["event_bus"]["available"] is False
     assert body["event_bus"]["reason"] == "permission_denied"
     assert body["event_bus"]["consumers"] == []
     assert body["event_bus"]["live_trading_authorized"] is False
+    assert body["clock_health"]["orders_fail_closed"] is False
+    assert body["clock_health"]["live_trading_authorized"] is False
+    assert body["clock_health"]["network_probe"] is False
     enrolled = body["nodes"]["nodes"]
     assert body["nodes"]["status"] == "enrolled_registry"
     assert body["nodes"]["enrolled_count"] == 1
