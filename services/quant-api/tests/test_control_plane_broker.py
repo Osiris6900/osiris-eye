@@ -221,6 +221,55 @@ def test_cumulative_average_cannot_hide_invalid_incremental_fill(
     assert [call[0] for call in transport.calls] == ["POST", "GET"]
 
 
+@pytest.mark.parametrize("later", [
+    {"status": "accepted", "filled_qty": "0", "filled_avg_price": None},
+    {"status": "new", "filled_qty": "0", "filled_avg_price": None},
+    {"status": "partially_filled", "filled_qty": "1", "filled_avg_price": "99"},
+])
+def test_done_for_day_with_no_fill_cannot_resume(tmp_path, later):
+    db = Database(str(tmp_path / "broker.db"))
+    finished = snapshot(status="done_for_day", filled_qty="0", filled_avg_price=None)
+    transport = Transport(finished, snapshot(**later))
+    service = broker(db, transport)
+    assert service.submit(ORDER, **CONTEXT) == finished
+    before = db.get("broker-orders", "order-1")
+    with pytest.raises(ValueError, match="broker_snapshot_mismatch"):
+        service.reconcile("order-1")
+    assert db.get("broker-orders", "order-1") == before
+    assert before["value"]["response"]["status"] == "done_for_day"
+
+
+@pytest.mark.parametrize("later", [
+    {"status": "partially_filled", "filled_qty": "1", "filled_avg_price": "99"},
+    {"status": "pending_cancel", "filled_qty": "1", "filled_avg_price": "99"},
+    # An in-limit extra unit would pass the incremental-price check alone.
+    {"status": "partially_filled", "filled_qty": "2", "filled_avg_price": "99.5"},
+    {"status": "filled", "filled_qty": "3", "filled_avg_price": "99.5"},
+])
+def test_done_for_day_partial_cannot_reopen_or_gain_fills(tmp_path, later):
+    db = Database(str(tmp_path / "broker.db"))
+    finished = snapshot(status="done_for_day", filled_qty="1", filled_avg_price="99")
+    transport = Transport(finished, snapshot(**later))
+    service = broker(db, transport)
+    assert service.submit(ORDER, **CONTEXT) == finished
+    before = db.get("broker-orders", "order-1")
+    with pytest.raises(ValueError, match="broker_snapshot_mismatch"):
+        service.reconcile("order-1")
+    assert db.get("broker-orders", "order-1") == before
+
+
+def test_partial_day_order_can_finish_and_replay_without_further_fills(tmp_path):
+    db = Database(str(tmp_path / "broker.db"))
+    part = snapshot(status="partially_filled", filled_qty="1", filled_avg_price="99")
+    done = snapshot(status="done_for_day", filled_qty="1", filled_avg_price="99")
+    transport = Transport(part, done, done)
+    service = broker(db, transport)
+    assert service.submit(ORDER, **CONTEXT)["status"] == "partially_filled"
+    assert service.reconcile("order-1") == done
+    assert service.reconcile("order-1") == done
+    assert [call[0] for call in transport.calls] == ["POST", "GET", "GET"]
+
+
 @pytest.mark.parametrize("side,prior_average,next_average", [
     ("BUY", "50", "75"), ("SELL", "150", "125"),
     ("BUY", "100", "100"), ("SELL", "100", "100"),

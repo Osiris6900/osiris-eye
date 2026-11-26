@@ -36,11 +36,11 @@ def test_risk_governor_and_catalyst_scenarios():
 
 def test_model_observability_and_paper_reconciliation():
     assert observe_model_health([0, 0, 1, 1], [5, 5, 6, 6])["status"] == "alert"
-    result = reconcile_paper_trades(
-        [{"order_id": "o1", "asset": "A", "side": "buy", "quantity": 10}],
-        [{"order_id": "o1", "quantity": 6, "price": 100}],
-        [{"asset": "A", "quantity": 5}])
-    assert result["status"] == "breaks_found" and result["position_breaks"]["A"] == 1
+    with pytest.raises(ValueError, match="caller_supplied_numbers_rejected"):
+        reconcile_paper_trades(
+            [{"order_id": "o1", "asset": "A", "side": "buy", "quantity": 10}],
+            [{"order_id": "o1", "quantity": 6, "price": 100}],
+            [{"asset": "A", "quantity": 5}])
 
 
 def test_security_and_workflow_gates():
