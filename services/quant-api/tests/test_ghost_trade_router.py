@@ -18,7 +18,7 @@ def request(mode="paper"):
             quantity=1.0, price=10.0, current_position_notional=0.0,
             daily_pnl=0.0, observation_time_ms=1000, decision_time_ms=1200,
             model_approved=True, feed_authenticated=True, feed_entitled=True,
-            kill_switch_active=False, symbol="BTC",
+            kill_switch_active=False, symbol="BTC", current_gross_exposure=0.0,
         ),
     )
 

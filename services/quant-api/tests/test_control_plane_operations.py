@@ -17,6 +17,7 @@ from osiris_api.control_plane.deployment import RolloutController
 from osiris_api.control_plane.depth import DepthService
 from osiris_api.control_plane.observability import Observability
 from osiris_api.control_plane.vendors import VendorBarAdapter
+from osiris_api.paper_execution import initialize_paper_account, mark_to_market, set_kill_switch
 from osiris_api.risk import RiskLimits
 
 
@@ -103,7 +104,7 @@ def test_pagination_cannot_forward_credentials_to_another_host():
     assert len(transport.calls) == 1
 
 
-def test_paper_broker_risk_idempotency_and_uncertain_outcome(tmp_path):
+def test_paper_broker_risk_idempotency_and_uncertain_outcome(tmp_path, monkeypatch):
     db = Database(str(tmp_path / "broker.db"))
     order = {
         "client_order_id": "order-1",
@@ -123,9 +124,17 @@ def test_paper_broker_risk_idempotency_and_uncertain_outcome(tmp_path):
     broker = AlpacaPaperBroker(
         db, {"key": "TEST", "secret": "TEST"}, enabled=True, transport=transport
     )
+    monkeypatch.setenv("OSIRIS_PAPER_EXECUTION_DB", str(tmp_path / "paper.sqlite3"))
+    monkeypatch.delenv("OSIRIS_ENABLE_LIVE_EXECUTION", raising=False)
+    initialize_paper_account("1000000", RiskLimits(), "86400", "120")
+    stamp = datetime.now(timezone.utc).isoformat()
+    mark_to_market({"TEST": "100"}, observed_at=stamp, now=stamp)
+    set_kill_switch(True)
+    # The caller reports the kill switch as off. The ledger halt still rejects.
     with pytest.raises(ValueError, match="kill_switch"):
-        broker.submit(order, **{**context, "kill_switch": True})
+        broker.submit(order, **{**context, "kill_switch": False})
     assert not transport.calls
+    set_kill_switch(False)
     with pytest.raises(ValueError, match="outcome_unknown"):
         broker.submit(order, **context)
     with pytest.raises(ValueError, match="reconcile"):
