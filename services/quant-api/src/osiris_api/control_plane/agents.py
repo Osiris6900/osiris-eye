@@ -67,7 +67,7 @@ class ResearchAgents:
     def approve(self, request_id: str, approver: str, role: str):
         if role not in {"operator", "risk_officer", "security_admin"}:
             raise ValueError("review_permission_denied")
-        item = self.db.get("agent-requests", identifier(request_id))
+        item = self.db.get("agent-requests", identifier(approver))
         if not item or item["value"]["requester"] == identifier(approver):
             raise ValueError("independent_approver_required")
         request = item["value"]
@@ -158,12 +158,24 @@ class JobWorker:
             if claim["kind"] not in TOOLS:
                 raise ValueError("unsupported_tool")
             with tempfile.TemporaryDirectory(prefix="osiris-research-worker-") as folder:
+                # Isolated mode ignores PYTHONPATH, including the source-only test
+                # environment. Bootstrap only this trusted package root; request
+                # payloads remain on stdin and never become executable code.
+                package_root = os.path.dirname(
+                    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                )
+                bootstrap = (
+                    "import runpy,sys;"
+                    f"sys.path.insert(0,{package_root!r});"
+                    "runpy.run_module('osiris_api.control_plane.agent_worker',"
+                    "run_name='__main__')"
+                )
                 result = subprocess.run(
                     [
                         sys.executable,
                         "-I",
-                        "-m",
-                        "osiris_api.control_plane.agent_worker",
+                        "-c",
+                        bootstrap,
                         "--kind",
                         claim["kind"],
                         "--database",
