@@ -68,10 +68,10 @@ def _fill(client_order_id="buy-1", client_fill_id="fill-1", quantity="4", **over
 def test_transition_table_accepts_only_legal_moves():
     legal = {
         "new": {"accepted", "rejected"},
-        "accepted": {"partially_filled", "filled", "cancelled"},
-        "partially_filled": {"partially_filled", "filled", "cancelled"},
+        "accepted": {"partially_filled", "filled", "cancelled", "expired"},
+        "partially_filled": {"partially_filled", "filled", "cancelled", "expired"},
     }
-    terminal = ("filled", "cancelled", "rejected")
+    terminal = ("filled", "cancelled", "rejected", "expired")
     for current, targets in legal.items():
         for target in targets:
             assert order_transition(current, target) == target
@@ -81,7 +81,9 @@ def test_transition_table_accepts_only_legal_moves():
             with pytest.raises(ValueError, match="invalid_order_transition"):
                 order_transition(current, target)
     for current in terminal:
-        for target in ("new", "accepted", "partially_filled", "filled", "cancelled", "rejected"):
+        for target in (
+            "new", "accepted", "partially_filled", "filled", "cancelled", "rejected", "expired",
+        ):
             with pytest.raises(ValueError, match="invalid_order_transition"):
                 order_transition(current, target)
 
@@ -268,6 +270,7 @@ def test_recovery_keeps_an_open_partial_order_actionable(db):
     assert resumed["open_orders"] == [{
         "client_order_id": "buy-1", "symbol": "BTC", "side": "BUY", "state": "partially_filled",
         "quantity": "10", "filled_quantity": "4", "leaves_quantity": "6", "price": "100",
+        "time_in_force": "day", "expires_at": "2026-11-09T00:00:00+00:00",
     }]
     done = _fill(client_fill_id="fill-2", quantity="6")
     assert done["state"] == "filled"
