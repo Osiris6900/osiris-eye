@@ -470,6 +470,13 @@ impl OutboundQueue {
         }
         tx.commit().map_err(db_error)?;
         self.check_storage()?;
+        for item in &items {
+            if item.attempts > 1 {
+                // Audit a committed retry-processing claim without exposing
+                // plaintext. This is not evidence of network transmission.
+                eprintln!("outbound_observation_retry id={} recipient={} attempt={} observation_sha256={}", item.id, item.recipient, item.attempts, hash(&item.observation));
+            }
+        }
         Ok(items)
     }
 
