@@ -2,6 +2,7 @@
 
 import base64
 import json
+import math
 import time
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
@@ -14,7 +15,7 @@ from fastapi.testclient import TestClient
 from osiris_api.control_plane.api import router
 from osiris_api.control_plane.database import Database
 from osiris_api.control_plane.identity import totp
-from osiris_api.control_plane.market_views import MarketViews, regime_diagnostic
+from osiris_api.control_plane.market_views import MarketViews, regime_diagnostic, regime_oos
 
 NOW = datetime(2026, 11, 12, 12, tzinfo=UTC)
 
@@ -176,7 +177,7 @@ def test_invalid_option_chain_cannot_enter_the_store(service, change):
 )
 def test_unsafe_news_links_are_rejected(service, url):
     request = record("news")
-    request["payload"]["url"] = url
+    request["url"] = url
     with pytest.raises(ValueError):
         service.ingest(request)
 
@@ -284,6 +285,101 @@ def test_regime_rejects_short_future_unordered_and_live_histories():
     for item in invalid:
         with pytest.raises(ValueError):
             regime_diagnostic(item)
+
+
+@pytest.mark.parametrize(
+    "prices,label,regime",
+    [
+        ([100 + i for i in range(30)], "trending_up", "trending"),
+        ([100] * 30, "ranging", "ranging"),
+        ([100] * 20 + [60] * 10, "crisis", "stressed"),
+    ],
+)
+def test_regime_oos_is_reproducible_across_trending_ranging_and_stressed(
+    prices, label, regime
+):
+    result = regime_oos(history(prices))
+    assert result == regime_oos(history(prices))
+    assert result["schema"] == "osiris.regime-oos.v1"
+    assert result["history_observations"] == 30
+    assert result["feature_window_bars"] == 21
+    assert result["evaluated_observations"] == 9
+    assert result["by_regime"][regime]["observations"] == 9
+    assert result["by_label"][label]["observations"] == 9
+    assert {item["label"] for item in result["evaluations"]} == {label}
+    assert result["overall"] == result["by_regime"][regime]
+    assert result["thresholds_fitted_on_history"] is False
+    assert result["causal_feature_availability_enforced"] is True
+    assert result["independent_observations"] is False
+    assert result["statistical_significance_tested"] is False
+    assert result["predictive_model_approved"] is False
+    assert result["independent_model_approval"] is result["live_execution"] is False
+
+
+def test_regime_oos_future_outcome_cannot_change_earlier_labels():
+    original = history([100 + i for i in range(30)])
+    changed = deepcopy(original)
+    changed["bars"][-1].update(open=500, high=500, low=500, close=500)
+    before = regime_oos(original)
+    after = regime_oos(changed)
+    assert before["evaluations"][:-1] == after["evaluations"][:-1]
+    assert before["evaluations"][-1]["label"] == after["evaluations"][-1]["label"]
+    assert before["evaluations"][-1]["next_log_return"] != pytest.approx(
+        after["evaluations"][-1]["next_log_return"]
+    )
+    assert after["evaluations"][-1]["next_log_return"] == pytest.approx(
+        math.log(500) - math.log(128)
+    )
+
+
+def test_regime_oos_rejects_short_histories_and_late_feature_availability():
+    with pytest.raises(ValueError, match="at_least_22_bars_required_for_regime"):
+        regime_oos(history([100] * 21))
+    late = history([100 + i for i in range(30)])
+    label_time = datetime.fromisoformat(
+        late["bars"][20]["event_time"]
+    )
+    late["bars"][20]["available_at"] = (label_time + timedelta(seconds=1)).isoformat()
+    with pytest.raises(ValueError, match="regime_feature_not_available_before_outcome"):
+        regime_oos(late)
+
+
+def test_regime_oos_api_requires_research_access(tmp_path, monkeypatch):
+    monkeypatch.setenv("OSIRIS_CONTROL_DB", str(tmp_path / "api.db"))
+    monkeypatch.setenv("OSIRIS_CONTROL_MASTER_KEY", base64.b64encode(b"k" * 32).decode())
+    monkeypatch.setenv(
+        "OSIRIS_ADMIN_TOKENS",
+        json.dumps(
+            {"analyst": "fixture-analyst-token", "viewer": "fixture-viewer-token"}
+        ),
+    )
+    from osiris_api.market_routes import market_data_gateway
+
+    monkeypatch.setattr(
+        market_data_gateway,
+        "fetch_bars",
+        lambda *args, **kwargs: history([100 + i for i in range(30)]),
+    )
+    app = FastAPI()
+    app.include_router(router)
+    api = TestClient(app)
+    params = {
+        "provider": "fixture",
+        "symbol": "BTC-USD",
+        "start": "2026-11-11T00:00:00Z",
+        "end": "2026-11-12T00:00:00Z",
+        "asset_class": "crypto",
+    }
+    path = "/control-plane/market/regime/oos"
+    assert api.get(path, params=params).status_code == 401
+    viewer = {"Authorization": "Bearer fixture-viewer-token"}
+    assert api.get(path, params=params, headers=viewer).status_code == 403
+    analyst = {"Authorization": "Bearer fixture-analyst-token"}
+    response = api.get(path, params=params, headers=analyst)
+    assert response.status_code == 200, response.text
+    assert response.json()["schema"] == "osiris.regime-oos.v1"
+    assert response.json()["evaluated_observations"] == 9
+    assert response.headers["cache-control"] == "no-store"
 
 
 def test_api_intake_requires_mfa_operations_and_read_rejects_viewer(tmp_path, monkeypatch):
