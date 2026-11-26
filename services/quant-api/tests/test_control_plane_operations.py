@@ -1,3 +1,4 @@
+import os
 import socket
 import threading
 import time
@@ -494,7 +495,9 @@ def test_execution_tca_api_requires_research_access(tmp_path, monkeypatch):
 
     control = tmp_path / "control.db"
     monkeypatch.setenv("OSIRIS_CONTROL_DB", str(control))
-    monkeypatch.setenv("OSIRIS_CONTROL_MASTER_KEY", base64.b64encode(b"k" * 32).decode())
+    monkeypatch.setenv("OSIRIS_CONTROL_MASTER_KEY", base64.b64encode(os.urandom(32)).decode())
+    monkeypatch.setenv("OSIRIS_CONTROL_MASTER_KEY_ID", "identity-master-1")
+    monkeypatch.setenv("OSIRIS_CONTROL_MASTER_KEY_VERSION", "1")
     monkeypatch.setenv("OSIRIS_ADMIN_TOKENS", json.dumps({
         "analyst": "fixture-analyst-token", "viewer": "fixture-viewer-token",
     }))

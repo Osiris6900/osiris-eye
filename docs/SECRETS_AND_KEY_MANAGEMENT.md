@@ -112,9 +112,18 @@ that version, including a retired one. New signatures are produced only with
 the active version. Keep every retired signing key that still has signatures
 to verify.
 
-Package 57's single-file signing key is a separate, unmerged change. This
-package does not read that file. Callers on this branch use `sign_evidence`
-and `verify_evidence_signature`.
+The audit checkpoint and portable-bundle interface uses the separately configured
+`OSIRIS_AUDIT_SIGNING_KEY_FILE` PEM/raw key. It does not automatically select a
+key from this ring. Verify those artifacts with an explicit public-key file
+(`--public-key` or `OSIRIS_AUDIT_VERIFYING_KEY_FILE`); no private key is needed.
+Retain the corresponding trusted public keys when rotating that PEM/raw signer.
+
+The versioned ring interface uses `sign_evidence` and
+`verify_evidence_signature`. Its verifier currently requires a ring containing
+the named signing version's private seed. Do not give a reviewer the private
+ring: use the public-key-only checkpoint/bundle interface for that handoff.
+The two signature formats are separate; no automatic migration or unified
+rotation is claimed.
 
 ## Startup and paper mode
 
