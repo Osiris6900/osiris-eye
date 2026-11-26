@@ -143,12 +143,11 @@ class ModelService:
         if not item:
             raise ValueError("model_not_found")
         names = item["value"]["feature_names"]
-        point = FeatureStore(self.db).point_in_time(entity, names, as_of_ms)
+        vector = FeatureStore(self.db).vector(entity, names, as_of_ms)
         return {
-            "prediction": self.predict(
-                model_id, [point["features"][name]["value"] for name in names]
-            ),
-            "feature_sources": point,
+            "prediction": self.predict(model_id, vector["values"]),
+            "feature_sources": vector["feature_sources"],
+            "feature_vector_sha256": vector["feature_vector_sha256"],
             "live_execution": False,
         }
 
