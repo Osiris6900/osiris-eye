@@ -56,6 +56,7 @@ DIAGNOSTIC_PREFIXES = (
     'bootstrap_reconnect_error', 'bootstrap_reconnect_attempt',
     'outbound_observation_queued', 'outbound_observation_deferred',
     'outbound_observation_held', 'outbound_observation_rejected', 'outbound_observation_rearmed',
+    'outbound_observation_retry',
 )
 STANDARD_RECONNECT_SECONDS = 5
 QUEUED_PUBLISHER_RECONNECT_SECONDS = 1
@@ -225,6 +226,12 @@ class Agent:
                 match = re.search(r'payload_sha256=([0-9a-f]{64})', line)
                 if match:
                     self.emit('delivery', digest=match[1])
+            elif line.startswith('outbound_observation_retry '):
+                match = re.search(r'\bobservation_sha256=([0-9a-f]{64})(?:\s|$)', line)
+                if match is None:
+                    self.emit('fatal', reason='invalid_outbound_retry_digest', node=index)
+                else:
+                    self.emit('outbound_retry', node=index, digest=match[1])
             elif line.startswith(('publish_rejected ', 'publish_deferred ')):
                 # Rejections are diagnostic only: without a digest correlation,
                 # they cannot subtract a message from lost/pending accounting.
@@ -426,6 +433,8 @@ class Controller:
         self.stage = 'starting'
         self.deliveries, self.sent, self.samples = {}, {}, []
         self.delivery_counts = {}
+        self.retry_counts = {}
+        self.queued_observations = {}
         self.sources = {}
         self.finished, self.listeners = set(), set()
         self.subscriptions = set()
@@ -483,6 +492,13 @@ class Controller:
                 raise RuntimeError('untracked_delivery_observation')
             self.delivery_counts[digest] = self.delivery_counts.get(digest, 0) + 1
             self.deliveries.setdefault(digest, time.monotonic())
+        elif kind == 'outbound_retry':
+            observation_digest = event.get('digest')
+            digest = self.queued_observations.get(observation_digest)
+            if (host == 'host-b' or not isinstance(observation_digest, str)
+                    or digest is None or self.sources.get(digest) != host):
+                raise RuntimeError('untracked_or_wrong_host_outbound_retry')
+            self.retry_counts[digest] = self.retry_counts.get(digest, 0) + 1
         elif kind == 'metrics':
             self.metrics[host] = event
         elif kind == 'finished':
@@ -515,13 +531,21 @@ class Controller:
         digest = hashlib.sha256(payload.encode()).hexdigest()
         if digest in self.sent:
             raise ValueError('duplicate_workload_id')
-        self.sent[digest] = time.monotonic()
-        self.sources[digest] = host
-        self.command(host, action='publish', node=node, observation={
+        observation = {
             'schema': 'osiris.observation.v1', 'instrument': 'OSIRIS-SOAK',
             'observed_at': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
             'provider': 'synthetic-soak', 'payload': payload, 'payload_sha256': digest,
-        })
+        }
+        # This is the exact canonical observation byte digest emitted by the
+        # Rust queue. It is separate from the application payload digest.
+        canonical = json.dumps(observation, separators=(',', ':')).encode()
+        observation_digest = hashlib.sha256(canonical).hexdigest()
+        if observation_digest in self.queued_observations:
+            raise ValueError('duplicate_queued_observation')
+        self.queued_observations[observation_digest] = digest
+        self.sent[digest] = time.monotonic()
+        self.sources[digest] = host
+        self.command(host, action='publish', node=node, observation=observation)
         return digest
 
     def sample_outage(self, start, delivered):
@@ -578,6 +602,7 @@ def workload_records(controller, workload, start, *, outage_start_ms, restart_ms
             'published_elapsed_ms': elapsed, 'during_outage': in_outage,
             'while_sink_stopped': sink_down,
             'delivery_count': count, 'duplicate_deliveries': max(0, count - 1),
+            'definitely_unsent_retry_attempts': controller.retry_counts.get(digest, 0),
             'delivered_elapsed_ms': int((delivery_time - start) * 1000) if delivery_time is not None else None,
             'delivered_after_restart': (delivery_time is not None and restart_ms is not None
                                         and delivery_time >= start + restart_ms / 1000),
@@ -680,9 +705,10 @@ def measure(args):
             now = time.monotonic()
             elapsed = now - start
             if not stopped and elapsed >= args.duration / 2:
-                # Legacy runs intentionally drain and pause. The opt-in mode
-                # keeps scheduled workload on and retains every loss; no resend
-                # or guaranteed message durability is implied by this harness.
+                # Legacy runs intentionally drain and pause. Traffic-on mode
+                # keeps scheduled workload on and retains every loss. Its optional
+                # node queue retries only definitely-unsent attempts; the controller
+                # never submits the same workload observation a second time.
                 if not traffic_on:
                     c.wait(lambda: all(d in c.deliveries for d in workload),
                            30, stage='pre_outage_drain')
@@ -770,7 +796,9 @@ def measure(args):
             'workload': {'peers': len(c.peers), 'messages': len(workload), 'fanout': 1,
                          'duration_seconds': (ended_at-started_at).total_seconds(),
                          'messages_while_sink_stopped': sum(r['while_sink_stopped'] for r in records),
-                         'messages_during_outage': sum(r['during_outage'] for r in records)},
+                         'messages_during_outage': sum(r['during_outage'] for r in records),
+                         'definitely_unsent_retry_attempts': sum(
+                             r['definitely_unsent_retry_attempts'] for r in records)},
             'delivery': {'sent': len(workload), 'delivered': len(latencies),
                          'lost': len(workload)-len(latencies), 'rejected': 0, 'pending': 0,
                          'duplicate_deliveries': sum(r['duplicate_deliveries'] for r in records),
@@ -791,7 +819,9 @@ def measure(args):
                 'controller_resources_included_on_host_a': True,
                 'traffic_during_outage': traffic_on,
                 'traffic_mode': 'continuous_during_outage' if traffic_on else 'drained_restart',
-                'workload_retransmissions': 0,
+                'workload_retransmissions': sum(r['definitely_unsent_retry_attempts'] for r in records),
+                'controller_workload_retransmissions': 0,
+                'retry_scope': 'node attempts after a definitely-unsent result; accepted or ambiguous sends are never reissued',
                 'publication_cadence': 'best-effort controller cadence; stop acknowledgement and event processing may delay scheduling',
                 'delivery_observation_cutoff': 'controller stops collecting when all agents report finished; later or undrained events remain unmeasured',
                 'workload_paused_during_outage': not traffic_on, 'outage_probes_excluded_from_workload': True,
@@ -857,7 +887,7 @@ def main():
     p.add_argument('--duration', type=int, default=900)
     p.add_argument('--local-agents', action='store_true')
     p.add_argument('--traffic-during-outage', action='store_true',
-                   help='keep scheduled workload on during sink outage; retain losses without retry')
+                   help='keep scheduled workload on during sink outage and retain actual losses')
     p.add_argument('--workflow-url', default='https://github.com/Osiris6900/osiris-eye/actions')
     p.add_argument('--attempt', type=int, default=1)
     p.add_argument('--evidence', type=Path)
