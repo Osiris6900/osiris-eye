@@ -180,8 +180,8 @@ def test_actual_loopback_sntp_exchange_and_nonce_rejection():
         try:
             request, address = server.recvfrom(48)
             packet = bytearray(48)
-            packet[0], packet[1] = 0x24, 0x24
-            packet[1] = 0x24
+            packet[0] = 0x24
+            packet[1] = 1
             packet[24:32] = request[40:48]
             packet[32:40] = ntp_stamp(time.time())
             packet[40:48] = ntp_stamp(time.time())
@@ -235,7 +235,7 @@ def test_signed_compliance_retention_requires_verified_bucket_and_version():
 
     class S3:
         def get_object_lock_configuration(self, **kwargs):
-            return {"ObjectLockConfiguration": {"ObjectLockEnabled": True}}
+            return {"ObjectLockConfiguration": {"ObjectLockEnabled": "Enabled"}}
 
         def get_bucket_versioning(self, **kwargs):
             return {"Status": "Enabled"}
