@@ -9,6 +9,14 @@ Phase 15 adds deterministic SHA-256 hash-chain construction and verification for
 
 Each digest covers a canonical JSON envelope containing the sequence, previous digest, and event. Reordering, editing, deleting, or inserting an event invalidates the chain.
 
+## Server-side chain
+
+The calculator above stays caller-supplied, so `durable_storage` and
+`actor_authentication_verified` stay false. `audit_evidence.verify_evidence`
+reports that result as `unverifiable`. Durable records go through the phase 16
+store, which stamps the actor and the links itself and can publish a signed
+checkpoint outside the database. See `docs/AUDIT_EVIDENCE_KEYS.md`.
+
 ## Important limitations
 
 This is a tamper-evident evidence format, not a durable append-only audit database. The API verifies caller-supplied evidence and does not authenticate actors, prove timestamps, provide digital signatures, protect signing keys, or prevent an attacker who can rewrite the entire chain and its head from rebuilding it. Production audit requires separately controlled durable storage, authenticated identity, key management/signatures, retention controls, and independent monitoring.

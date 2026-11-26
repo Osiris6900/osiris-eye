@@ -1,7 +1,10 @@
 """SQLite-backed append-only audit evidence with transactional hash chaining.
 
-This provides local durable storage and tamper detection, not WORM storage,
-cryptographic actor authentication, or protection against a privileged DB rewrite.
+Append stamps the actor, timestamp, and hash links on the server. Caller
+sequence, actor, and hash fields are not the chain. A signed checkpoint
+written outside this database is what makes a rewrite from genesis detectable.
+That check is ``evidence_status`` from ``audit_evidence.verify_evidence``.
+This store is still not WORM storage.
 """
 from __future__ import annotations
 
@@ -38,6 +41,8 @@ class DurableAuditStore:
     def append(self, event: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(event, dict):
             raise ValueError("event must be an object")
+        from .audit_evidence import stamp_server_event
+        event = stamp_server_event(event)
         event_id = event.get("event_id")
         for field in ("event_id", "timestamp", "actor", "action"):
             value = event.get(field)
@@ -62,13 +67,19 @@ class DurableAuditStore:
                 (sequence, event_id, previous_hash, encoded, digest),
             )
             db.commit()
-            return {"status": "appended", "sequence": sequence, "event_id": event_id,
-                    "previous_hash": previous_hash, "hash": digest}
         except sqlite3.IntegrityError as exc:
             db.rollback()
             raise ValueError("duplicate event_id or audit hash") from exc
         finally:
             db.close()
+        return {
+            "status": "appended", "sequence": sequence, "event_id": event_id,
+            "previous_hash": previous_hash, "hash": digest,
+            "actor": event["actor"], "actor_source": "server",
+            "actor_authentication_verified": event["actor_authentication_verified"] is True,
+            "checkpoint": self._refresh_anchor(sequence),
+            "live_execution_enabled": False, "live_trading_authorized": False,
+        }
 
     def verify(self) -> dict[str, Any]:
         with self._connect() as db:
@@ -94,12 +105,34 @@ class DurableAuditStore:
             if row["event_hash"] != expected_hash:
                 issues.append({"sequence": expected_sequence, "code": "hash_mismatch"})
             previous_hash = row["event_hash"]
+        evidence = self._evidence_status()
         return {
             "status": "valid" if not issues else "tampered_or_invalid",
             "event_count": len(rows), "head_hash": previous_hash,
             "issue_count": len(issues), "issues": issues,
-            "storage": "sqlite", "append_only_api": True,
-            "worm_or_privileged_rewrite_protection": False,
-            "actor_authentication_verified": False,
+            "storage": "sqlite", "append_only_api": True, "durable_storage": True,
+            "worm_or_privileged_rewrite_protection": evidence["status"] == "ok",
+            "actor_authentication_verified": evidence["actor_authentication_verified"],
+            "evidence_status": evidence["status"],
+            "signature_status": evidence["signature_status"],
+            "signed": evidence["signed"],
+            "trusted_timestamp_verified": False,
             "new_risk_allowed": False, "live_execution_enabled": False,
+            "live_trading_authorized": False,
         }
+
+    def _refresh_anchor(self, sequence: int) -> str:
+        try:
+            from .audit_evidence import refresh_phase16_anchor
+            return refresh_phase16_anchor(self, sequence)
+        except (OSError, ValueError, TypeError):
+            return "error"
+
+    def _evidence_status(self) -> dict[str, Any]:
+        try:
+            from .audit_evidence import verify_evidence
+            evidence = verify_evidence("phase16", database=self.database_path)
+        except (OSError, ValueError, TypeError):
+            return {"status": "unverifiable", "signature_status": "unsigned", "signed": False,
+                    "actor_authentication_verified": False}
+        return evidence

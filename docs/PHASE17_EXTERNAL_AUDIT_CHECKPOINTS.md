@@ -12,6 +12,10 @@ verify cleanly. A checkpoint remains verifiable after later events are appended.
 - `POST /platform/audit/checkpoint-create` — body: `{"anchor_id":"vault-2026-11-03"}`
 - `POST /platform/audit/checkpoint-verify` — body: `{"checkpoint":{...}}`
 
+The checkpoint returned by this module is still an unsigned JSON record.
+`audit_evidence.checkpoint_evidence` and `scripts/verify_audit_evidence.py`
+write the signed file outside the database. See `docs/AUDIT_EVIDENCE_KEYS.md`.
+
 ## Operational requirements and limitations
 
 Copy checkpoint JSON to an independently controlled system (for example,
