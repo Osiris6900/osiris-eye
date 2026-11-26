@@ -2,6 +2,7 @@ import socket
 import threading
 import time
 from datetime import datetime, timezone
+from decimal import Decimal
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -331,3 +332,192 @@ def test_attribution_reads_actual_canonical_fills(tmp_path, monkeypatch):
     assert report["realized_pnl"] == "8"
     assert report["strategies"]["strategy-a"]["fees"] == "2"
     assert report["strategies"]["strategy-a"]["slippage"] == "3"
+
+
+def test_execution_tca_uses_actual_fills_and_decomposes_costs(tmp_path, monkeypatch):
+    from osiris_api import paper_execution
+
+    ledger = tmp_path / "paper-tca.db"
+    monkeypatch.setenv("OSIRIS_PAPER_EXECUTION_DB", str(ledger))
+    paper_execution.initialize_paper_account("10000")
+    observed = "2026-11-11T00:00:00+00:00"
+    now = "2026-11-11T00:00:01+00:00"
+
+    def order(key, side, quantity, price, fee, *, working=True):
+        return paper_execution.submit_paper_order(
+            client_order_id=key,
+            symbol="TEST",
+            side=side,
+            quantity=quantity,
+            price=price,
+            fee=fee,
+            observed_at=observed,
+            now=now,
+            working=working,
+        )
+
+    order("buy-tca", "BUY", "4", "103", "4")
+    paper_execution.apply_paper_fill(
+        client_order_id="buy-tca", client_fill_id="buy-fill-1", quantity="1",
+        price="101", fee="0.25", observed_at=observed, now=now,
+    )
+    paper_execution.apply_paper_fill(
+        client_order_id="buy-tca", client_fill_id="buy-fill-2", quantity="1",
+        price="102", fee="0.25", observed_at=observed, now=now,
+    )
+
+    # Establish a real position, but deliberately leave this fill without a benchmark.
+    order("seed-position", "BUY", "2", "100", "0", working=False)
+    order("sell-tca", "SELL", "2", "97", "0.5")
+    paper_execution.apply_paper_fill(
+        client_order_id="sell-tca", client_fill_id="sell-fill-1", quantity="2",
+        price="98", fee="0.5", observed_at=observed, now=now,
+    )
+
+    service = AttributionService(Database(str(tmp_path / "control-tca.db")))
+    service.tag_order(
+        "buy-tca", "strategy-a", "100", arrival_bid="99", arrival_ask="101"
+    )
+    service.tag_order(
+        "sell-tca", "strategy-b", "100", arrival_bid="99", arrival_ask="101"
+    )
+    report = service.transaction_costs(str(ledger))
+
+    assert report["fill_count"] == 4
+    assert report["analyzed_fill_count"] == 3
+    assert report["missing_reference_fill_count"] == 1
+    assert report["reference_coverage_complete"] is False
+    assert report["unfilled_opportunity_cost_included"] is False
+    assert report["production_calibrated"] is False
+    assert report["live_execution"] is False
+
+    buy = next(row for row in report["orders"] if row["client_order_id"] == "buy-tca")
+    assert buy["requested_quantity"] == "4"
+    assert buy["filled_quantity"] == "2"
+    assert buy["unfilled_quantity"] == "2"
+    assert buy["partial_fill"] is True
+    assert buy["average_fill_price"] == "101.5"
+    assert Decimal(buy["slippage"]) == Decimal(3)
+    assert Decimal(buy["fees"]) == Decimal("0.50")
+    assert Decimal(buy["executed_shortfall"]) == Decimal("3.50")
+    assert Decimal(buy["executed_shortfall_bps"]) == Decimal(175)
+    assert Decimal(buy["spread_cost"]) == Decimal(2)
+    assert Decimal(buy["impact_cost"]) == Decimal(1)
+    assert Decimal(buy["quote_slippage"]) == (
+        Decimal(buy["spread_cost"]) + Decimal(buy["impact_cost"])
+    )
+
+    sell = next(row for row in report["orders"] if row["client_order_id"] == "sell-tca")
+    assert sell["partial_fill"] is False
+    assert Decimal(sell["slippage"]) == Decimal(4)
+    assert Decimal(sell["executed_shortfall"]) == Decimal("4.5")
+    assert Decimal(sell["executed_shortfall_bps"]) == Decimal(225)
+    assert Decimal(sell["spread_cost"]) == Decimal(2)
+    assert Decimal(sell["impact_cost"]) == Decimal(2)
+
+    instrument = report["instruments"]["TEST"]
+    assert instrument["order_count"] == 2
+    assert instrument["fill_count"] == 3
+    assert Decimal(instrument["slippage"]) == Decimal(7)
+    assert Decimal(instrument["fees"]) == Decimal(1)
+    assert Decimal(instrument["executed_shortfall"]) == Decimal(8)
+    assert Decimal(instrument["executed_shortfall_bps"]) == Decimal(200)
+    assert Decimal(instrument["spread_cost"]) == Decimal(4)
+    assert Decimal(instrument["impact_cost"]) == Decimal(3)
+    assert set(report["strategies"]) == {"strategy-a", "strategy-b"}
+
+
+@pytest.mark.parametrize(
+    "kwargs,error",
+    [
+        ({"arrival_bid": "99"}, "arrival_quote_pair_required"),
+        ({"arrival_bid": "101", "arrival_ask": "99"}, "crossed_or_locked"),
+        ({"arrival_bid": "100", "arrival_ask": "100"}, "crossed_or_locked"),
+        ({"arrival_bid": "98", "arrival_ask": "101"}, "midpoint"),
+    ],
+)
+def test_execution_tca_arrival_quotes_fail_closed(tmp_path, kwargs, error):
+    service = AttributionService(Database(str(tmp_path / "control.db")))
+    with pytest.raises(ValueError, match=error):
+        service.tag_order("order-1", "strategy-a", "100", **kwargs)
+
+
+def test_execution_tca_tags_are_immutable_and_legacy_tags_remain_compatible(tmp_path):
+    service = AttributionService(Database(str(tmp_path / "control.db")))
+    service.tag_order("order-1", "strategy-a", "99")
+    service.tag_order("order-1", "strategy-a", "99")
+    assert service.db.get("order-strategies", "order-1")["value"] == {
+        "strategy": "strategy-a", "reference_price": "99"
+    }
+    service.tag_order(
+        "order-2", "strategy-a", "100", arrival_bid="99", arrival_ask="101"
+    )
+    service.tag_order(
+        "order-2", "strategy-a", "100", arrival_bid="99", arrival_ask="101"
+    )
+    with pytest.raises(ValueError, match="order_strategy_is_immutable"):
+        service.tag_order(
+            "order-2", "strategy-a", "100", arrival_bid="98", arrival_ask="102"
+        )
+
+
+def test_execution_tca_refuses_a_tampered_canonical_ledger(tmp_path, monkeypatch):
+    import sqlite3
+
+    from osiris_api import paper_execution
+
+    ledger = tmp_path / "paper.db"
+    monkeypatch.setenv("OSIRIS_PAPER_EXECUTION_DB", str(ledger))
+    paper_execution.initialize_paper_account("1000")
+    now = "2026-11-11T00:00:01+00:00"
+    paper_execution.submit_paper_order(
+        client_order_id="buy-1", symbol="TEST", side="BUY", quantity="1", price="100",
+        fee="0", observed_at=now, now=now,
+    )
+    service = AttributionService(Database(str(tmp_path / "control.db")))
+    service.tag_order("buy-1", "strategy-a", "100")
+    with sqlite3.connect(ledger) as connection:
+        connection.execute("UPDATE paper_exec_fills SET price='999' WHERE client_order_id='buy-1'")
+    with pytest.raises(ValueError, match="canonical_ledger"):
+        service.transaction_costs(str(ledger))
+
+
+def test_execution_tca_api_requires_research_access(tmp_path, monkeypatch):
+    import base64
+    import json
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from osiris_api import paper_execution
+    from osiris_api.control_plane.api import router
+
+    control = tmp_path / "control.db"
+    monkeypatch.setenv("OSIRIS_CONTROL_DB", str(control))
+    monkeypatch.setenv("OSIRIS_CONTROL_MASTER_KEY", base64.b64encode(b"k" * 32).decode())
+    monkeypatch.setenv("OSIRIS_ADMIN_TOKENS", json.dumps({
+        "analyst": "fixture-analyst-token", "viewer": "fixture-viewer-token",
+    }))
+    ledger = tmp_path / "paper.db"
+    monkeypatch.setenv("OSIRIS_PAPER_EXECUTION_DB", str(ledger))
+    paper_execution.initialize_paper_account("1000")
+    now = "2026-11-11T00:00:01+00:00"
+    paper_execution.submit_paper_order(
+        client_order_id="buy-1", symbol="TEST", side="BUY", quantity="1", price="100",
+        fee="0", observed_at=now, now=now,
+    )
+    AttributionService(Database(str(control))).tag_order("buy-1", "strategy-a", "100")
+    app = FastAPI()
+    app.include_router(router)
+    client = TestClient(app)
+
+    assert client.get("/control-plane/execution/tca").status_code == 401
+    viewer = {"Authorization": "Bearer fixture-viewer-token"}
+    assert client.get("/control-plane/execution/tca", headers=viewer).status_code == 403
+    analyst = {"Authorization": "Bearer fixture-analyst-token"}
+    response = client.get("/control-plane/execution/tca", headers=analyst)
+    assert response.status_code == 200, response.text
+    assert response.json()["analyzed_fill_count"] == 1
+    assert response.json()["live_execution"] is False
+    monkeypatch.delenv("OSIRIS_PAPER_EXECUTION_DB")
+    assert client.get("/control-plane/execution/tca", headers=analyst).status_code == 503
