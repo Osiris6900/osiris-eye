@@ -109,14 +109,21 @@ class ModelService:
         self.db.put("models", model_id, artifact)
         return {"model_id": model_id, **artifact}
 
-    def predict(self, model_id: str, features: list[float]) -> float:
-        item = self.db.get("models", identifier(model_id))
+    @staticmethod
+    def verified_artifact(db: Database, model_id: str) -> dict:
+        item = db.get("models", identifier(model_id))
         if not item:
             raise ValueError("model_not_found")
         artifact = dict(item["value"])
         expected = artifact.pop("artifact_sha256")
         if digest(artifact) != expected:
             raise ValueError("model_artifact_tampered")
+        artifact["artifact_sha256"] = expected
+        return artifact
+
+    @staticmethod
+    def predict_artifact(artifact: dict, features: list[float]) -> float:
+        """Pure prediction for monitoring; callers must supply a verified artifact."""
         if (
             not isinstance(features, list)
             or len(features) != len(artifact["mean"])
@@ -135,6 +142,14 @@ class ModelService:
         if not math.isfinite(value):
             raise ValueError("nonfinite_prediction")
         return float(value)
+
+    def predict(self, model_id: str, features: list[float]) -> float:
+        from .drift import active_quarantine
+
+        artifact = self.verified_artifact(self.db, model_id)
+        if active_quarantine(self.db, model_id) is not None:
+            raise ValueError("model_quarantined")
+        return self.predict_artifact(artifact, features)
 
     def predict_from_store(self, model_id: str, entity: str, as_of_ms: int):
         from .features import FeatureStore
