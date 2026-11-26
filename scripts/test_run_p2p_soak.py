@@ -175,7 +175,8 @@ class MeasurementTests(unittest.TestCase):
             args = SimpleNamespace(binary=Path('/bin/true'), remote_binary='/bin/true',
                 remote_script='/workspace/scripts/run_p2p_soak.py', extra_host=['host-c=runner@host-c'],
                 peers=6, port=4001, local_agents=False, ssh_target='runner@host-b',
-                ssh_option=[], node_worker_threads=count, traffic_during_outage=False)
+                ssh_option=[], node_worker_threads=count, traffic_during_outage=True,
+                publisher_outbound_queue=True)
             with patch('run_p2p_soak.Controller', return_value=controller), \
                  patch.object(controller, 'launch', side_effect=lambda host, command: launched.update({host: command})), \
                  patch.object(controller, 'wait', side_effect=RuntimeError('stop_after_launch')), \
@@ -186,10 +187,53 @@ class MeasurementTests(unittest.TestCase):
             for host, command in launched.items():
                 parts = command if host == 'host-a' else shlex.split(command[-1])
                 with self.subTest(count=count, host=host):
+                    self.assertIn('--publisher-outbound-queue', parts)
                     if count is None:
                         self.assertNotIn('--node-worker-threads', parts)
                     else:
                         self.assertEqual(parts[parts.index('--node-worker-threads') + 1], str(count))
+
+    def test_outbound_queue_is_private_and_enabled_only_on_publishers(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch('run_p2p_soak.subprocess.Popen') as launch, \
+             patch('run_p2p_soak.threading.Thread'), \
+             patch.dict(os.environ, {'OSIRIS_P2P_OUTBOUND_DB': '/inherited.sqlite3'}):
+            args = SimpleNamespace(binary=Path('/bin/true'), port=0, controller_pid=None,
+                                   publisher_outbound_queue=True)
+            agent = Agent(args, tmp)
+            agent.start(0)
+            sink_env = launch.call_args.kwargs['env']
+            self.assertNotIn('OSIRIS_P2P_OUTBOUND_DB', sink_env)
+            self.assertEqual(sink_env['OSIRIS_BOOTSTRAP_RECONNECT_INTERVAL_SECS'], '5')
+            agent.start(1, recipient='sink')
+            env = launch.call_args.kwargs['env']
+            database = Path(tmp) / '1' / 'outbound.sqlite3'
+            self.assertEqual(Path(env['OSIRIS_P2P_OUTBOUND_DB']), database.resolve())
+            self.assertEqual(database.parent.stat().st_mode & 0o777, 0o700)
+            self.assertEqual(env['OSIRIS_MAX_OBSERVATION_AGE_SECS'], '120')
+            self.assertEqual(env['OSIRIS_TRUSTED_PEERS'], 'sink')
+            self.assertEqual(env['OSIRIS_BOOTSTRAP_RECONNECT_INTERVAL_SECS'], '1')
+            self.assertEqual(agent.runtime['publisher_bootstrap_reconnect_seconds'], 1)
+
+    def test_agent_emits_only_well_formed_correlated_retry_events(self):
+        digest = 'b' * 64
+        with tempfile.TemporaryDirectory() as tmp:
+            agent = Agent(SimpleNamespace(controller_pid=None), tmp)
+            proc = Mock(pid=1700)
+            proc.stdout = [
+                f'outbound_observation_retry id=7 recipient=a attempt=2 observation_sha256={digest}\n',
+                'outbound_observation_retry id=8 recipient=a attempt=2 observation_sha256=invalid\n',
+            ]
+            events = []
+            agent.emit = lambda kind, **data: events.append({'kind': kind, **data})
+            agent.done.set()
+            agent.read_node(1, proc)
+            self.assertEqual(events[0], {'kind': 'outbound_retry', 'node': 1, 'digest': digest})
+            self.assertEqual(events[1], {
+                'kind': 'fatal', 'reason': 'invalid_outbound_retry_digest', 'node': 1,
+            })
+            self.assertEqual(agent.diagnostics['outbound_observation_retry'], 2)
+            proc.wait.assert_called_once()
 
     def test_cli_rejects_unbounded_worker_settings_before_starting_agents(self):
         script = Path(__file__).with_name('run_p2p_soak.py')
@@ -205,6 +249,7 @@ class MeasurementTests(unittest.TestCase):
         c.command = lambda *args, **kwargs: None
         with patch('run_p2p_soak.time.monotonic', side_effect=[11.0, 12.0, 14.0, 17.0]):
             keys = [c.publish('host-a', 0, str(i)) for i in range(4)]
+        c.retry_counts[keys[2]] = 2
         for digest, when in ((keys[0], 11.1), (keys[1], 14.0), (keys[1], 14.5)):
             c.events.put(('host-b', {'kind': 'delivery', 'digest': digest}))
             with patch('run_p2p_soak.time.monotonic', return_value=when):
@@ -224,6 +269,32 @@ class MeasurementTests(unittest.TestCase):
         self.assertEqual(records[2]['outcome'], 'lost')
         self.assertIsNone(records[2]['latency_ms'])
         self.assertEqual(records[2]['delivery_count'], 0)
+        self.assertEqual(records[2]['definitely_unsent_retry_attempts'], 2)
+        self.assertEqual(records[0]['definitely_unsent_retry_attempts'], 0)
+
+    def test_outbound_retries_require_a_tracked_digest_on_its_source_host(self):
+        c = Controller()
+        c.sent = {'tracked': 1.0, 'other': 2.0}
+        c.sources = {'tracked': 'host-a', 'other': 'host-c'}
+        c.queued_observations = {'queued-tracked': 'tracked', 'queued-other': 'other'}
+        for _ in range(2):
+            c.events.put(('host-a', {'kind': 'outbound_retry', 'node': 0, 'digest': 'queued-tracked'}))
+            c.drain()
+        self.assertEqual(c.retry_counts, {'tracked': 2})
+        self.assertEqual(c.deliveries, {})
+        records = workload_records(c, ['tracked', 'other'], 0, outage_start_ms=None,
+                                   restart_ms=None, recovered_ms=None)
+        self.assertEqual([r['definitely_unsent_retry_attempts'] for r in records], [2, 0])
+        for host, digest in (('host-b', 'queued-tracked'), ('host-c', 'queued-tracked'), ('host-a', 'unknown')):
+            c = Controller()
+            c.sent = {'tracked': 1.0}
+            c.sources = {'tracked': 'host-a'}
+            c.queued_observations = {'queued-tracked': 'tracked'}
+            c.events.put((host, {'kind': 'outbound_retry', 'node': 0, 'digest': digest}))
+            with self.subTest(host=host, digest=digest), \
+                 self.assertRaisesRegex(RuntimeError, 'untracked_or_wrong_host_outbound_retry'):
+                c.drain()
+            self.assertEqual(c.retry_counts, {})
 
     def test_wrong_recipient_and_untracked_delivery_cannot_be_credited(self):
         for host, digest, expected in (

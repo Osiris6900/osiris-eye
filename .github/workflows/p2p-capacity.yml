@@ -25,6 +25,21 @@ on:
           - '2'
           - '4'
 
+      publisher_outbound_queue:
+        description: "Enable definitely-unsent recovery on sustained-soak publishers"
+        required: false
+        default: false
+        type: boolean
+
+      release_opt_level:
+        description: "Release optimization level (s optimizes for binary size)"
+        required: false
+        default: '3'
+        type: choice
+        options:
+          - '3'
+          - 's'
+
 permissions:
   contents: read
   actions: read
@@ -35,6 +50,7 @@ concurrency:
 
 env:
   CARGO_TARGET_DIR: ${{ github.workspace }}/target
+  CARGO_PROFILE_RELEASE_OPT_LEVEL: ${{ inputs.release_opt_level }}
 
 # Coordinated hosts must be rerun together; each attempt has fresh artifacts.
 jobs:
@@ -47,9 +63,14 @@ jobs:
         env:
           SUSTAINED_100: ${{ inputs.sustained_100 }}
           TRAFFIC_DURING_OUTAGE: ${{ inputs.traffic_during_outage }}
+          PUBLISHER_OUTBOUND_QUEUE: ${{ inputs.publisher_outbound_queue }}
         run: |
           if [ "$TRAFFIC_DURING_OUTAGE" = "true" ] && [ "$SUSTAINED_100" != "true" ]; then
             echo "traffic_during_outage requires sustained_100" >&2
+            exit 1
+          fi
+          if [ "$PUBLISHER_OUTBOUND_QUEUE" = "true" ] && [ "$TRAFFIC_DURING_OUTAGE" != "true" ]; then
+            echo "publisher_outbound_queue requires traffic_during_outage" >&2
             exit 1
           fi
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -125,6 +146,7 @@ jobs:
         if: ${{ inputs.sustained_100 }}
         env:
           TRAFFIC_DURING_OUTAGE: ${{ inputs.traffic_during_outage }}
+          PUBLISHER_OUTBOUND_QUEUE: ${{ inputs.publisher_outbound_queue }}
           NODE_WORKER_THREADS: ${{ inputs.node_worker_threads }}
         run: |
           set -euo pipefail
@@ -132,6 +154,7 @@ jobs:
           if [ "$NODE_WORKER_THREADS" != "default" ]; then worker_args+=(--node-worker-threads "$NODE_WORKER_THREADS"); fi
           traffic_args=()
           if [ "$TRAFFIC_DURING_OUTAGE" = "true" ]; then traffic_args+=(--traffic-during-outage); fi
+          if [ "$PUBLISHER_OUTBOUND_QUEUE" = "true" ]; then traffic_args+=(--publisher-outbound-queue); fi
           dir="$RUNNER_TEMP/osiris-capacity"
           b="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["ip"])' "$dir/host-b.json")"
           c="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["ip"])' "$dir/host-c.json")"
@@ -154,13 +177,15 @@ jobs:
         run: |
           set -euo pipefail
           dir="$RUNNER_TEMP/osiris-capacity"
+          review_status=0
           python3 scripts/check_p2p_sustained_evidence.py \
             --report "$dir/sustained-100.json" \
             --commit "$GITHUB_SHA" \
             --run-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
             --attempt "${{ github.run_attempt }}" \
-            --output "$dir/sustained-review.json"
+            --output "$dir/sustained-review.json" || review_status=$?
           (cd "$dir" && sha256sum sustained-100.json sustained-review.json > sustained-sha256.txt)
+          exit "$review_status"
       - name: Upload retained capacity measurements
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

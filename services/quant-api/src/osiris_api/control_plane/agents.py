@@ -158,12 +158,24 @@ class JobWorker:
             if claim["kind"] not in TOOLS:
                 raise ValueError("unsupported_tool")
             with tempfile.TemporaryDirectory(prefix="osiris-research-worker-") as folder:
+                # Isolated mode ignores PYTHONPATH, including the source-only test
+                # environment. Bootstrap only this trusted package root; request
+                # payloads remain on stdin and never become executable code.
+                package_root = os.path.dirname(
+                    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                )
+                bootstrap = (
+                    "import runpy,sys;"
+                    f"sys.path.insert(0,{package_root!r});"
+                    "runpy.run_module('osiris_api.control_plane.agent_worker',"
+                    "run_name='__main__')"
+                )
                 result = subprocess.run(
                     [
                         sys.executable,
                         "-I",
-                        "-m",
-                        "osiris_api.control_plane.agent_worker",
+                        "-c",
+                        bootstrap,
                         "--kind",
                         claim["kind"],
                         "--database",

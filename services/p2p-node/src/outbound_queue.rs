@@ -378,19 +378,10 @@ impl OutboundQueue {
         Ok(true)
     }
 
-    pub fn claim_due(&mut self, now: u64, limit: usize) -> Result<Vec<QueuedObservation>> {
-        self.check_storage()?;
-        let now = time(now)?;
-        if !(1..=32).contains(&limit) {
-            return Err("outbound_queue_claim_limit_invalid".into());
-        }
-        let tx = self
-            .connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(db_error)?;
-        // Revalidate inside the same write transaction as the claim. A local
+    fn validate_write_state(tx: &Connection, now: i64) -> Result<()> {
+        // Revalidate inside the same write transaction as the update. A local
         // SQLite writer must not replace payloads or retry metadata after open.
-        Self::validate(&tx)?;
+        Self::validate(tx)?;
         let table_sql: String = tx
             .query_row(
                 "SELECT sql FROM sqlite_master WHERE name='outbound_observations' AND type='table'",
@@ -418,6 +409,43 @@ impl OutboundQueue {
         if now < latest {
             return Err("outbound_queue_clock_rollback".into());
         }
+        Ok(())
+    }
+
+    /// A newly connected recipient can bring definitely-unsent retries forward.
+    /// Require a new wall-clock second after the last attempt, and preserve the
+    /// attempt count and enqueue time. Claimed and held records stay untouched.
+    pub fn wake_deferred_recipient(&mut self, recipient: &str, now: u64) -> Result<usize> {
+        self.check_storage()?;
+        peer(recipient)?;
+        let now = time(now)?;
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(db_error)?;
+        Self::validate_write_state(&tx, now)?;
+        let woken = tx.execute(
+            "UPDATE outbound_observations SET next_due=MAX(?1,updated_at+1) \
+             WHERE recipient=?2 AND state='queued' AND attempts>0 \
+             AND next_due>MAX(?1,updated_at+1)",
+            params![now, recipient],
+        ).map_err(db_error)?;
+        tx.commit().map_err(db_error)?;
+        self.check_storage()?;
+        Ok(woken)
+    }
+
+    pub fn claim_due(&mut self, now: u64, limit: usize) -> Result<Vec<QueuedObservation>> {
+        self.check_storage()?;
+        let now = time(now)?;
+        if !(1..=32).contains(&limit) {
+            return Err("outbound_queue_claim_limit_invalid".into());
+        }
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(db_error)?;
+        Self::validate_write_state(&tx, now)?;
         let mut items = Vec::new();
         {
             let mut statement = tx.prepare("SELECT id,recipient,payload,attempts,enqueued_at FROM outbound_observations WHERE state='queued' AND next_due<=?1 ORDER BY id LIMIT ?2").map_err(db_error)?;
@@ -442,6 +470,13 @@ impl OutboundQueue {
         }
         tx.commit().map_err(db_error)?;
         self.check_storage()?;
+        for item in &items {
+            if item.attempts > 1 {
+                // Audit a committed retry-processing claim without exposing
+                // plaintext. This is not evidence of network transmission.
+                eprintln!("outbound_observation_retry id={} recipient={} attempt={} observation_sha256={}", item.id, item.recipient, item.attempts, hash(&item.observation));
+            }
+        }
         Ok(items)
     }
 
@@ -630,6 +665,43 @@ mod tests {
     }
 
     #[test]
+    fn recipient_wakeup_advances_only_its_deferred_rows_without_resetting_attempts() {
+        let dir = Directory::new();
+        let recipient = recipient();
+        let other = PeerId::random().to_string();
+        let mut queue = OutboundQueue::open(dir.database()).unwrap();
+        for payload in [b"deferred".as_slice(), b"held", b"claimed"] {
+            queue.enqueue(&recipient, payload, 100).unwrap();
+        }
+        queue.enqueue(&other, b"other", 100).unwrap();
+        let claimed = queue.claim_due(100, 4).unwrap();
+        assert!(queue.defer_unsent(claimed[0].id, 100).unwrap());
+        assert!(queue.hold(claimed[1].id, "publication_uncertain").unwrap());
+        assert!(queue.defer_unsent(claimed[3].id, 100).unwrap());
+        for item in queue.claim_due(101, 4).unwrap() {
+            assert!(queue.defer_unsent(item.id, 101).unwrap());
+        }
+        assert_eq!(queue.wake_deferred_recipient(&recipient, 100).unwrap_err(),
+            "outbound_queue_clock_rollback");
+        assert_eq!(queue.wake_deferred_recipient(&recipient, 101).unwrap(), 1);
+        assert!(queue.claim_due(101, 4).unwrap().is_empty());
+        assert_eq!(queue.wake_deferred_recipient(&recipient, 102).unwrap(), 0);
+
+        let retry = queue.claim_due(102, 4).unwrap();
+        assert_eq!(retry.len(), 1);
+        assert_eq!(retry[0].id, claimed[0].id);
+        assert_eq!(retry[0].enqueued_at, 100);
+        assert_eq!(retry[0].attempts, 3);
+        assert_eq!(queue.counts().unwrap(), QueueCounts {
+            queued: 1, publishing: 2, held: 1,
+            payload_bytes: b"deferredheldclaimedother".len(),
+        });
+        let other_retry = queue.claim_due(103, 4).unwrap();
+        assert_eq!(other_retry.len(), 1);
+        assert_eq!(other_retry[0].recipient, other);
+    }
+
+    #[test]
     fn total_byte_and_single_record_bounds_include_held_rows() {
         let dir = Directory::new();
         let peer = recipient();
@@ -770,16 +842,19 @@ mod tests {
     }
 
     #[test]
-    fn mid_run_schema_tampering_and_clock_rollback_refuse_claims() {
+    fn mid_run_schema_tampering_and_clock_rollback_refuse_retry_updates() {
         let dir = Directory::new();
+        let recipient = recipient();
         let mut queue = OutboundQueue::open(dir.database()).unwrap();
-        queue.enqueue(&recipient(), b"observation", 100).unwrap();
+        queue.enqueue(&recipient, b"observation", 100).unwrap();
         assert!(matches!(queue.claim_due(99, 1), Err(e) if e == "outbound_queue_clock_rollback"));
         let connection = Connection::open(dir.database()).unwrap();
         connection.execute_batch("CREATE TRIGGER reset_claim AFTER UPDATE ON outbound_observations BEGIN UPDATE outbound_observations SET state='queued' WHERE id=NEW.id; END;").unwrap();
         assert!(
             matches!(queue.claim_due(100, 1), Err(e) if e == "outbound_queue_unsupported_schema")
         );
+        assert!(matches!(queue.wake_deferred_recipient(&recipient, 100),
+            Err(e) if e == "outbound_queue_unsupported_schema"));
         assert_eq!(queue.counts().unwrap().queued, 1);
     }
 

@@ -176,11 +176,16 @@ pauses its scheduled workload until every publisher recovers. Historical results
 retain that mode. They do not measure delivery of traffic submitted during an outage.
 
 For a new controlled run, `run_p2p_soak.py --traffic-during-outage` continues its
-scheduled workload while the recipient is stopped and reconnecting. It neither
-drains before the stop nor retries or replaces submitted observations. Every
-workload record retains its controller monotonic publish time, observed delivery
-time/count, loss at the observation cutoff and duplicate deliveries observed
-before that cutoff. The controller stops consuming events after every agent
+scheduled workload while the recipient is stopped and reconnecting. It does not
+drain before the stop and the controller never resubmits a workload observation.
+With the separate `--publisher-outbound-queue` option, a publisher may retry only
+attempts that definitely were not sent. Every workload record retains its
+controller monotonic publish time, observed delivery time/count, loss at the
+observation cutoff, duplicate deliveries observed before that cutoff and the
+number of definitely-unsent retry-processing claims. Retry events are accepted
+only for a tracked canonical observation digest on its original source host;
+accepted or ambiguous sends are never reissued by the queue. A retry claim is not
+proof of network transmission. Aggregate and per-record retry totals must match. The controller stops consuming events after every agent
 reports finished; later or undrained events are not claimed. Post-restart delivery
 of outage publications is counted separately from ordinary post-restart traffic.
 The scheduler is best effort: stop acknowledgement and event processing can delay
@@ -202,10 +207,15 @@ gh workflow run p2p-capacity.yml --repo Osiris6900/osiris-eye --ref REVIEWED_BRA
   -f sustained_100=true -f traffic_during_outage=true
 ```
 
+To exercise the queue remediation and bounded runtime allocation together, add
+`-f publisher_outbound_queue=true -f node_worker_threads=1`. These settings do
+not relax the delivery, latency, recovery or memory policy and require a new run.
+
 The command needs normal authorized GitHub Actions access and the already
 configured private test-overlay secret. It does not provision independent
 staging hosts. `traffic_during_outage=true` without `sustained_100=true` is refused.
-The three short baseline sweeps retain their drained-restart behavior.
+The queue also requires traffic-on mode. The three short baseline sweeps retain
+their drained-restart behavior.
 
 The predeclared zero-loss and latency limits are unchanged. This diagnostic may
 fail them: disconnected Gossipsub publication is not a durable resend mechanism.

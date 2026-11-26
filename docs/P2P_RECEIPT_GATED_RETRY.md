@@ -107,7 +107,10 @@ retained; capacity failure is explicit and never evicts existing work.
 
 Missing bindings, receipt-tracking capacity and GossipSub's
 `NoPeersSubscribedToTopic` result can defer an unsent attempt. Backoff is
-1/2/4/8 seconds, with 16 attempts maximum. Other publication errors become
+1/2/4/8 seconds, with 16 attempts maximum. A configured recipient's first
+authenticated encrypted-topic subscription after reconnect can advance its
+queued retries to the first eligible second after each prior attempt. This
+preserves each attempt count and original enqueue time. Other publication errors become
 `held`: notably, `AllQueuesFull` already cached the envelope and cannot prove
 that no future network delivery is possible. Accepted publications leave this
 queue immediately and are never reissued by it, even without a receipt.
@@ -133,5 +136,9 @@ OSIRIS_P2P_TEST_BINARY=/absolute/path/to/osiris-p2p-node \
   python scripts/test_p2p_outbound_queue.py
 ```
 
-CI and the engineering verification profile run this exercise. It does not
-accept the sustained independent-host loss, memory or release gates.
+CI and the engineering verification profile run this exercise. The sustained
+soak additionally correlates every committed retry-processing claim with the
+original canonical observation digest and records per-message and aggregate
+attempt totals. A claim does not prove network transmission. This accounting
+does not relabel a new encrypted envelope as the same network message, and does
+not accept the sustained independent-host loss, memory or release gates.

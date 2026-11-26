@@ -54,7 +54,12 @@ DIAGNOSTIC_PREFIXES = (
     'key_binding_refreshed', 'key_binding_refresh_deferred',
     'outgoing_connection_error', 'incoming_connection_error',
     'bootstrap_reconnect_error', 'bootstrap_reconnect_attempt',
+    'outbound_observation_queued', 'outbound_observation_deferred',
+    'outbound_observation_held', 'outbound_observation_rejected', 'outbound_observation_rearmed',
+    'outbound_observation_retry',
 )
+STANDARD_RECONNECT_SECONDS = 5
+QUEUED_PUBLISHER_RECONNECT_SECONDS = 1
 _DIAGNOSTIC_REASON = re.compile(r'\breason=([a-z_]{1,64})(?:\s|$)')
 _DIAGNOSTIC_COUNT = re.compile(r'\bcount=(\d+)(?:\s|$)')
 
@@ -62,7 +67,7 @@ _DIAGNOSTIC_COUNT = re.compile(r'\bcount=(\d+)(?:\s|$)')
 def classify_node_diagnostic(line):
     """Return `(counter_key, amount)` for one node stdout line.
 
-    Suppressed aggregates add their `count`. A missing or zero count fails
+    Aggregated diagnostics add their `count`. A missing or zero count fails
     closed. Lines that are not diagnostics return None.
     """
     prefix = next((item for item in DIAGNOSTIC_PREFIXES if line.startswith(item + ' ')), None)
@@ -70,10 +75,12 @@ def classify_node_diagnostic(line):
         return None
     reason = _DIAGNOSTIC_REASON.search(line)
     amount = 1
-    if prefix == 'peer_not_allowed_rejected_suppressed':
+    if prefix in ('peer_not_allowed_rejected_suppressed', 'outbound_observation_rearmed'):
         count = _DIAGNOSTIC_COUNT.search(line)
         if count is None or int(count[1]) < 1:
-            raise ValueError('invalid_suppressed_rejection_count')
+            reason = ('invalid_suppressed_rejection_count' if prefix == 'peer_not_allowed_rejected_suppressed'
+                      else 'invalid_outbound_rearmed_count')
+            raise ValueError(reason)
         amount = int(count[1])
     return prefix + (':' + reason[1] if reason else ''), amount
 
@@ -88,7 +95,7 @@ def measurement_class(metadata, local_agents):
 
 
 
-def runtime_config(worker_threads):
+def runtime_config(worker_threads, publisher_outbound_queue=False):
     """Bound the requested node runtime without weakening resource policy."""
     if worker_threads is not None and (type(worker_threads) is not int or worker_threads not in (1, 2, 4)):
         raise ValueError('node_worker_threads_must_be_1_2_or_4')
@@ -96,13 +103,18 @@ def runtime_config(worker_threads):
         'node_worker_threads_requested': worker_threads,
         'tokio_worker_threads_env': str(worker_threads) if worker_threads is not None else None,
         'observed_runtime_worker_count_verified': False,
+        **({
+            'publisher_outbound_queue': True,
+            'publisher_bootstrap_reconnect_seconds': QUEUED_PUBLISHER_RECONNECT_SECONDS,
+        } if publisher_outbound_queue else {}),
     }
 
 
 class Agent:
     def __init__(self, args, state):
         self.args, self.state = args, Path(state)
-        self.runtime = runtime_config(getattr(args, 'node_worker_threads', None))
+        self.runtime = runtime_config(getattr(args, 'node_worker_threads', None),
+                                      getattr(args, 'publisher_outbound_queue', False))
         self.nodes = {}
         self.node_readers = {}
         self.lock = threading.Lock()
@@ -143,7 +155,7 @@ class Agent:
             'OSIRIS_MAX_CONNECTIONS_PER_PEER': '1',
             'OSIRIS_PEER_CACHE_DIAL_ON_START': '0', 'OSIRIS_DHT_WALK_INTERVAL_SECS': '3600',
             'OSIRIS_HEALTH_HTTP_ADDR': '127.0.0.1:0',
-            'OSIRIS_BOOTSTRAP_RECONNECT_INTERVAL_SECS': '5',
+            'OSIRIS_BOOTSTRAP_RECONNECT_INTERVAL_SECS': str(STANDARD_RECONNECT_SECONDS),
             'OSIRIS_LISTEN_ADDR': f'/ip4/0.0.0.0/tcp/{self.args.port if index == 0 else 0}',
         })
         if bootstrap:
@@ -153,6 +165,11 @@ class Agent:
             # The declared soak is a publisher/recipient star. Prevent DHT and
             # Identify discovery from silently turning it into a full mesh.
             env['OSIRIS_TRUSTED_PEERS'] = recipient
+            if self.runtime.get('publisher_outbound_queue'):
+                env['OSIRIS_P2P_OUTBOUND_DB'] = str(directory.resolve() / 'outbound.sqlite3')
+                env['OSIRIS_MAX_OBSERVATION_AGE_SECS'] = '120'
+                env['OSIRIS_BOOTSTRAP_RECONNECT_INTERVAL_SECS'] = str(
+                    self.runtime['publisher_bootstrap_reconnect_seconds'])
         proc = subprocess.Popen([str(self.args.binary)], env=env, cwd=directory,
                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, text=True, bufsize=1)
@@ -166,8 +183,8 @@ class Agent:
         for line in proc.stdout:
             try:
                 classified = classify_node_diagnostic(line)
-            except ValueError:
-                self.emit('fatal', reason='invalid_suppressed_rejection_count', node=index)
+            except ValueError as error:
+                self.emit('fatal', reason=str(error), node=index)
                 classified = None
             if classified is not None:
                 key, amount = classified
@@ -209,6 +226,12 @@ class Agent:
                 match = re.search(r'payload_sha256=([0-9a-f]{64})', line)
                 if match:
                     self.emit('delivery', digest=match[1])
+            elif line.startswith('outbound_observation_retry '):
+                match = re.search(r'\bobservation_sha256=([0-9a-f]{64})(?:\s|$)', line)
+                if match is None:
+                    self.emit('fatal', reason='invalid_outbound_retry_digest', node=index)
+                else:
+                    self.emit('outbound_retry', node=index, digest=match[1])
             elif line.startswith(('publish_rejected ', 'publish_deferred ')):
                 # Rejections are diagnostic only: without a digest correlation,
                 # they cannot subtract a message from lost/pending accounting.
@@ -410,6 +433,8 @@ class Controller:
         self.stage = 'starting'
         self.deliveries, self.sent, self.samples = {}, {}, []
         self.delivery_counts = {}
+        self.retry_counts = {}
+        self.queued_observations = {}
         self.sources = {}
         self.finished, self.listeners = set(), set()
         self.subscriptions = set()
@@ -467,6 +492,13 @@ class Controller:
                 raise RuntimeError('untracked_delivery_observation')
             self.delivery_counts[digest] = self.delivery_counts.get(digest, 0) + 1
             self.deliveries.setdefault(digest, time.monotonic())
+        elif kind == 'outbound_retry':
+            observation_digest = event.get('digest')
+            digest = self.queued_observations.get(observation_digest)
+            if (host == 'host-b' or not isinstance(observation_digest, str)
+                    or digest is None or self.sources.get(digest) != host):
+                raise RuntimeError('untracked_or_wrong_host_outbound_retry')
+            self.retry_counts[digest] = self.retry_counts.get(digest, 0) + 1
         elif kind == 'metrics':
             self.metrics[host] = event
         elif kind == 'finished':
@@ -499,13 +531,21 @@ class Controller:
         digest = hashlib.sha256(payload.encode()).hexdigest()
         if digest in self.sent:
             raise ValueError('duplicate_workload_id')
-        self.sent[digest] = time.monotonic()
-        self.sources[digest] = host
-        self.command(host, action='publish', node=node, observation={
+        observation = {
             'schema': 'osiris.observation.v1', 'instrument': 'OSIRIS-SOAK',
             'observed_at': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
             'provider': 'synthetic-soak', 'payload': payload, 'payload_sha256': digest,
-        })
+        }
+        # This is the exact canonical observation byte digest emitted by the
+        # Rust queue. It is separate from the application payload digest.
+        canonical = json.dumps(observation, separators=(',', ':')).encode()
+        observation_digest = hashlib.sha256(canonical).hexdigest()
+        if observation_digest in self.queued_observations:
+            raise ValueError('duplicate_queued_observation')
+        self.queued_observations[observation_digest] = digest
+        self.sent[digest] = time.monotonic()
+        self.sources[digest] = host
+        self.command(host, action='publish', node=node, observation=observation)
         return digest
 
     def sample_outage(self, start, delivered):
@@ -562,6 +602,7 @@ def workload_records(controller, workload, start, *, outage_start_ms, restart_ms
             'published_elapsed_ms': elapsed, 'during_outage': in_outage,
             'while_sink_stopped': sink_down,
             'delivery_count': count, 'duplicate_deliveries': max(0, count - 1),
+            'definitely_unsent_retry_attempts': controller.retry_counts.get(digest, 0),
             'delivered_elapsed_ms': int((delivery_time - start) * 1000) if delivery_time is not None else None,
             'delivered_after_restart': (delivery_time is not None and restart_ms is not None
                                         and delivery_time >= start + restart_ms / 1000),
@@ -575,10 +616,13 @@ def workload_records(controller, workload, start, *, outage_start_ms, restart_ms
 
 def measure(args):
     c = Controller()
-    runtime = runtime_config(args.node_worker_threads)
-    worker_args = ([] if args.node_worker_threads is None
-                   else ['--node-worker-threads', str(args.node_worker_threads)])
-    base = [sys.executable, str(Path(__file__).resolve()), '--agent', '--binary', str(args.binary), *worker_args]
+    publisher_queue = getattr(args, 'publisher_outbound_queue', False)
+    runtime = runtime_config(args.node_worker_threads, publisher_queue)
+    runtime_args = ([] if args.node_worker_threads is None
+                    else ['--node-worker-threads', str(args.node_worker_threads)])
+    if publisher_queue:
+        runtime_args.append('--publisher-outbound-queue')
+    base = [sys.executable, str(Path(__file__).resolve()), '--agent', '--binary', str(args.binary), *runtime_args]
     extra_hosts = {}
     for specification in args.extra_host:
         host, target = specification.split('=', 1)
@@ -592,7 +636,7 @@ def measure(args):
     c.launch('host-a', base + ['--count', str(local_count), '--controller-pid', str(os.getpid())])
     remote_args = ['python3', args.remote_script, '--agent', '--binary', args.remote_binary,
                    '--count', str(args.peers - local_count * (host_count-1)), '--port', str(args.port),
-                   *worker_args]
+                   *runtime_args]
     if args.local_agents:
         remote_args = [sys.executable, str(Path(__file__).resolve()), *remote_args[2:]]
         c.launch('host-b', remote_args)
@@ -601,7 +645,7 @@ def measure(args):
                             shlex.join(remote_args)])
     for host, target in extra_hosts.items():
         peer_args = ['python3', args.remote_script, '--agent', '--binary', args.remote_binary,
-                     '--count', str(local_count), *worker_args]
+                     '--count', str(local_count), *runtime_args]
         if args.local_agents:
             c.launch(host, [sys.executable, str(Path(__file__).resolve()), *peer_args[2:]])
         else:
@@ -612,6 +656,9 @@ def measure(args):
         if any(metadata.get('runtime_config') != runtime
                or type(metadata['runtime_config'].get('node_worker_threads_requested')) is not type(args.node_worker_threads)
                or metadata['runtime_config'].get('observed_runtime_worker_count_verified') is not False
+               or metadata['runtime_config'].get('publisher_outbound_queue') is not runtime.get('publisher_outbound_queue')
+               or type(metadata['runtime_config'].get('publisher_bootstrap_reconnect_seconds'))
+               is not type(runtime.get('publisher_bootstrap_reconnect_seconds'))
                for metadata in c.metadata.values()):
             raise RuntimeError('agents_require_same_requested_runtime')
         commit, clean = revision()
@@ -658,9 +705,10 @@ def measure(args):
             now = time.monotonic()
             elapsed = now - start
             if not stopped and elapsed >= args.duration / 2:
-                # Legacy runs intentionally drain and pause. The opt-in mode
-                # keeps scheduled workload on and retains every loss; no resend
-                # or guaranteed message durability is implied by this harness.
+                # Legacy runs intentionally drain and pause. Traffic-on mode
+                # keeps scheduled workload on and retains every loss. Its optional
+                # node queue retries only definitely-unsent attempts; the controller
+                # never submits the same workload observation a second time.
                 if not traffic_on:
                     c.wait(lambda: all(d in c.deliveries for d in workload),
                            30, stage='pre_outage_drain')
@@ -748,7 +796,9 @@ def measure(args):
             'workload': {'peers': len(c.peers), 'messages': len(workload), 'fanout': 1,
                          'duration_seconds': (ended_at-started_at).total_seconds(),
                          'messages_while_sink_stopped': sum(r['while_sink_stopped'] for r in records),
-                         'messages_during_outage': sum(r['during_outage'] for r in records)},
+                         'messages_during_outage': sum(r['during_outage'] for r in records),
+                         'definitely_unsent_retry_attempts': sum(
+                             r['definitely_unsent_retry_attempts'] for r in records)},
             'delivery': {'sent': len(workload), 'delivered': len(latencies),
                          'lost': len(workload)-len(latencies), 'rejected': 0, 'pending': 0,
                          'duplicate_deliveries': sum(r['duplicate_deliveries'] for r in records),
@@ -769,7 +819,9 @@ def measure(args):
                 'controller_resources_included_on_host_a': True,
                 'traffic_during_outage': traffic_on,
                 'traffic_mode': 'continuous_during_outage' if traffic_on else 'drained_restart',
-                'workload_retransmissions': 0,
+                'workload_retransmissions': sum(r['definitely_unsent_retry_attempts'] for r in records),
+                'controller_workload_retransmissions': 0,
+                'retry_scope': 'node attempts after a definitely-unsent result; accepted or ambiguous sends are never reissued',
                 'publication_cadence': 'best-effort controller cadence; stop acknowledgement and event processing may delay scheduling',
                 'delivery_observation_cutoff': 'controller stops collecting when all agents report finished; later or undrained events remain unmeasured',
                 'workload_paused_during_outage': not traffic_on, 'outage_probes_excluded_from_workload': True,
@@ -819,6 +871,8 @@ def main():
     p.add_argument('--count', type=int, default=2)
     p.add_argument('--node-worker-threads', type=int, choices=(1, 2, 4),
                    help='explicit TOKIO_WORKER_THREADS on every node; default unsets it')
+    p.add_argument('--publisher-outbound-queue', action='store_true',
+                   help='persist publisher observations and retry only definitely-unsent attempts')
     p.add_argument('--controller-pid', type=int)
     p.add_argument('--port', type=int, default=0)
     p.add_argument('--ssh-target')
@@ -833,7 +887,7 @@ def main():
     p.add_argument('--duration', type=int, default=900)
     p.add_argument('--local-agents', action='store_true')
     p.add_argument('--traffic-during-outage', action='store_true',
-                   help='keep scheduled workload on during sink outage; retain losses without retry')
+                   help='keep scheduled workload on during sink outage and retain actual losses')
     p.add_argument('--workflow-url', default='https://github.com/Osiris6900/osiris-eye/actions')
     p.add_argument('--attempt', type=int, default=1)
     p.add_argument('--evidence', type=Path)
