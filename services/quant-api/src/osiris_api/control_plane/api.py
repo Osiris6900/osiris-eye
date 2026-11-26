@@ -554,6 +554,41 @@ def compare_shadow(run_id: str, request: Request, payload: dict = Body(...)):
     return run(ShadowService(db).compare, run_id, payload.get("paper_equity"))
 
 
+@router.post("/signals/resolve")
+def resolve_signals(request: Request, payload: dict = Body(...)):
+    from .signals import SignalResolver
+
+    db = database()
+    actor = principal(request, db, "research")
+    if set(payload) != {"id", "payload"}:
+        raise HTTPException(422, "invalid_signal_resolution_envelope")
+    return run(SignalResolver(db).resolve, payload["id"], actor["actor"], payload["payload"])
+
+
+@router.get("/signals/{decision_id}")
+def get_signal_decision(decision_id: str, request: Request):
+    from .signals import SignalResolver
+
+    db = database()
+    principal(request, db, "research-read")
+    decision = run(SignalResolver(db).get, decision_id)
+    if decision is None:
+        raise HTTPException(404, "signal_decision_not_found")
+    return decision
+
+
+@router.get("/signals/{decision_id}/audit")
+def get_signal_audit(decision_id: str, request: Request):
+    from .signals import SignalResolver
+
+    db = database()
+    principal(request, db, "research-read")
+    audit = run(SignalResolver(db).audit, decision_id)
+    if audit is None:
+        raise HTTPException(404, "signal_decision_not_found")
+    return audit
+
+
 @router.post("/attribution/{order_id}")
 def tag_order(order_id: str, request: Request, payload: dict = Body(...)):
     from .accounting import AttributionService
