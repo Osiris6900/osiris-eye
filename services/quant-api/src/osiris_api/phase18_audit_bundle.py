@@ -1,7 +1,10 @@
 """Portable, offline-verifiable audit evidence bundles.
 
-Bundles are integrity-checked, not signed. Their authenticity still depends on
-independent custody of the exported bytes/checkpoint.
+The bundle hash covers the journal. An Ed25519 signature over that hash is
+attached when ``OSIRIS_AUDIT_SIGNING_KEY_FILE`` is set. With no key, the bundle
+is marked unsigned and is not reported as signed. ``status`` remains the hash
+result (``valid`` or ``invalid``). ``evidence_status`` is the fail-closed
+result: ``ok``, ``tampered``, or ``unverifiable``.
 """
 from __future__ import annotations
 
@@ -47,7 +50,8 @@ def export_audit_bundle(store: DurableAuditStore, bundle_id: str,
         "live_execution_enabled": False,
     }
     bundle["bundle_hash"] = hashlib.sha256(_canonical_event(bundle)).hexdigest()
-    return bundle
+    from .audit_evidence import attach_bundle_signature
+    return attach_bundle_signature(bundle)
 
 
 def verify_audit_bundle(bundle: dict[str, Any]) -> dict[str, Any]:
@@ -64,7 +68,13 @@ def verify_audit_bundle(bundle: dict[str, Any]) -> dict[str, Any]:
     events = bundle["events"]
     if not isinstance(events, list):
         raise ValueError("bundle events must be a list")
+    from .audit_evidence import bundle_actors_authenticated, signature_state
+
     unsigned = dict(bundle)
+    envelope = unsigned.pop("signature_envelope", None)
+    declared_signature = unsigned.pop("signature_status", "unsigned")
+    unsigned.pop("signed", None)
+    unsigned.pop("key_error", None)
     claimed_bundle_hash = unsigned.pop("bundle_hash")
     actual_bundle_hash = hashlib.sha256(_canonical_event(unsigned)).hexdigest()
     issues: list[str] = []
@@ -72,6 +82,10 @@ def verify_audit_bundle(bundle: dict[str, Any]) -> dict[str, Any]:
         issues.append("event_count_mismatch")
     if not isinstance(claimed_bundle_hash, str) or claimed_bundle_hash != actual_bundle_hash:
         issues.append("bundle_hash_mismatch")
+    state = signature_state(envelope, actual_bundle_hash)
+    if state == "invalid" or (declared_signature == "signed" and state == "unsigned"):
+        issues.append("signature_invalid")
+        state = "invalid"
 
     previous_hash = "0" * 64
     seen_ids: set[str] = set()
@@ -120,15 +134,29 @@ def verify_audit_bundle(bundle: dict[str, Any]) -> dict[str, Any]:
                 issues.append("checkpoint_range_mismatch")
             elif events[seq].get("event_hash") != checkpoint.get("head_hash"):
                 issues.append("checkpoint_hash_mismatch")
+    hash_issues = [issue for issue in issues if issue != "signature_invalid"]
+    actors_ok = bundle_actors_authenticated(bundle)
+    if hash_issues or state == "invalid":
+        evidence_status = "tampered"
+    elif state == "verified" and actors_ok:
+        evidence_status = "ok"
+    else:
+        evidence_status = "unverifiable"
     return {
         "status": "valid" if not issues else "invalid",
         "bundle_id": bundle["bundle_id"],
         "event_count": len(events),
         "head_hash": previous_hash,
+        "bundle_hash": actual_bundle_hash,
         "issues": issues,
-        "bundle_integrity_verified": not issues,
-        "signature_verified": False,
+        "bundle_integrity_verified": not hash_issues,
+        "signature_verified": state == "verified",
+        "signature_status": state,
+        "signed": state == "verified",
+        "evidence_status": evidence_status,
+        "actor_authentication_verified": evidence_status == "ok",
         "trusted_timestamp_verified": False,
         "live_execution_enabled": False,
+        "live_trading_authorized": False,
         "new_risk_allowed": False,
     }

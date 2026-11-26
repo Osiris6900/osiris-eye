@@ -32,7 +32,7 @@ The workstream IDs below are separate from release gates T01–T20.
 The API does not initialize the control-plane database or start an external integration on import. New routes are under `/control-plane/`, separate from legacy `/platform/modules` and its existing API-token middleware.
 
 - `OSIRIS_CONTROL_DB`: operator-owned persistent SQLite path; files are created with mode 0600.
-- `OSIRIS_CONTROL_MASTER_KEY`: base64-encoded 32-byte key, supplied through secure environment settings, not committed or posted in chat. Used for local credential encryption.
+- `OSIRIS_CONTROL_MASTER_KEY`: base64-encoded 32-byte key, supplied through secure environment settings, not committed or posted in chat. Used for local credential encryption. It now also requires `OSIRIS_CONTROL_MASTER_KEY_ID` and `OSIRIS_CONTROL_MASTER_KEY_VERSION`. Weak, short, reused, and placeholder values are refused. Prefer `OSIRIS_KEY_RING_FILE` when a key must rotate. See `docs/SECRETS_AND_KEY_MANAGEMENT.md`.
 - `OSIRIS_ADMIN_TOKENS`: existing per-role bootstrap token configuration. Read access respects role scopes. Mutating research/operations APIs require an MFA `Session` token.
 - `OSIRIS_ENV=production`: MFA and credential APIs require HTTPS even on loopback.
 - Vendor bars require `OSIRIS_VENDOR_ADAPTERS_ENABLED=1`, provider credentials and `OSIRIS_<PROVIDER>_ENTITLEMENT_REFERENCE`. These references are operator claims, not independent licensing proof. No adapter is enabled by default.
