@@ -325,7 +325,8 @@ def parsed_report(path: Path, before: dict, binary_sha256: str) -> dict:
             "soak_report_source_binding_mismatch")
     workload, delivery = report.get("workload"), report.get("delivery")
     require(isinstance(workload, dict) and workload.get("peers") == 4
-            and workload.get("messages") == 30 and workload.get("duration_seconds", 0) >= 20,
+            and workload.get("messages") == 30 and workload.get("duration_seconds", 0) >= 20
+            and workload.get("definitely_unsent_retry_attempts") == 0,
             "four_peer_thirty_message_soak_required")
     require(isinstance(delivery, dict)
             and all(type(delivery.get(name)) is int and delivery[name] == expected
@@ -337,6 +338,7 @@ def parsed_report(path: Path, before: dict, binary_sha256: str) -> dict:
     require(isinstance(records, list) and len(records) == 30
             and all(isinstance(r, dict) and r.get("outcome") == "delivered"
                     and r.get("delivery_count") == 1 and r.get("duplicate_deliveries") == 0
+                    and r.get("definitely_unsent_retry_attempts") == 0
                     and isinstance(r.get("payload_sha256"), str)
                     and re.fullmatch(r"[0-9a-f]{64}", r["payload_sha256"]) for r in records)
             and len({r["payload_sha256"] for r in records}) == 30,
@@ -351,6 +353,7 @@ def parsed_report(path: Path, before: dict, binary_sha256: str) -> dict:
     require(isinstance(notes, dict)
             and notes.get("traffic_mode") == "drained_restart"
             and notes.get("workload_retransmissions") == 0
+            and notes.get("controller_workload_retransmissions") == 0
             and notes.get("independent_host_fingerprints_distinct") is False,
             "local_paused_no_resend_scope_required")
     for name in ("independent_host_acceptance", "release_gate_accepted", "live_trading_authorized"):
