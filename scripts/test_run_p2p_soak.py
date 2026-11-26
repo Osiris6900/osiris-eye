@@ -215,6 +215,26 @@ class MeasurementTests(unittest.TestCase):
             self.assertEqual(env['OSIRIS_BOOTSTRAP_RECONNECT_INTERVAL_SECS'], '1')
             self.assertEqual(agent.runtime['publisher_bootstrap_reconnect_seconds'], 1)
 
+    def test_agent_emits_only_well_formed_correlated_retry_events(self):
+        digest = 'b' * 64
+        with tempfile.TemporaryDirectory() as tmp:
+            agent = Agent(SimpleNamespace(controller_pid=None), tmp)
+            proc = Mock(pid=1700)
+            proc.stdout = [
+                f'outbound_observation_retry id=7 recipient=a attempt=2 observation_sha256={digest}\n',
+                'outbound_observation_retry id=8 recipient=a attempt=2 observation_sha256=invalid\n',
+            ]
+            events = []
+            agent.emit = lambda kind, **data: events.append({'kind': kind, **data})
+            agent.done.set()
+            agent.read_node(1, proc)
+            self.assertEqual(events[0], {'kind': 'outbound_retry', 'node': 1, 'digest': digest})
+            self.assertEqual(events[1], {
+                'kind': 'fatal', 'reason': 'invalid_outbound_retry_digest', 'node': 1,
+            })
+            self.assertEqual(agent.diagnostics['outbound_observation_retry'], 2)
+            proc.wait.assert_called_once()
+
     def test_cli_rejects_unbounded_worker_settings_before_starting_agents(self):
         script = Path(__file__).with_name('run_p2p_soak.py')
         for invalid in ('0', '3', '8', 'true'):
@@ -229,6 +249,7 @@ class MeasurementTests(unittest.TestCase):
         c.command = lambda *args, **kwargs: None
         with patch('run_p2p_soak.time.monotonic', side_effect=[11.0, 12.0, 14.0, 17.0]):
             keys = [c.publish('host-a', 0, str(i)) for i in range(4)]
+        c.retry_counts[keys[2]] = 2
         for digest, when in ((keys[0], 11.1), (keys[1], 14.0), (keys[1], 14.5)):
             c.events.put(('host-b', {'kind': 'delivery', 'digest': digest}))
             with patch('run_p2p_soak.time.monotonic', return_value=when):
@@ -248,6 +269,32 @@ class MeasurementTests(unittest.TestCase):
         self.assertEqual(records[2]['outcome'], 'lost')
         self.assertIsNone(records[2]['latency_ms'])
         self.assertEqual(records[2]['delivery_count'], 0)
+        self.assertEqual(records[2]['definitely_unsent_retry_attempts'], 2)
+        self.assertEqual(records[0]['definitely_unsent_retry_attempts'], 0)
+
+    def test_outbound_retries_require_a_tracked_digest_on_its_source_host(self):
+        c = Controller()
+        c.sent = {'tracked': 1.0, 'other': 2.0}
+        c.sources = {'tracked': 'host-a', 'other': 'host-c'}
+        c.queued_observations = {'queued-tracked': 'tracked', 'queued-other': 'other'}
+        for _ in range(2):
+            c.events.put(('host-a', {'kind': 'outbound_retry', 'node': 0, 'digest': 'queued-tracked'}))
+            c.drain()
+        self.assertEqual(c.retry_counts, {'tracked': 2})
+        self.assertEqual(c.deliveries, {})
+        records = workload_records(c, ['tracked', 'other'], 0, outage_start_ms=None,
+                                   restart_ms=None, recovered_ms=None)
+        self.assertEqual([r['definitely_unsent_retry_attempts'] for r in records], [2, 0])
+        for host, digest in (('host-b', 'queued-tracked'), ('host-c', 'queued-tracked'), ('host-a', 'unknown')):
+            c = Controller()
+            c.sent = {'tracked': 1.0}
+            c.sources = {'tracked': 'host-a'}
+            c.queued_observations = {'queued-tracked': 'tracked'}
+            c.events.put((host, {'kind': 'outbound_retry', 'node': 0, 'digest': digest}))
+            with self.subTest(host=host, digest=digest), \
+                 self.assertRaisesRegex(RuntimeError, 'untracked_or_wrong_host_outbound_retry'):
+                c.drain()
+            self.assertEqual(c.retry_counts, {})
 
     def test_wrong_recipient_and_untracked_delivery_cannot_be_credited(self):
         for host, digest, expected in (
