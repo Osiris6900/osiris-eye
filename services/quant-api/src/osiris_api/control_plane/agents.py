@@ -67,7 +67,7 @@ class ResearchAgents:
     def approve(self, request_id: str, approver: str, role: str):
         if role not in {"operator", "risk_officer", "security_admin"}:
             raise ValueError("review_permission_denied")
-        item = self.db.get("agent-requests", identifier(approver))
+        item = self.db.get("agent-requests", identifier(request_id))
         if not item or item["value"]["requester"] == identifier(approver):
             raise ValueError("independent_approver_required")
         request = item["value"]
