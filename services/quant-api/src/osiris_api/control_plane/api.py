@@ -662,7 +662,7 @@ def tag_order(order_id: str, request: Request, payload: dict = Body(...)):
     from .accounting import AttributionService
 
     db = database()
-    actor = principal(request, db, "research")
+    principal(request, db, "research")
     run(
         AttributionService(db).tag_order,
         order_id,
