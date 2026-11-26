@@ -39,6 +39,11 @@ class DiagnosticTests(unittest.TestCase):
         self.assertEqual(classify_node_diagnostic("outbound_observation_rearmed recipient=a count=3"),
                          ("outbound_observation_rearmed", 3))
 
+    def test_retry_attempt_is_counted_separately_from_delivery(self):
+        digest = 'a' * 64
+        line = f"outbound_observation_retry id=7 recipient=a attempt=2 observation_sha256={digest}"
+        self.assertEqual(classify_node_diagnostic(line), ("outbound_observation_retry", 1))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -136,5 +136,9 @@ OSIRIS_P2P_TEST_BINARY=/absolute/path/to/osiris-p2p-node \
   python scripts/test_p2p_outbound_queue.py
 ```
 
-CI and the engineering verification profile run this exercise. It does not
-accept the sustained independent-host loss, memory or release gates.
+CI and the engineering verification profile run this exercise. The sustained
+soak additionally correlates every committed retry-processing claim with the
+original canonical observation digest and records per-message and aggregate
+attempt totals. A claim does not prove network transmission. This accounting
+does not relabel a new encrypted envelope as the same network message, and does
+not accept the sustained independent-host loss, memory or release gates.
