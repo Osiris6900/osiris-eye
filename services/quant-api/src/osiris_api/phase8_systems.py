@@ -124,37 +124,14 @@ def observe_model_health(reference, current, max_mean_shift=0.5, max_std_ratio=2
             "deployment_authorized": False}
 
 
-def reconcile_paper_trades(orders, fills, positions):
-    if not all(isinstance(x, list) for x in (orders, fills, positions)):
-        raise ValueError("orders, fills and positions must be lists")
-    order_map = {}
-    for o in orders:
-        if not isinstance(o, dict) or not o.get("order_id") or o["order_id"] in order_map:
-            raise ValueError("orders require unique order_id")
-        order_map[o["order_id"]] = _num(o.get("quantity"), "order quantity", 0)
-    filled = dict.fromkeys(order_map, 0.0)
-    expected = {}
-    for f in fills:
-        if not isinstance(f, dict) or f.get("order_id") not in order_map:
-            raise ValueError("fill references unknown order")
-        q = _num(f.get("quantity"), "fill quantity", 0)
-        _num(f.get("price"), "fill price", 0)
-        oid = f["order_id"]
-        filled[oid] += q
-        if filled[oid] > order_map[oid] + 1e-9: raise ValueError("fills exceed order quantity")
-    for o in orders:
-        if not o.get("asset") or o.get("side") not in ("buy", "sell"):
-            raise ValueError("orders require asset and buy/sell side")
-        sign = 1 if o["side"] == "buy" else -1
-        expected[o["asset"]] = expected.get(o["asset"], 0) + sign*filled[o["order_id"]]
-    actual = {}
-    for p in positions:
-        if not isinstance(p, dict) or not p.get("asset"): raise ValueError("positions require asset")
-        actual[p["asset"]] = _num(p.get("quantity"), "position quantity")
-    breaks = {a: expected.get(a, 0)-actual.get(a, 0) for a in set(expected)|set(actual)}
-    breaks = {a: v for a, v in breaks.items() if abs(v) > 1e-9}
-    return {"status": "reconciled" if not breaks else "breaks_found",
-            "filled_quantity_by_order": filled, "position_breaks": breaks, "live_execution": False}
+def reconcile_paper_trades(orders=None, fills=None, positions=None):
+    """Caller orders, fills, and positions are not a reconciliation source.
+
+    The route ignores these values and either rejects them or compares the
+    durable paper book with a server-side broker snapshot.
+    """
+    del orders, fills, positions
+    raise ValueError("caller_supplied_numbers_rejected")
 
 
 def audit_security_resilience(controls):
