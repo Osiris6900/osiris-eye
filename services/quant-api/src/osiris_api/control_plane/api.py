@@ -460,6 +460,34 @@ def query_features(request: Request, payload: dict = Body(...)):
     return run(FeatureStore(db).point_in_time, **payload)
 
 
+@router.post("/features/snapshots")
+def create_feature_snapshot(request: Request, payload: dict = Body(...)):
+    from .features import FeatureStore
+
+    db = database()
+    actor = principal(request, db, "research")
+    if set(payload) != {"id", "payload"}:
+        raise HTTPException(422, "invalid_feature_snapshot_envelope")
+    return run(
+        FeatureStore(db).create_snapshot,
+        payload["id"],
+        actor["actor"],
+        payload["payload"],
+    )
+
+
+@router.get("/features/snapshots/{snapshot_id}")
+def get_feature_snapshot(snapshot_id: str, request: Request):
+    from .features import FeatureStore
+
+    db = database()
+    principal(request, db, "research-read")
+    snapshot = run(FeatureStore(db).get_snapshot, snapshot_id)
+    if snapshot is None:
+        raise HTTPException(404, "feature_snapshot_not_found")
+    return snapshot
+
+
 @router.post("/models/{model_id}/predict")
 def predict(model_id: str, request: Request, payload: dict = Body(...)):
     db = database()
