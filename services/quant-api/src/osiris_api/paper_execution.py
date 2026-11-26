@@ -23,6 +23,11 @@ from typing import Any
 from fastapi import APIRouter, Body, HTTPException
 
 from .decimal_safety import bounded_decimal, validate_decimal_bounds
+from .market_feed_gate import (
+    DEFAULT_MAX_MARK_JUMP_MULTIPLE,
+    MarkCursor,
+    admit_market_observation,
+)
 from .instrument_master import assess_order
 from .risk import RiskLimits, bind_paper_clock_gate, check_execution, reset_paper_clock_gate
 
@@ -57,6 +62,23 @@ def _instrument_audit_fields(decision: dict[str, Any]) -> dict[str, Any]:
 
 # There is no branch that submits a broker order. A true value still refuses.
 LIVE_EXECUTION_ENABLED = False
+
+
+class MarketDataRejected(ValueError):
+    """A price failed the paper data-quality gates and must not update a mark."""
+
+    def __init__(self, reason: str, symbol: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.symbol = symbol
+
+
+class _CommittedRejection(Exception):
+    """The rejection audit is already committed. Do not roll it back."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
 # Realized P&L plus only negative unrealized P&L. Gains do not offset a loss.
 DAILY_LOSS_BASIS = "realized_plus_adverse_unrealized"
 
@@ -252,6 +274,9 @@ def _connect() -> sqlite3.Connection:
         payload TEXT NOT NULL, prev_hash TEXT NOT NULL, row_hash TEXT NOT NULL)""")
     conn.execute("""CREATE TABLE IF NOT EXISTS paper_exec_marks (
         symbol TEXT PRIMARY KEY, price TEXT NOT NULL, observed_at TEXT NOT NULL)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS paper_exec_mark_quality (
+        symbol TEXT PRIMARY KEY, source TEXT NOT NULL, sequence INTEGER,
+        event_time_ms INTEGER NOT NULL, gap_open INTEGER NOT NULL DEFAULT 0)""")
     _migrate(conn)
     return conn
 
@@ -1162,7 +1187,7 @@ def execution_context(
 
 def _fill_risk_reason(
     conn: sqlite3.Connection, account: sqlite3.Row, order: sqlite3.Row,
-    quantity: Decimal, price: Decimal, now: object,
+    quantity: Decimal, price: Decimal, now: object, *, market_data_fresh: bool,
 ) -> str | None:
     """An accepted order is not a permanent exemption from current risk limits."""
     position, gross = _book(conn, order["symbol"], price)
@@ -1184,8 +1209,8 @@ def _fill_risk_reason(
             daily_pnl=_as_float(Decimal(account["realized_pnl"])),
             limits=_limits_from_row(account),
             kill_switch_active=bool(account["kill_switch"]),
-            market_data_fresh=True, risk_service_available=True,
-            symbol=order["symbol"],
+            market_data_fresh=market_data_fresh, risk_service_available=True,
+            symbol=order["symbol"], as_of=now if isinstance(now, str) else None,
         )
     except Exception:  # noqa: BLE001 - an unavailable risk check must fail closed
         return "risk_service_unavailable"
@@ -1383,6 +1408,9 @@ def _submit_new_order(
     account = conn.execute("SELECT * FROM paper_exec_meta WHERE id=1").fetchone()
     effective_kill = bool(account["kill_switch"]) or kill_switch_active is not False
     fresh = _fresh(account, observed_at, now)
+    reference_reason = (
+        _reference_price_reason(conn, account, symbol, px, observed_at, now) if fresh else None
+    )
     filled_notional, filled_gross = _book(conn, symbol, px)
     if side == "BUY":
         extra_symbol, extra_gross = _open_buy_exposure(conn, symbol)
@@ -1398,6 +1426,8 @@ def _submit_new_order(
     instrument_fields = _instrument_audit_fields(decision)
     if not decision["ok"]:
         approved, reason, limits_evaluated = False, decision["reason"], False
+    elif reference_reason is not None:
+        approved, reason, limits_evaluated = False, _public_mark_reason(reference_reason), False
     else:
         try:
             position_float, gross_float = _risk_exposures_as_floats(
@@ -1695,7 +1725,19 @@ def _apply_paper_fill(
                 raise ValueError("order_not_found")
             if depth_context is not None:
                 from .paper_depth_execution import prepare, finish
-                depth_plan = prepare(conn, order, depth_context)
+                try:
+                    depth_plan = prepare(conn, order, depth_context)
+                except MarketDataRejected as exc:
+                    _append_audit(conn, "market_observation_rejected", key, {
+                        "symbol": exc.symbol,
+                        "reason": exc.reason,
+                        "source": "coinbase-exchange",
+                        "live_execution": False,
+                        "broker_order_submitted": False,
+                    })
+                    _assert_ready(conn)
+                    conn.commit()
+                    raise _CommittedRejection(_public_mark_reason(exc.reason)) from exc
                 receipt = depth_plan["receipt"]
                 if depth_plan["replayed"] or receipt["outcome"] == "no_executable_liquidity":
                     if not depth_plan["replayed"]:
@@ -1796,12 +1838,21 @@ def _apply_paper_fill(
                     problem = "timestamp_untrusted"
                 if problem is None and bool(account["kill_switch"]):
                     problem = "kill_switch_active"
-                if problem is None and not _fresh(account, observed_at, now):
+                fresh = _fresh(account, observed_at, now)
+                if problem is None and not fresh:
                     problem = "stale_market_data"
+                if problem is None and fresh:
+                    screened = _reference_price_reason(
+                        conn, account, order["symbol"], fill_px, observed_at, now,
+                    )
+                    if screened is not None:
+                        problem = _public_mark_reason(screened)
                 if order["state"] not in OPEN_ORDER_STATES:
                     problem = "invalid_order_transition"
                 if problem is None:
-                    problem = _fill_risk_reason(conn, account, order, fill_qty, fill_px, now)
+                    problem = _fill_risk_reason(
+                        conn, account, order, fill_qty, fill_px, now, market_data_fresh=fresh,
+                    )
                 if problem is not None:
                     event = (
                         "invalid_order_transition"
@@ -1893,6 +1944,8 @@ def _apply_paper_fill(
                             result = _public(stored, stored_fill, replay=False)
                             if depth_plan is not None:
                                 result.update(depth=depth_plan["receipt"], execution_authorized=False)
+        except _CommittedRejection as exc:
+            error = exc.reason
         except Exception:
             conn.rollback()
             raise
@@ -1991,12 +2044,218 @@ def _normalize_symbol(symbol: Any) -> str:
     return normalized
 
 
-def mark_to_market(marks: Any, *, observed_at: object, now: object = None) -> dict[str, Any]:
-    """Store fresh marks and the unrealized P&L they imply. This does not trade.
+def _jump_multiple(value: object) -> Decimal:
+    if isinstance(value, bool) or not isinstance(value, (str, int, Decimal)):
+        raise ValueError("invalid_jump_threshold")
+    try:
+        number = Decimal(str(value))
+    except InvalidOperation as exc:
+        raise ValueError("invalid_jump_threshold") from exc
+    if not number.is_finite() or number < 1 or number > Decimal("1000000"):
+        raise ValueError("invalid_jump_threshold")
+    return number
 
-    ``now`` is an injected server clock for tests and in-process callers.
-    HTTP does not pass it. Receive time is stamped here when it is omitted.
-    PR #458 should keep this screen when it rewrites mark admission.
+
+def _public_mark_reason(reason: str) -> str:
+    """Keep the paper book's existing stale-mark reason for callers."""
+    if reason in {"stale_observation", "future_receipt"}:
+        return "stale_market_data"
+    return reason
+
+
+def _event_ms(value: datetime) -> int:
+    return int((value - datetime(1970, 1, 1, tzinfo=timezone.utc)).total_seconds() * 1000)
+
+
+def _load_mark_cursor(conn: sqlite3.Connection, symbol: str) -> MarkCursor | None:
+    row = conn.execute(
+        "SELECT price, observed_at FROM paper_exec_marks WHERE symbol=?", (symbol,)
+    ).fetchone()
+    if row is None:
+        return None
+    quality = conn.execute(
+        """SELECT source, sequence, event_time_ms, gap_open
+           FROM paper_exec_mark_quality WHERE symbol=?""",
+        (symbol,),
+    ).fetchone()
+    event = _parse_time(row["observed_at"])
+    source = "paper-ledger"
+    sequence = None
+    gap_open = False
+    if quality is not None:
+        event = datetime.fromtimestamp(int(quality["event_time_ms"]) / 1000, timezone.utc)
+        source = quality["source"]
+        sequence = None if quality["sequence"] is None else int(quality["sequence"])
+        gap_open = bool(quality["gap_open"])
+    if event is None:
+        return None
+    return MarkCursor(
+        price=Decimal(row["price"]), event_time=event, sequence=sequence,
+        gap_open=gap_open, source=source,
+    )
+
+
+def _save_mark_cursor(
+    conn: sqlite3.Connection, symbol: str, source: str, event_ms: int,
+    sequence: int | None, *, clear_gap: bool,
+) -> None:
+    conn.execute(
+        """INSERT INTO paper_exec_mark_quality(symbol, source, sequence, event_time_ms, gap_open)
+           VALUES (?,?,?,?,0)
+           ON CONFLICT(symbol) DO UPDATE SET
+             source=excluded.source,
+             event_time_ms=excluded.event_time_ms,
+             sequence=COALESCE(excluded.sequence, paper_exec_mark_quality.sequence),
+             gap_open=CASE
+               WHEN ? THEN 0
+               WHEN excluded.sequence IS NULL THEN paper_exec_mark_quality.gap_open
+               ELSE 0
+             END""",
+        (symbol, source, sequence, event_ms, 1 if clear_gap else 0),
+    )
+
+
+def _latch_mark_gap(conn: sqlite3.Connection, symbol: str) -> None:
+    conn.execute(
+        "UPDATE paper_exec_mark_quality SET gap_open=1 WHERE symbol=?", (symbol,)
+    )
+
+
+def _parse_mark_input(symbol: Any, value: Any, observed_at: object, now: object) -> dict[str, Any]:
+    """Normalize one mark. Caller freshness flags are ignored."""
+    source = "paper-ledger"
+    event_raw: object = observed_at
+    received_raw: object = observed_at
+    available_raw: object | None = None
+    sequence = None
+    bid = ask = None
+    resync = False
+    if isinstance(value, dict):
+        if "price" not in value:
+            raise ValueError("invalid_marks")
+        price = _number(value.get("price"), positive=True)
+        supplied = value.get("source", source)
+        if not isinstance(supplied, str):
+            raise ValueError("invalid_marks")
+        source = supplied.strip()
+        if isinstance(value.get("event_time"), str):
+            event_raw = value["event_time"]
+        if "received_time" in value:
+            received_raw = value["received_time"]
+        else:
+            # The book received the observation at the injected clock.
+            received_raw = now
+        if "available_time" in value:
+            available_raw = value["available_time"]
+        if "sequence" in value:
+            sequence = value["sequence"]
+        if "bid" in value:
+            bid = _number(value["bid"], positive=True)
+        if "ask" in value:
+            ask = _number(value["ask"], positive=True)
+        if "resync" in value:
+            if type(value["resync"]) is not bool:
+                raise ValueError("invalid_marks")
+            resync = value["resync"]
+        stored = event_raw if isinstance(event_raw, str) else ""
+    else:
+        price = _number(value, positive=True)
+        stored = observed_at if isinstance(observed_at, str) else ""
+    event = _parse_time(event_raw)
+    return {
+        "symbol": _normalize_symbol(symbol),
+        "price": price,
+        "source": source,
+        "event": event,
+        "received": _parse_time(received_raw),
+        "available": _parse_time(available_raw) if available_raw is not None else event,
+        "sequence": sequence,
+        "bid": bid,
+        "ask": ask,
+        "resync": resync,
+        "stored_at": stored,
+    }
+
+
+def _screen_observation(
+    conn: sqlite3.Connection,
+    account: sqlite3.Row,
+    item: dict[str, Any],
+    *,
+    now: object,
+    max_jump_multiple: Decimal,
+    enforce_sequence: bool,
+    enforce_time_order: bool,
+) -> tuple[bool, str]:
+    clock = _parse_time(now)
+    if clock is None or item["event"] is None or item["received"] is None:
+        return False, "invalid_timestamp"
+    return admit_market_observation(
+        symbol=item["symbol"],
+        price=item["price"],
+        source=item["source"],
+        event_time=item["event"],
+        received_time=item["received"],
+        available_time=item["available"],
+        now=clock,
+        max_age_seconds=float(Decimal(account["max_market_age_seconds"])),
+        max_future_skew_seconds=float(Decimal(account["max_future_skew_seconds"])),
+        previous=_load_mark_cursor(conn, item["symbol"]),
+        sequence=item["sequence"],
+        bid=item["bid"],
+        ask=item["ask"],
+        resync=item["resync"],
+        max_jump_multiple=max_jump_multiple,
+        enforce_sequence=enforce_sequence,
+        enforce_time_order=enforce_time_order,
+    )
+
+
+def _reference_price_reason(
+    conn: sqlite3.Connection, account: sqlite3.Row, symbol: str, price: Decimal,
+    observed_at: object, now: object,
+) -> str | None:
+    """Screen a fill or order reference. It does not move the mark cursor."""
+    item = {
+        "symbol": symbol,
+        "price": price,
+        "source": "paper-ledger",
+        "event": _parse_time(observed_at),
+        "received": _parse_time(observed_at),
+        "available": _parse_time(observed_at),
+        "sequence": None,
+        "bid": None,
+        "ask": None,
+        "resync": False,
+    }
+    ok, reason = _screen_observation(
+        conn, account, item, now=now,
+        max_jump_multiple=DEFAULT_MAX_MARK_JUMP_MULTIPLE,
+        enforce_sequence=False, enforce_time_order=False,
+    )
+    return None if ok else reason
+
+
+def _store_mark(
+    conn: sqlite3.Connection, symbol: str, price: Decimal, observed_at: str,
+    *, source: str, event: datetime, sequence: int | None, clear_gap: bool,
+) -> None:
+    conn.execute(
+        """INSERT INTO paper_exec_marks(symbol, price, observed_at) VALUES (?,?,?)
+           ON CONFLICT(symbol) DO UPDATE SET
+           price=excluded.price, observed_at=excluded.observed_at""",
+        (symbol, _canonical(price), observed_at),
+    )
+    _save_mark_cursor(conn, symbol, source, _event_ms(event), sequence, clear_gap=clear_gap)
+
+
+def mark_to_market(
+    marks: Any, *, observed_at: object, now: object = None, max_jump_multiple: object = None,
+) -> dict[str, Any]:
+    """Store marks that pass the data-quality gates. This does not trade.
+
+    Freshness is the age of the exchange and receive timestamps at ``now``.
+    A rejected observation leaves the last good mark in place and is audited.
     """
     _refuse_live(False)
     injected_clock = now is not None
@@ -2005,16 +2264,24 @@ def mark_to_market(marks: Any, *, observed_at: object, now: object = None) -> di
         now = server_receive_time().isoformat()
     if not isinstance(marks, dict) or not marks:
         raise ValueError("invalid_marks")
-    parsed: dict[str, Decimal] = {}
-    for symbol, price in marks.items():
-        parsed[_normalize_symbol(symbol)] = _number(price, positive=True)
-    as_of = observed_at if isinstance(observed_at, str) else None
-    decisions: dict[str, dict[str, Any]] = {}
-    for symbol, price in parsed.items():
-        decision = instrument_decision(symbol, price=price, as_of=as_of)
+    multiple = (
+        DEFAULT_MAX_MARK_JUMP_MULTIPLE if max_jump_multiple is None
+        else _jump_multiple(max_jump_multiple)
+    )
+    parsed = [
+        _parse_mark_input(symbol, value, observed_at, now) for symbol, value in marks.items()
+    ]
+    stored_times = {item["stored_at"] for item in parsed}
+    if len(stored_times) != 1:
+        raise ValueError("invalid_marks")
+    observed = parsed[0]["stored_at"]
+    error: str | None = None
+    instrument_decisions = {}
+    for item in parsed:
+        decision = instrument_decision(item["symbol"], price=item["price"], as_of=item["stored_at"])
         if not decision["ok"]:
             raise ValueError(decision["reason"])
-        decisions[symbol] = decision
+        instrument_decisions[item["symbol"]] = decision
     tokens = None
     with _lock:
         conn = _connect()
@@ -2023,42 +2290,69 @@ def mark_to_market(marks: Any, *, observed_at: object, now: object = None) -> di
             _assert_ready(conn)
             account = conn.execute("SELECT * FROM paper_exec_meta WHERE id=1").fetchone()
             provenance = _screen_symbols(
-                conn, list(parsed), observed_at, now, injected=injected_clock, depth=False,
+                conn, [item["symbol"] for item in parsed], observed, now,
+                injected=injected_clock, depth=False,
             )
-            verdict = _timestamp_verdict(provenance, account, observed_at, now)
+            verdict = _timestamp_verdict(provenance, account, observed, now)
             tokens = _bind_provenance(provenance, clock_healthy=True, verdict=verdict)
             if verdict == "timestamp_untrusted":
                 raise ValueError("timestamp_untrusted")
-            if not _fresh(account, observed_at, now):
-                raise ValueError("stale_market_data")
-            held = {
-                row["symbol"] for row in conn.execute("SELECT symbol FROM paper_exec_positions")
-            }
-            merged = _marks(conn)
-            merged.update(parsed)
-            missing = sorted(symbol for symbol in held if symbol not in merged)
-            if missing:
-                raise ValueError("mark_required")
-            observed = observed_at if isinstance(observed_at, str) else ""
-            for symbol, price in parsed.items():
-                conn.execute(
-                    """INSERT INTO paper_exec_marks(symbol, price, observed_at) VALUES (?,?,?)
-                       ON CONFLICT(symbol) DO UPDATE SET
-                       price=excluded.price, observed_at=excluded.observed_at""",
-                    (symbol, _canonical(price), observed),
+            decisions: list[tuple[dict[str, Any], bool, str]] = []
+            for item in parsed:
+                ok, reason = _screen_observation(
+                    conn, account, item, now=now, max_jump_multiple=multiple,
+                    enforce_sequence=True, enforce_time_order=True,
                 )
-            _refresh_unrealized(conn)
-            _append_audit(conn, "mark_to_market", None, {
-                "marks": {symbol: _canonical(price) for symbol, price in sorted(parsed.items())},
-                "observed_at": observed,
-                "instrument_master_version": next(iter(decisions.values()))["catalog_version"],
-                "instrument_versions": {
-                    symbol: decisions[symbol]["instrument_version"] for symbol in sorted(decisions)
-                },
-                "live_execution": False, "broker_order_submitted": False,
-            })
-            _assert_ready(conn)
-            conn.commit()
+                decisions.append((item, ok, reason))
+            if any(not ok for _, ok, _reason in decisions):
+                for item, ok, reason in decisions:
+                    if ok:
+                        continue
+                    _append_audit(conn, "market_observation_rejected", None, {
+                        "symbol": item["symbol"],
+                        "reason": reason,
+                        "source": item["source"],
+                        "live_execution": False,
+                        "broker_order_submitted": False,
+                    })
+                    if reason == "sequence_gap":
+                        _latch_mark_gap(conn, item["symbol"])
+                _assert_ready(conn)
+                conn.commit()
+                error = next(reason for _item, ok, reason in decisions if not ok)
+            else:
+                accepted = {item["symbol"]: item["price"] for item, _ok, _reason in decisions}
+                held = {
+                    row["symbol"] for row in conn.execute("SELECT symbol FROM paper_exec_positions")
+                }
+                merged = _marks(conn)
+                merged.update(accepted)
+                missing = sorted(symbol for symbol in held if symbol not in merged)
+                if missing:
+                    raise ValueError("mark_required")
+                for item, _ok, _reason in decisions:
+                    _store_mark(
+                        conn, item["symbol"], item["price"], observed,
+                        source=item["source"], event=item["event"],
+                        sequence=item["sequence"] if isinstance(item["sequence"], int) and not isinstance(item["sequence"], bool) else None,
+                        clear_gap=isinstance(item["sequence"], int) and not isinstance(item["sequence"], bool),
+                    )
+                _refresh_unrealized(conn)
+                _append_audit(conn, "mark_to_market", None, {
+                    "marks": {
+                        item["symbol"]: _canonical(item["price"])
+                        for item, _ok, _reason in sorted(decisions, key=lambda row: row[0]["symbol"])
+                    },
+                    "observed_at": observed,
+                    "instrument_master_version": next(iter(instrument_decisions.values()))["catalog_version"],
+                    "instrument_versions": {
+                        symbol: instrument_decisions[symbol]["instrument_version"]
+                        for symbol in sorted(instrument_decisions)
+                    },
+                    "live_execution": False, "broker_order_submitted": False,
+                })
+                _assert_ready(conn)
+                conn.commit()
             unrealized = conn.execute(
                 "SELECT unrealized_pnl FROM paper_exec_meta WHERE id=1"
             ).fetchone()["unrealized_pnl"]
@@ -2069,6 +2363,8 @@ def mark_to_market(marks: Any, *, observed_at: object, now: object = None) -> di
             if tokens is not None:
                 _reset_provenance(tokens)
             conn.close()
+    if error is not None:
+        raise ValueError(_public_mark_reason(error))
     return {
         "unrealized_pnl": unrealized,
         "live_execution": False, "broker_order_submitted": False, "mode": "paper_only",
@@ -2245,6 +2541,7 @@ def _snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
         "marks": [dict(row) for row in conn.execute(
             "SELECT symbol, price, observed_at FROM paper_exec_marks ORDER BY symbol"
         )],
+        "market_data_quality": _market_data_quality(conn),
         "recent_fills": [
             {**dict(row), "created_at": None}
             for row in conn.execute(
@@ -2276,6 +2573,90 @@ def _snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
         ],
         "audit": audit,
     }
+
+
+_QUALITY_REASONS = frozenset({
+    "source_unauthenticated", "source_unentitled", "missing_instrument_or_source",
+    "invalid_price", "invalid_timestamp", "invalid_previous_timestamp",
+    "event_after_receipt", "future_receipt", "out_of_order_observation",
+    "stale_observation", "crossed_quote", "locked_quote", "outlier_price",
+    "duplicate_tick", "duplicate_or_out_of_order", "sequence_gap",
+    "invalid_sequence", "invalid_jump_threshold", "feed_tick_rejected",
+})
+
+
+def _count_quality(counts: dict[str, dict[str, int]], symbol: object, reason: object) -> None:
+    if not isinstance(symbol, str) or not isinstance(reason, str):
+        return
+    bucket = counts.setdefault(symbol, {})
+    bucket[reason] = bucket.get(reason, 0) + 1
+
+
+def _market_data_quality(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Per-symbol gate counts and the last good mark. Read-only."""
+    counts: dict[str, dict[str, int]] = {}
+    for row in conn.execute("SELECT event, payload FROM paper_exec_audit ORDER BY seq"):
+        try:
+            payload = json.loads(row["payload"])
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        if row["event"] == "market_observation_rejected":
+            _count_quality(counts, payload.get("symbol"), payload.get("reason"))
+        elif row["event"] == "mark_to_market" and isinstance(payload.get("marks"), dict):
+            for symbol in payload["marks"]:
+                _count_quality(counts, symbol, "accepted")
+        elif row["event"] == "order_decided" and payload.get("reason") in _QUALITY_REASONS:
+            _count_quality(counts, payload.get("symbol"), payload.get("reason"))
+    marks = {
+        row["symbol"]: row for row in conn.execute(
+            "SELECT symbol, price, observed_at FROM paper_exec_marks"
+        )
+    }
+    try:
+        cursors = {
+            row["symbol"]: row for row in conn.execute(
+                "SELECT symbol, source, sequence, gap_open FROM paper_exec_mark_quality"
+            )
+        }
+    except sqlite3.OperationalError:
+        cursors = {}
+    view = []
+    for symbol in sorted(set(marks) | set(counts) | set(cursors)):
+        mark = marks.get(symbol)
+        cursor = cursors.get(symbol)
+        view.append({
+            "symbol": symbol,
+            "last_good_at": None if mark is None else mark["observed_at"],
+            "last_price": None if mark is None else mark["price"],
+            "counts": counts.get(symbol, {}),
+            "sequence": None if cursor is None or cursor["sequence"] is None else int(cursor["sequence"]),
+            "gap_open": bool(cursor["gap_open"]) if cursor is not None else False,
+            "source": None if cursor is None else cursor["source"],
+            "live_trading_authorized": False,
+        })
+    return view
+
+
+def market_data_quality() -> dict[str, Any]:
+    """Read-only per-symbol data-quality status. Does not admit a price."""
+    blank = {
+        "initialized": False, "symbols": [], "live_trading_authorized": False,
+        "live_execution": False, "broker_order_submitted": False, "mode": "paper_only",
+    }
+    with _lock:
+        conn = _connect()
+        try:
+            conn.execute("BEGIN")
+            if conn.execute("SELECT 1 FROM paper_exec_meta WHERE id=1").fetchone() is None:
+                return blank
+            blank["initialized"] = True
+            blank["symbols"] = _market_data_quality(conn)
+            return blank
+        finally:
+            conn.rollback()
+            conn.close()
 
 
 def snapshot() -> dict[str, Any]:
@@ -2812,6 +3193,11 @@ def api_kill_switch(p: dict = Body(...)):
 @router.get("/paper/execution/snapshot")
 def api_snapshot():
     return _guard(snapshot)
+
+
+@router.get("/paper/execution/market-data-quality")
+def api_market_data_quality():
+    return _guard(market_data_quality)
 
 
 @router.get("/paper/execution/reconcile")
