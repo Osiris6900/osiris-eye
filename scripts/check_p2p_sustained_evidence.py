@@ -32,9 +32,14 @@ def traffic_window_errors(data: dict) -> list[str]:
         return ["traffic_on_sections_missing"]
     if (notes.get("traffic_mode") != "continuous_during_outage"
             or notes.get("workload_drained_before_outage") is not False
-            or notes.get("workload_retransmissions") != 0
-            or type(notes.get("workload_retransmissions")) is not int):
-        errors.append("traffic_on_mode_or_no_resend_claim_invalid")
+            or notes.get("controller_workload_retransmissions") != 0
+            or type(notes.get("controller_workload_retransmissions")) is not int):
+        errors.append("traffic_on_mode_or_controller_resend_claim_invalid")
+    retries = notes.get("workload_retransmissions")
+    runtime = data.get("runtime_config")
+    queue_enabled = isinstance(runtime, dict) and runtime.get("publisher_outbound_queue") is True
+    if type(retries) is not int or retries < 0 or (retries > 0 and not queue_enabled):
+        errors.append("traffic_on_retry_scope_invalid")
     boundaries = [outage.get(field) for field in (
         "outage_start_ms", "sink_restart_ms", "all_publishers_recovered_ms")]
     if (any(type(value) is not int or value < 0 for value in boundaries)
@@ -52,6 +57,7 @@ def traffic_window_errors(data: dict) -> list[str]:
         return errors + ["traffic_on_exact_workload_records_required"]
     seen, down_count, outage_count, delivered_count, lost_count, duplicates, late = set(), 0, 0, 0, 0, 0, 0
     latencies, recovered_publications = [], 0
+    retry_total = 0
     for item in records:
         if not isinstance(item, dict):
             errors.append("traffic_on_record_invalid")
@@ -71,11 +77,15 @@ def traffic_window_errors(data: dict) -> list[str]:
         outage_count += int(during)
         down_count += int(down)
         count, duplicate = item.get("delivery_count"), item.get("duplicate_deliveries")
+        retry_attempts = item.get("definitely_unsent_retry_attempts")
         if (type(count) is not int or count < 0 or type(duplicate) is not int
-                or duplicate != max(count - 1, 0)):
-            errors.append("traffic_on_duplicate_accounting_invalid")
+                or duplicate != max(count - 1, 0)
+                or type(retry_attempts) is not int or retry_attempts < 0
+                or (retry_attempts > 0 and not queue_enabled)):
+            errors.append("traffic_on_duplicate_or_retry_accounting_invalid")
             break
         duplicates += duplicate
+        retry_total += retry_attempts
         received = item.get("delivered_elapsed_ms")
         after_restart = False
         if item.get("outcome") == "delivered":
@@ -131,6 +141,10 @@ def traffic_window_errors(data: dict) -> list[str]:
             or workload.get("messages_during_outage") != outage_count
             or type(workload.get("messages_during_outage")) is not int):
         errors.append("traffic_on_publication_counts_mismatch")
+    if (workload.get("definitely_unsent_retry_attempts") != retry_total
+            or type(workload.get("definitely_unsent_retry_attempts")) is not int
+            or retries != retry_total):
+        errors.append("traffic_on_retry_totals_mismatch")
     if (delivery.get("sent") != len(records) or delivery.get("delivered") != delivered_count
             or delivery.get("lost") != lost_count or delivery.get("duplicate_deliveries") != duplicates
             or type(delivery.get("duplicate_deliveries")) is not int

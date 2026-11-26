@@ -46,7 +46,7 @@ def traffic_report(*, recovered_ms=460000):
     data['measurement_notes'].update({
         'traffic_during_outage': True, 'traffic_mode': 'continuous_during_outage',
         'workload_paused_during_outage': False, 'workload_drained_before_outage': False,
-        'workload_retransmissions': 0,
+        'workload_retransmissions': 0, 'controller_workload_retransmissions': 0,
     })
     data['outage'].update(outage_start_ms=450000, sink_restart_ms=455000,
                           all_publishers_recovered_ms=recovered_ms, samples=[
@@ -68,13 +68,16 @@ def traffic_report(*, recovered_ms=460000):
             'during_outage': 450000 <= published < recovered_ms,
             'while_sink_stopped': 450000 <= published < 455000,
             'outcome': 'delivered', 'delivery_count': 1, 'duplicate_deliveries': 0,
+            'definitely_unsent_retry_attempts': 0,
             'delivered_elapsed_ms': received, 'delivered_after_restart': received >= 455000,
             'outage_publication_delivered_after_restart': 450000 <= published < recovered_ms and received >= 455000,
             'latency_ms': received - published,
         })
     data['delivery_records'] = records
     data['workload'].update(messages_while_sink_stopped=sum(r['while_sink_stopped'] for r in records),
-                            messages_during_outage=sum(r['during_outage'] for r in records))
+                            messages_during_outage=sum(r['during_outage'] for r in records),
+                            definitely_unsent_retry_attempts=sum(
+                                r['definitely_unsent_retry_attempts'] for r in records))
     data['delivery'].update(delivered=10000, rejected=0, duplicate_deliveries=0,
                             delivered_after_restart=sum(r['delivered_after_restart'] for r in records))
     data['delivery']['outage_publications_delivered_after_restart'] = sum(
@@ -187,6 +190,31 @@ class SustainedCapacityReviewTests(unittest.TestCase):
         self.assertEqual(result['declared_traffic_mode'], 'continuous_during_outage')
         self.assertFalse(result['t04_t19_release_gates_accepted'])
         self.assertFalse(result['independent_host_identity_verified'])
+
+    def test_definitely_unsent_retries_are_bound_to_every_record(self):
+        data = traffic_report()
+        data['delivery_records'][0]['definitely_unsent_retry_attempts'] = 1
+        data['measurement_notes']['workload_retransmissions'] = 1
+        self.assertIn('traffic_on_retry_scope_invalid', review(data)['errors'])
+        runtime = {
+            'node_worker_threads_requested': 1,
+            'tokio_worker_threads_env': '1',
+            'observed_runtime_worker_count_verified': False,
+            'publisher_outbound_queue': True,
+            'publisher_bootstrap_reconnect_seconds': 1,
+        }
+        data['runtime_config'] = runtime
+        for host in data['hosts']:
+            host['runtime_config'] = dict(runtime)
+        self.assertIn('traffic_on_retry_totals_mismatch', review(data)['errors'])
+        data['workload']['definitely_unsent_retry_attempts'] = 1
+        data['measurement_notes']['workload_retransmissions'] = 1
+        self.assertTrue(review(data)['passed_offline_consistency'], review(data)['errors'])
+        data['delivery_records'][0]['definitely_unsent_retry_attempts'] = True
+        self.assertIn('traffic_on_duplicate_or_retry_accounting_invalid', review(data)['errors'])
+        data = traffic_report()
+        data['measurement_notes']['controller_workload_retransmissions'] = 1
+        self.assertIn('traffic_on_mode_or_controller_resend_claim_invalid', review(data)['errors'])
 
     def test_delivery_inside_stopped_sink_window_is_refused(self):
         data = traffic_report()
