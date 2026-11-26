@@ -550,8 +550,22 @@ def tag_order(order_id: str, request: Request, payload: dict = Body(...)):
         order_id,
         payload.get("strategy"),
         payload.get("reference_price"),
+        arrival_bid=payload.get("arrival_bid"),
+        arrival_ask=payload.get("arrival_ask"),
     )
     return {"tagged": True}
+
+
+@router.get("/execution/tca")
+def execution_tca(request: Request):
+    from .accounting import AttributionService
+
+    db = database()
+    principal(request, db, "research-read")
+    path = os.getenv("OSIRIS_PAPER_EXECUTION_DB", "")
+    if not path:
+        raise HTTPException(503, "canonical_paper_ledger_not_configured")
+    return run(AttributionService(db).transaction_costs, path)
 
 
 @router.get("/attribution")
