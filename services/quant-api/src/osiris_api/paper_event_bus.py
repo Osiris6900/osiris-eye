@@ -46,6 +46,8 @@ _EVENT_STREAM = {
     "account_initialized": "paper.lifecycle",
     "order_decided": "paper.orders",
     "order_cancelled": "paper.orders",
+    "order_expired": "paper.orders",
+    "cancel_rejected": "paper.orders",
     "cancel_replay": "paper.orders",
     "invalid_order_transition": "paper.orders",
     "idempotent_replay": "paper.orders",
@@ -56,6 +58,7 @@ _EVENT_STREAM = {
     "kill_switch_set": "paper.risk",
     "live_execution_refused": "paper.risk",
     "reconciliation_mismatch": "paper.reconciliation",
+    "broker_reconciliation": "paper.reconciliation",
 }
 _CONSUMER_ID = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,63}$")
 _EVENT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")

@@ -1944,7 +1944,7 @@ def cancel_paper_order(
                     "live_execution": False, "broker_order_submitted": False,
                 })
                 _assert_ready(conn)
-                conn.commit()
+                _commit(conn)
                 error = "order_expired"
             else:
                 try:
@@ -2016,9 +2016,9 @@ def expire_paper_orders(*, now: object = None, simulate_crash: bool = False) -> 
             _assert_ready(conn)
             if simulate_crash:
                 raise RuntimeError("simulated_crash_before_commit")
-            conn.commit()
+            _commit(conn)
         except Exception:
-            conn.rollback()
+            _rollback(conn)
             raise
         finally:
             conn.close()
@@ -2738,7 +2738,7 @@ def reconcile_broker_book(*, now: object = None) -> dict[str, Any]:
             conn.execute("BEGIN IMMEDIATE")
             account = conn.execute("SELECT 1 FROM paper_exec_meta WHERE id=1").fetchone()
             if account is None:
-                conn.rollback()
+                _rollback(conn)
                 return _broker_public(
                     status="unreconciled", reason="account_not_initialized", breaks=[],
                     snapshot_digest=None, snapshot_as_of=None, ledger_fingerprint=None,
@@ -2747,7 +2747,7 @@ def reconcile_broker_book(*, now: object = None) -> dict[str, Any]:
             try:
                 _verify_audit(conn)
             except ValueError:
-                conn.rollback()
+                _rollback(conn)
                 return _broker_public(
                     status="unreconciled", reason="audit_chain_corrupt", breaks=[],
                     snapshot_digest=None, snapshot_as_of=None, ledger_fingerprint=None,
@@ -2795,14 +2795,14 @@ def reconcile_broker_book(*, now: object = None) -> dict[str, Any]:
                 "live_trading_authorized": False,
             }
             persisted, seq = _persist_broker_run(conn, payload)
-            conn.commit()
+            _commit(conn)
             return _broker_public(
                 status=status, reason=reason, breaks=classified, snapshot_digest=digest,
                 snapshot_as_of=as_of, ledger_fingerprint=fingerprint, persisted=persisted,
                 audit_seq=seq,
             )
         except Exception:
-            conn.rollback()
+            _rollback(conn)
             raise
         finally:
             conn.close()
@@ -2828,7 +2828,7 @@ def broker_reconciliation_history() -> list[dict[str, Any]]:
                 for row in rows
             ]
         finally:
-            conn.rollback()
+            _rollback(conn)
             conn.close()
 
 
