@@ -173,7 +173,7 @@ def test_connection_options(request: Request, response: Response, payload: dict 
     db = database()
     principal(request, db, "operations")
     if set(payload) != {"expected_version"}:
-        raise HTTPException(422, "invalid_connection_request")
+        raise HTTPException(422, "invalid_connection_test_request")
     try:
         result = Connections(db).test_broker(**payload)
     except ValueError as error:
@@ -274,7 +274,7 @@ def market_regime_oos_view(
 
 @router.post("/backtest/simulate")
 def simulate_backtest(request: Request, payload: dict = Body(...)):
-    from ..agents import execute_tool
+    from .agents import execute_tool
 
     db = database()
     principal(request, db, "research-read")
@@ -358,7 +358,7 @@ def login(request: Request, response: Response, payload: dict = Body(...)):
         payload.get("code"),
         actor["config_digest"],
     )
-    return {"session_token": token, "authorization_scheme": "Session", "expires_in": 900}
+    return {"session_token": token, "authorization_scheme": "Session", "expires_seconds": 900}
 
 
 @router.post("/auth/logout")
@@ -367,7 +367,7 @@ def logout(request: Request):
     actor = principal(request, db)
     header = request.headers.get("authorization", "")
     if not header.startswith("Session "):
-        raise HTTPException(403, "session_required")
+        raise HTTPException(401, "session_required")
     run(identities(db).logout, header[8:], actor["config_digest"])
     return {"revoked": True}
 
@@ -389,7 +389,7 @@ def agent_request(request: Request, payload: dict = Body(...)):
 @router.post("/agents/{request_id}/approve")
 def agent_approve(request_id: str, request: Request):
     db = database()
-    principal(request, db, "review")
+    actor = principal(request, db, "review")
     return run(ResearchAgents(db).approve, request_id, actor["actor"], actor["role"])
 
 
@@ -427,7 +427,9 @@ def finish(job_id: str, request: Request, payload: dict = Body(...)):
 def acquire(request: Request, payload: dict = Body(...)):
     db = database()
     actor = principal(request, db, "operations")
-    return {"lease": run(Coordinator(db).acquire, payload.get("name"), actor["actor"], ttl=payload.get("ttl", 30))}
+    return run(
+        Coordinator(db).acquire, payload.get("name"), actor["actor"], ttl=payload.get("ttl", 30)
+    )
 
 
 @router.post("/leases/write")
