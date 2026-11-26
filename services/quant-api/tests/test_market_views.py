@@ -177,7 +177,7 @@ def test_invalid_option_chain_cannot_enter_the_store(service, change):
 )
 def test_unsafe_news_links_are_rejected(service, url):
     request = record("news")
-    request["url"] = url
+    request["payload"]["url"] = url
     with pytest.raises(ValueError):
         service.ingest(request)
 
