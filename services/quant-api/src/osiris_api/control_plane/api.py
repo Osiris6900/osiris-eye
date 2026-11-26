@@ -124,7 +124,7 @@ def dashboard(request: Request, response: Response):
     from ..paper_pipeline_status import get_paper_pipeline_status
 
     db = database()
-    principal(request, db)
+    actor = principal(request, db)
     network = admin_centre.network_status(
         outbox_counts=_outbox_counts(), identity_registry=_identity_registry(),
     )
