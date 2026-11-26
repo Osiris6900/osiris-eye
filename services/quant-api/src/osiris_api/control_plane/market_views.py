@@ -202,7 +202,7 @@ class MarketViews:
         now = self.clock()
         if event > declared or declared > now:
             raise ValueError("future_or_inverted_market_view_time")
-        payload = self.normalize(record["kind"], record["entity"], record["payload"], event)
+        payload = self.normalize(record["kind"], entity, record["payload"], event)
         fingerprint = digest(
             {
                 **record,
@@ -215,7 +215,7 @@ class MarketViews:
         value = {
             "id": key,
             "kind": record["kind"],
-            "entity": record["entity"],
+            "entity": entity,
             "source": record["source"],
             "source_mode": policy["mode"],
             "rights_reference": policy["rights_reference"],
