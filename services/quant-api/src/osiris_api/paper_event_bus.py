@@ -12,7 +12,8 @@ that ack, a pull returns the same events again. ``event_id`` is stable so the
 consumer can drop duplicates. A full in-memory queue, or a pull whose lag is
 past ``max_pending``, returns ``drop_to_resync`` and keeps the rows. Replay
 from the last ack is how the consumer catches up. Nothing here is deleted to
-make room.
+make room. Follow each replay page's ``next_from`` until caught up; a partial
+page or a skipped sequence cannot clear the live resync requirement.
 
 There is no network broker. Live trading stays disabled.
 """
@@ -106,14 +107,19 @@ class _LiveQueue:
         self.items.clear()
         return "ok", events, self.dropped, self.delivered_seq
 
-    def replayed_through(self, head_seq: int) -> None:
-        """Reset only notifications covered by the successful replay snapshot."""
-        self.delivered_seq = max(self.delivered_seq, head_seq)
-        self.items = deque(event for event in self.items if event["seq"] > head_seq)
-        if self.seen_head <= head_seq:
+    def replayed_through(self, from_seq: int, last_seq: int, *, acked_seq: int) -> None:
+        """Extend live coverage only with a contiguous, actually returned page."""
+        if from_seq > max(self.delivered_seq, acked_seq):
+            # An arbitrary replay offset does not prove the skipped prefix was
+            # delivered or acknowledged (for example, after a durable pull).
+            # It must not clear overflow or discard queued events.
+            return
+        self.delivered_seq = max(self.delivered_seq, last_seq)
+        self.items = deque(event for event in self.items if event["seq"] > last_seq)
+        if self.seen_head <= last_seq:
             self.resync = False
-            self.next_seq = head_seq + 1
-            self.seen_head = head_seq
+            self.next_seq = last_seq + 1
+            self.seen_head = last_seq
 
 
 _LIVE_LOCK = Lock()
@@ -645,7 +651,7 @@ class PaperEventBus:
     def replay(
         self, consumer_id: str, stream: str, *, from_seq: int, limit: int = 100,
     ) -> dict[str, Any]:
-        """Explicit catch-up. This is allowed past ``max_pending`` and does not ack."""
+        """Catch up past ``max_pending`` without acking; resume live after full replay."""
         _check_consumer(consumer_id)
         _check_stream(stream)
         from_seq = _check_sequence(from_seq, allow_zero=True)
@@ -662,8 +668,11 @@ class PaperEventBus:
             conn.commit()
             with _LIVE_LOCK:
                 queue = _LIVE.get((self.path, consumer_id, stream))
-                if queue is not None:
-                    queue.replayed_through(head)
+                if queue is not None and not gaps and from_seq <= head:
+                    last_seq = events[-1]["seq"] if events else from_seq
+                    queue.replayed_through(
+                        from_seq, last_seq, acked_seq=int(consumer["acked_seq"]),
+                    )
             return _page(
                 stream=stream,
                 consumer_id=consumer_id,
