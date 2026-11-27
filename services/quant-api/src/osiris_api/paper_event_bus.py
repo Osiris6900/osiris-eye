@@ -46,6 +46,8 @@ _EVENT_STREAM = {
     "account_initialized": "paper.lifecycle",
     "order_decided": "paper.orders",
     "order_cancelled": "paper.orders",
+    "order_expired": "paper.orders",
+    "cancel_rejected": "paper.orders",
     "cancel_replay": "paper.orders",
     "invalid_order_transition": "paper.orders",
     "idempotent_replay": "paper.orders",
@@ -56,6 +58,7 @@ _EVENT_STREAM = {
     "kill_switch_set": "paper.risk",
     "live_execution_refused": "paper.risk",
     "reconciliation_mismatch": "paper.reconciliation",
+    "broker_reconciliation": "paper.reconciliation",
 }
 _CONSUMER_ID = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,63}$")
 _EVENT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
@@ -216,6 +219,65 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             PRIMARY KEY (consumer_id, stream)
         )"""
     )
+
+
+
+def _verify_journal_copies(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> None:
+    """Verify one delivery batch against the canonical journal in this snapshot.
+
+    The bus log is a delivery projection, not authority for order economics.
+    Standalone published events have no journal reference and remain separate.
+    A reserved journal ID with a missing/changed reference is never standalone.
+    """
+    journal_rows = [row for row in rows if row["journal_seq"] is not None or (
+        isinstance(row["event_id"], str) and row["event_id"].startswith("journal:")
+    )]
+    if not journal_rows:
+        return
+    try:
+        # Local import avoids the execution -> bus module initialization cycle.
+        from .paper_execution import _verify_audit
+
+        _verify_audit(conn)
+        for row in journal_rows:
+            seq = row["journal_seq"]
+            if type(seq) is not int or seq < 1 or row["event_id"] != f"journal:{seq}":
+                raise ValueError("invalid_journal_reference")
+            canonical = conn.execute(
+                "SELECT event, client_order_id, payload FROM paper_exec_audit WHERE seq=?",
+                (seq,),
+            ).fetchone()
+            if canonical is None or (
+                row["event_type"] != canonical["event"]
+                or row["client_order_id"] != canonical["client_order_id"]
+                or row["payload"] != canonical["payload"]
+                or row["stream"] != _EVENT_STREAM.get(canonical["event"], "paper.audit")
+            ):
+                raise ValueError("journal_projection_mismatch")
+    except (ValueError, TypeError, sqlite3.Error) as exc:
+        raise ValueError("event_journal_integrity_failed") from exc
+
+
+def _verify_live_copies(conn: sqlite3.Connection, events: list[dict[str, Any]]) -> None:
+    """A queued notification must still match its retained, verified bus row."""
+    rows = []
+    for event in events:
+        if not isinstance(event, dict) or not isinstance(event.get("event_id"), str):
+            raise ValueError("event_journal_integrity_failed")
+        row = conn.execute(
+            "SELECT * FROM paper_event_log WHERE event_id=?", (event["event_id"],),
+        ).fetchone()
+        if row is None:
+            raise ValueError("event_journal_integrity_failed")
+        rows.append(row)
+    _verify_journal_copies(conn, rows)
+    for event, row in zip(events, rows):
+        try:
+            matches = event == _public_event(row)
+        except (ValueError, TypeError) as exc:
+            raise ValueError("event_journal_integrity_failed") from exc
+        if not matches:
+            raise ValueError("event_journal_integrity_failed")
 
 
 def _public_event(row: sqlite3.Row) -> dict[str, Any]:
@@ -446,6 +508,13 @@ class PaperEventBus:
             if queue is None:
                 raise ValueError("not_subscribed")
             kind, events, dropped = queue.take()
+        if events:
+            conn = self._connect()
+            try:
+                conn.execute("BEGIN")
+                _verify_live_copies(conn, events)
+            finally:
+                conn.close()
         view = self._consumer_view(consumer_id, stream)
         if kind == "resync":
             return _page(
@@ -746,6 +815,7 @@ def _after(conn: sqlite3.Connection, stream: str, seq: int, limit: int) -> list[
            WHERE stream=? AND seq>? ORDER BY seq LIMIT ?""",
         (stream, seq, limit),
     ).fetchall()
+    _verify_journal_copies(conn, rows)
     return [_public_event(row) for row in rows]
 
 
