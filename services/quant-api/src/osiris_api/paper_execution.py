@@ -369,11 +369,11 @@ def _parse_time(value: object) -> datetime | None:
         return None
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            return None
+        return parsed.astimezone(timezone.utc)
+    except (ValueError, OverflowError):
         return None
-    if parsed.tzinfo is None or parsed.utcoffset() is None:
-        return None
-    return parsed.astimezone(timezone.utc)
 
 
 def _column(row: sqlite3.Row, name: str, default: str) -> str:
@@ -2901,19 +2901,19 @@ def broker_book_digest(document: dict[str, Any]) -> str:
 
 
 def _string_tree(value: object) -> bool:
-    pending: list[object] = [value]
+    pending: list[tuple[object, int]] = [(value, 0)]
     seen = 0
     while pending:
-        node = pending.pop()
+        node, depth = pending.pop()
         seen += 1
-        if seen > 100_000:
+        if seen > 100_000 or depth > 32:
             return False
         if isinstance(node, dict):
             if any(not isinstance(key, str) for key in node):
                 return False
-            pending.extend(node.values())
+            pending.extend((item, depth + 1) for item in node.values())
         elif isinstance(node, list):
-            pending.extend(node)
+            pending.extend((item, depth + 1) for item in node)
         elif not isinstance(node, str):
             return False
     return True
@@ -2945,19 +2945,33 @@ def _exceeds(left: Decimal, right: Decimal, tolerance: Decimal) -> bool:
     return abs(Fraction(left) - Fraction(right)) > Fraction(tolerance)
 
 
+def _broker_json(raw: str) -> object:
+    """Bound recorded broker evidence before it can affect the risk gate."""
+    from .control_plane.database import canonical
+
+    if not isinstance(raw, str) or len(raw.encode("utf-8")) > 1_048_576:
+        raise ValueError("snapshot_unverifiable")
+    parsed = json.loads(raw)
+    # Reuse the control-plane depth/node/finite-JSON limits. Parser recursion
+    # and encoding errors are refused by each source loader, like bad JSON.
+    canonical(parsed)
+    return parsed
+
+
 def _read_json_document(path: str) -> tuple[object | None, str | None]:
     file = Path(path)
     try:
         if not file.is_file():
             return None, "snapshot_missing"
-        raw = file.read_bytes()
+        with file.open("rb") as source:
+            raw = source.read(1_048_577)
     except OSError:
         return None, "snapshot_unverifiable"
     if len(raw) > 1_048_576:
         return None, "snapshot_unverifiable"
     try:
-        return json.loads(raw.decode("utf-8")), None
-    except (UnicodeError, json.JSONDecodeError):
+        return _broker_json(raw.decode("utf-8")), None
+    except (UnicodeError, ValueError, RecursionError):
         return None, "snapshot_unverifiable"
 
 
@@ -3004,8 +3018,8 @@ def _load_broker_document() -> tuple[object | None, str | None]:
     if reason is not None or not bodies:
         return None, reason or "snapshot_missing"
     try:
-        return json.loads(bodies[0]), None
-    except json.JSONDecodeError:
+        return _broker_json(bodies[0]), None
+    except (UnicodeError, ValueError, RecursionError):
         return None, "snapshot_unverifiable"
 
 
@@ -3025,14 +3039,14 @@ def _load_verified_broker_orders() -> tuple[list[dict[str, Any]] | None, str | N
     verified: list[dict[str, Any]] = []
     for raw in bodies:
         try:
-            state = json.loads(raw)
+            state = _broker_json(raw)
             if not isinstance(state, dict) or state.get("status") != "acknowledged":
                 return None, "snapshot_unverifiable"
             order, response = state.get("order"), state.get("response")
             if not isinstance(order, dict) or digest(order) != state.get("fingerprint"):
                 return None, "snapshot_unverifiable"
             validate_broker_snapshot(order, response)
-        except (ValueError, TypeError, json.JSONDecodeError):
+        except (ValueError, TypeError, UnicodeError, RecursionError):
             return None, "snapshot_unverifiable"
         verified.append({"order": order, "response": response})
     return verified, None
@@ -3044,12 +3058,17 @@ def _normalize_broker_book(
     """Return ``(view, digest, as_of, reason)``. A reason means do not compare."""
     if not isinstance(document, dict):
         return None, None, None, "snapshot_unverifiable"
-    if document.get("live_trading_authorized") not in (None, False):
+    live = document.get("live_trading_authorized")
+    if live is not None and live is not False:
         return None, None, None, "snapshot_unverifiable"
     comparable = {
         key: value for key, value in document.items() if key != "live_trading_authorized"
     }
     if not _string_tree(comparable):
+        return None, None, None, "snapshot_unverifiable"
+    if any(not isinstance(document.get(field), list) for field in (
+        "positions", "fills", "open_orders",
+    )):
         return None, None, None, "snapshot_unverifiable"
     if document.get("schema") != BROKER_BOOK_SCHEMA or document.get("mode") != "paper":
         return None, None, None, "snapshot_unverifiable"
@@ -3073,13 +3092,15 @@ def _normalize_broker_book(
         cash = _signed_money(document.get("cash"))
         buying_power = _signed_money(document.get("buying_power"))
         positions: dict[str, Decimal] = {}
+        seen_positions: set[str] = set()
         for row in document["positions"]:
             if not isinstance(row, dict):
                 raise ValueError("snapshot_unverifiable")
             symbol = _normalize_symbol(row.get("symbol"))
             quantity = _signed_money(row.get("quantity"))
-            if symbol in positions:
+            if symbol in seen_positions:
                 raise ValueError("snapshot_unverifiable")
+            seen_positions.add(symbol)
             if quantity != 0:
                 positions[symbol] = quantity
         fills = []
