@@ -262,6 +262,130 @@ def test_failed_replay_does_not_clear_live_resync(db):
     assert bus.read_live("desk", "paper.orders")["signal"] == "drop_to_resync"
 
 
+def test_paginated_replay_keeps_resync_until_every_page_is_delivered(db):
+    bus = PaperEventBus(db, max_pending=2)
+    bus.subscribe_live("desk", "paper.orders")
+    for seq in range(1, 4):
+        bus.publish("paper.orders", "order_decided", {"n": seq}, f"e{seq}")
+    assert bus.read_live("desk", "paper.orders")["signal"] == "drop_to_resync"
+
+    for seq in range(1, 4):
+        page = bus.replay("desk", "paper.orders", from_seq=seq - 1, limit=1)
+        assert [event["seq"] for event in page["events"]] == [seq]
+        assert page["next_from"] == seq
+        assert page["gaps"] == []
+        bus.ack("desk", "paper.orders", seq)
+        live = bus.read_live("desk", "paper.orders")
+        assert live["events"] == []
+        assert live["signal"] == ("drop_to_resync" if seq < 3 else None)
+
+    bus.publish("paper.orders", "order_cancelled", {"n": 4}, "e4")
+    live = bus.read_live("desk", "paper.orders")
+    assert [event["seq"] for event in live["events"]] == [4]
+    assert live["gaps"] == []
+    assert live["signal"] is None
+
+
+def test_partial_replay_preserves_undelivered_live_notifications(db):
+    bus = PaperEventBus(db, max_pending=8)
+    bus.subscribe_live("desk", "paper.orders")
+    for seq in range(1, 4):
+        bus.publish("paper.orders", "order_decided", {"n": seq}, f"e{seq}")
+
+    page = bus.replay("desk", "paper.orders", from_seq=0, limit=1)
+    assert [event["seq"] for event in page["events"]] == [1]
+    bus.ack("desk", "paper.orders", 1)
+    live = bus.read_live("desk", "paper.orders")
+    assert [event["seq"] for event in live["events"]] == [2, 3]
+    assert live["signal"] is None
+    assert live["gaps"] == []
+
+
+def test_replay_beyond_head_cannot_clear_undelivered_resync(db):
+    bus = PaperEventBus(db, max_pending=2)
+    bus.subscribe_live("desk", "paper.orders")
+    for seq in range(1, 4):
+        bus.publish("paper.orders", "order_decided", {"n": seq}, f"e{seq}")
+    assert bus.read_live("desk", "paper.orders")["signal"] == "drop_to_resync"
+
+    page = bus.replay("desk", "paper.orders", from_seq=4, limit=1)
+    assert page["events"] == []
+    live = bus.read_live("desk", "paper.orders")
+    assert live["events"] == []
+    assert live["signal"] == "drop_to_resync"
+    assert live["acked_seq"] == 0
+    recovered = bus.replay("desk", "paper.orders", from_seq=0)
+    assert [event["seq"] for event in recovered["events"]] == [1, 2, 3]
+
+
+def test_replay_skipping_undelivered_prefix_keeps_resync(db):
+    bus = PaperEventBus(db, max_pending=2)
+    bus.subscribe_live("desk", "paper.orders")
+    for seq in range(1, 4):
+        bus.publish("paper.orders", "order_decided", {"n": seq}, f"e{seq}")
+    assert bus.read_live("desk", "paper.orders")["signal"] == "drop_to_resync"
+
+    skipped = bus.replay("desk", "paper.orders", from_seq=1)
+    assert [event["seq"] for event in skipped["events"]] == [2, 3]
+    assert skipped["gaps"] == []
+    assert bus.read_live("desk", "paper.orders")["signal"] == "drop_to_resync"
+    recovered = bus.replay("desk", "paper.orders", from_seq=0)
+    assert [event["seq"] for event in recovered["events"]] == [1, 2, 3]
+    assert bus.read_live("desk", "paper.orders")["signal"] is None
+
+
+def test_replay_with_a_durable_sequence_gap_keeps_resync(db):
+    bus = PaperEventBus(db, max_pending=2)
+    bus.subscribe_live("desk", "paper.orders")
+    for seq in range(1, 4):
+        bus.publish("paper.orders", "order_decided", {"n": seq}, f"e{seq}")
+    with sqlite3.connect(db) as conn:
+        conn.execute("DELETE FROM paper_event_log WHERE stream='paper.orders' AND seq=2")
+
+    page = bus.replay("desk", "paper.orders", from_seq=0)
+    assert [event["seq"] for event in page["events"]] == [1, 3]
+    assert page["gaps"] == [{"from_seq": 2, "to_seq": 2}]
+    assert bus.read_live("desk", "paper.orders")["signal"] == "drop_to_resync"
+
+
+def test_empty_replay_at_delivered_head_can_clear_duplicate_overflow(db):
+    bus = PaperEventBus(db, max_pending=1)
+    bus.subscribe_live("desk", "paper.orders")
+    event = bus.publish("paper.orders", "order_decided", {"n": 1}, "e1")
+    assert [item["seq"] for item in bus.read_live("desk", "paper.orders")["events"]] == [1]
+    bus.ack("desk", "paper.orders", 1)
+    notification = {key: value for key, value in event.items() if key != "duplicate"}
+    dispatch_committed(str(db), [notification, notification])
+    assert bus.read_live("desk", "paper.orders")["signal"] == "drop_to_resync"
+
+    assert bus.replay("desk", "paper.orders", from_seq=1)["events"] == []
+    assert bus.read_live("desk", "paper.orders")["signal"] is None
+    bus.publish("paper.orders", "order_cancelled", {"n": 2}, "e2")
+    page = bus.read_live("desk", "paper.orders")
+    assert [item["seq"] for item in page["events"]] == [2]
+    assert page["gaps"] == []
+
+
+def test_replay_from_acknowledged_pull_recovers_live_overflow(db):
+    bus = PaperEventBus(db, max_pending=2)
+    bus.subscribe_live("desk", "paper.orders")
+    for seq in range(1, 3):
+        bus.publish("paper.orders", "order_decided", {"n": seq}, f"e{seq}")
+    page = bus.pull("desk", "paper.orders")
+    assert [item["seq"] for item in page["events"]] == [1, 2]
+    bus.ack("desk", "paper.orders", 2)
+    bus.publish("paper.orders", "order_decided", {"n": 3}, "e3")
+    assert bus.read_live("desk", "paper.orders")["signal"] == "drop_to_resync"
+
+    page = bus.replay("desk", "paper.orders", from_seq=2)
+    assert [item["seq"] for item in page["events"]] == [3]
+    assert bus.read_live("desk", "paper.orders")["signal"] is None
+    bus.publish("paper.orders", "order_cancelled", {"n": 4}, "e4")
+    live = bus.read_live("desk", "paper.orders")
+    assert [item["seq"] for item in live["events"]] == [4]
+    assert live["gaps"] == []
+
+
 def test_replay_does_not_clear_newer_overflow_after_its_snapshot(db, monkeypatch):
     bus = PaperEventBus(db, max_pending=1)
     writer = PaperEventBus(db)
