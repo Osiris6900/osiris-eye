@@ -176,6 +176,10 @@ def run_failure_matrix(output_dir: Path, *, commit_sha: str, ci_run_url: str) ->
         "actual_paper_ledger_code_invoked": True,
         "production_failover_tested": False,
         "live_broker_execution_tested": False,
+        "clock_health_input": (
+            "explicit_declaration" if os.getenv("OSIRIS_CLOCK_HEALTH_JSON") else "local_host_status"
+        ),
+        "independent_clock_acceptance": False,
         "t16_gate_accepted": False,
         "scenarios": scenarios,
         "details": details,
@@ -183,6 +187,7 @@ def run_failure_matrix(output_dir: Path, *, commit_sha: str, ci_run_url: str) ->
             "in-process calls and one temporary SQLite ledger per scenario",
             "not a service outage, live network or independent host test",
             "not an external risk/compliance signoff",
+            "declared clock health is a fixture input, not independent clock acceptance",
         ],
     }
     problems = validate(report)

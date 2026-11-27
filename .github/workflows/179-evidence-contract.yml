@@ -25,6 +25,10 @@ jobs:
   evidence-contract:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      # This job exercises synthetic fault windows, not runner clock acceptance.
+      OSIRIS_CLOCK_HEALTH_JSON: >-
+        {"status":"healthy","reason":"synthetic_ci_fixture","clock_source_id":"osiris.ci.synthetic-clock","offset_ms":0.0,"uncertainty_ms":1.0,"orders_fail_closed":false,"live_trading_authorized":false,"network_probe":false}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:

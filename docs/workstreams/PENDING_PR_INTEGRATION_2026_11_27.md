@@ -46,6 +46,9 @@ The stack's historical measurements retain their original candidate identities.
   placeholder key.
 - The consolidated reports route verifies the listed shadow records before
   returning them, preserving the fail-closed behavior of dedicated run reads.
+- The isolated paper-failure workflow declares synthetic clock health for its
+  fault fixtures. Its retained report labels that input and does not claim
+  independent clock acceptance; production clock defaults remain fail-closed.
 
 ## Review follow-up sources
 
