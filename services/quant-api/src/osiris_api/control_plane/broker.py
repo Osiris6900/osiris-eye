@@ -26,6 +26,9 @@ BROKER_STATES = frozenset({
 TERMINAL_BROKER_STATES = frozenset({
     "filled", "canceled", "expired", "rejected", "done_for_day",
 })
+_ORDER_FIELDS = frozenset({
+    "client_order_id", "symbol", "side", "quantity", "limit_price",
+})
 
 
 def validate_broker_snapshot(order: dict, response: object, previous: dict | None = None) -> None:
@@ -146,9 +149,7 @@ class AlpacaPaperBroker:
         kill_switch: bool = True,
         fresh: bool = False,
     ):
-        if not isinstance(order, dict) or set(order) != {
-            "client_order_id", "symbol", "side", "quantity", "limit_price",
-        }:
+        if not isinstance(order, dict) or set(order) != _ORDER_FIELDS:
             raise ValueError("invalid_order_shape")
         # Use the same detached intent for risk, transport and reconciliation.
         order = dict(order)
@@ -239,7 +240,58 @@ class AlpacaPaperBroker:
         return response
 
     def cancel(self, broker_order_id: str):
-        return self._request("DELETE", "/v2/orders/" + quote(identifier(broker_order_id), safe=""))
+        """Request cancellation only for a bound, verified nonterminal order.
+
+        A DELETE result is not a terminal snapshot. Reconciliation must still
+        establish the outcome, including fills that race this request. No
+        snapshot or ledger reservation is changed here, even on transport error.
+        """
+        broker_order_id = identifier(broker_order_id)
+        if not self.enabled:
+            raise ValueError("paper_broker_not_enabled")
+        target = None
+        with self.db.transaction() as conn:
+            # Database.list is paginated; cancellation must not miss a known
+            # order beyond that page or pick one of several ambiguous bindings.
+            for row in conn.execute(
+                "SELECT id, body FROM cp_documents WHERE collection='broker-orders'"
+            ):
+                try:
+                    state = json.loads(row["body"])
+                except (ValueError, TypeError, RecursionError):
+                    continue
+                response = state.get("response") if isinstance(state, dict) else None
+                if not isinstance(response, dict) or response.get("id") != broker_order_id:
+                    continue
+                if target is not None:
+                    raise ValueError("ambiguous_broker_order")
+                target = (row["id"], state)
+        if target is None:
+            raise ValueError("unknown_broker_order")
+        client_id, state = target
+        order, response = state.get("order"), state["response"]
+        try:
+            bound = (
+                isinstance(order, dict) and set(order) == _ORDER_FIELDS
+                and identifier(order["client_order_id"]) == client_id
+                and identifier(order["symbol"]) == order["symbol"]
+                and isinstance(order["side"], str) and order["side"].upper() in {"BUY", "SELL"}
+                and digest(order) == state.get("fingerprint")
+            )
+        except (ValueError, TypeError):
+            bound = False
+        if not bound:
+            raise ValueError("broker_order_contract_required")
+        if state.get("status") != "acknowledged":
+            raise ValueError("order_outcome_unknown_reconcile_first")
+        validate_broker_snapshot(order, response)
+        if response["status"] in TERMINAL_BROKER_STATES:
+            raise ValueError("broker_order_terminal")
+        if response["status"] == "pending_cancel":
+            raise ValueError("order_outcome_unknown_reconcile_first")
+        # Release the local transaction before HTTP. A newer local or remote
+        # snapshot can race the request; only reconciliation decides finality.
+        return self._request("DELETE", "/v2/orders/" + quote(response["id"], safe=""))
 
 
 def encode_fix(fields: list[tuple[int, str]]) -> bytes:
