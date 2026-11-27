@@ -46,6 +46,10 @@ def test_broker_risk_uses_trusted_clock_and_fails_closed_on_degraded_host(book):
     assert rejected["approved"] is False
     assert rejected["reason"] == "clock_degraded"
     assert ledger.reconcile()["passed"] is True
+    delivered = ledger.pull_bus_events("paper.risk", "risk-review")["events"]
+    assert [row["event_type"] for row in delivered] == [ledger.PRETRADE_RISK_EVENT] * 2
+    assert delivered[-1]["payload"]["reason"] == "clock_degraded"
+    assert delivered[0]["payload"]["timestamp_provenance"] == provenance
 
 
 def test_broker_risk_preserves_exact_instrument_validation_and_audit(book):
@@ -78,3 +82,6 @@ def test_quality_rejection_retains_trusted_receive_and_instrument_metadata(book)
     assert payload["reason"] == "outlier_price"
     assert payload["timestamp_provenance"]["server_receive_time"] == NOW
     assert ledger.reconcile()["passed"] is True
+    delivered = ledger.pull_bus_events("paper.marks", "quality-review")["events"]
+    assert delivered[-1]["event_type"] == "market_observation_rejected"
+    assert delivered[-1]["payload"] == payload
