@@ -85,3 +85,22 @@ def test_quality_rejection_retains_trusted_receive_and_instrument_metadata(book)
     delivered = ledger.pull_bus_events("paper.marks", "quality-review")["events"]
     assert delivered[-1]["event_type"] == "market_observation_rejected"
     assert delivered[-1]["payload"] == payload
+
+
+def test_http_fill_retains_server_clock_identity_in_journal_and_bus(book):
+    opened = ledger.submit_paper_order(
+        client_order_id="http-fill", symbol="BTC", side="BUY", quantity="1",
+        price="100", observed_at=NOW, working=True,
+    )
+    assert opened["state"] == "accepted"
+    response = TestClient(app).post("/paper/execution/orders/http-fill/fills", json={
+        "client_fill_id": "server-fill", "quantity": "1", "observed_at": NOW,
+    })
+    assert response.status_code == 200
+    assert response.json()["state"] == "filled"
+    event = next(row for row in ledger.snapshot()["audit"] if row["event"] == "fill_recorded")
+    payload = json.loads(event["payload"])
+    assert payload["timestamp_provenance"]["clock_source_id"] == "test.server"
+    assert payload["timestamp_provenance"]["server_receive_time"] == NOW
+    delivered = ledger.pull_bus_events("paper.fills", "fill-review")["events"]
+    assert delivered[-1]["payload"] == payload

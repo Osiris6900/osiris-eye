@@ -2066,6 +2066,7 @@ def _apply_paper_fill(
     """Shared transaction; source provenance is library-only, never an HTTP field."""
     _refuse_live(live_execution)
     key = _text_id(client_order_id, "invalid_client_order_id")
+    caller_supplied_now = now is not None
     if now is None:
         now = _broker_decision_clock()
     fill_id = _text_id(client_fill_id, "invalid_client_fill_id")
@@ -2075,7 +2076,6 @@ def _apply_paper_fill(
     error: str | None = None
     result: dict[str, Any] | None = None
     depth_plan = None
-    caller_supplied_now = now is not None
     clock_tokens = None
     with _lock:
         conn = _connect()
