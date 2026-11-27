@@ -22,7 +22,7 @@ from .identity import IdentityService
 from .models import ModelService
 from .observability import Observability
 from .replication import Replicator
-from .secrets import EncryptedSecrets
+from .secrets import KeyConfigurationError, open_identity_store
 
 router = APIRouter(prefix="/control-plane", tags=["platform-control-plane"])
 SCOPES = {
@@ -46,8 +46,9 @@ def database() -> Database:
 
 def identities(db: Database) -> IdentityService:
     try:
-        key = base64.b64decode(os.getenv("OSIRIS_CONTROL_MASTER_KEY", ""), validate=True)
-        return IdentityService(EncryptedSecrets(db, key))
+        return IdentityService(open_identity_store(db))
+    except KeyConfigurationError as exc:
+        raise HTTPException(503, exc.code) from None
     except ValueError:
         raise HTTPException(503, "external_control_master_key_required") from None
 
@@ -571,13 +572,15 @@ def metrics(request: Request):
 
 @router.get("/reports")
 def reports(request: Request):
+    from .shadow import ShadowService
+
     db = database()
     actor = principal(request, db, "research-read")
     return {
         "jobs": Coordinator(db).jobs(),
         "experiments": db.list("agent-requests", limit=20),
         "models": db.list("models", limit=20),
-        "shadow_runs": db.list("shadow-runs", limit=20),
+        "shadow_runs": run(ShadowService(db).list_runs, limit=20),
         "role": actor["role"],
         "live_execution": False,
         "independent_review": "pending",
@@ -611,6 +614,46 @@ def depth_impact(instrument: str, request: Request, payload: dict = Body(...)):
             limit_price=payload.get("limit_price"),
         )
     )
+
+
+@router.get("/shadow/runs/{run_id}")
+def get_shadow_run(run_id: str, request: Request):
+    from .shadow import ShadowService
+
+    db = database()
+    principal(request, db, "research-read")
+    shadow_run = run(ShadowService(db).get_run, run_id)
+    if shadow_run is None:
+        raise HTTPException(404, "shadow_run_not_found")
+    return shadow_run
+
+
+@router.post("/shadow/comparisons")
+def create_shadow_comparison(request: Request, payload: dict = Body(...)):
+    from .shadow import ShadowService
+
+    db = database()
+    actor = principal(request, db, "research")
+    if set(payload) != {"id", "payload"}:
+        raise HTTPException(422, "invalid_shadow_comparison_envelope")
+    return run(
+        ShadowService(db).create_comparison,
+        payload["id"],
+        actor["actor"],
+        payload["payload"],
+    )
+
+
+@router.get("/shadow/comparisons/{comparison_id}")
+def get_shadow_comparison(comparison_id: str, request: Request):
+    from .shadow import ShadowService
+
+    db = database()
+    principal(request, db, "research-read")
+    comparison = run(ShadowService(db).get_comparison, comparison_id)
+    if comparison is None:
+        raise HTTPException(404, "shadow_comparison_not_found")
+    return comparison
 
 
 @router.post("/shadow/{run_id}/compare")

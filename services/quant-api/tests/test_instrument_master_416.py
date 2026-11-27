@@ -171,6 +171,7 @@ def test_pretrade_gate_fails_closed_without_a_tradable_instrument():
         quantity=2, price=100, current_position_notional=0, daily_pnl=0,
         observation_time_ms=1_000, decision_time_ms=1_200, model_approved=True,
         feed_authenticated=True, feed_entitled=True, kill_switch_active=False,
+        current_gross_exposure=0,
     )
     assert authorize_paper_order(context) == (False, "unknown_instrument")
     halted = replace(context, symbol="HALT", quantity=1, price=10)

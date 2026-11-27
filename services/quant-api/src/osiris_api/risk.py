@@ -1,6 +1,27 @@
 """Fail-closed simulation risk checks; no broker integration."""
-from dataclasses import dataclass
 import math
+from contextvars import ContextVar
+from dataclasses import dataclass
+
+# Paper submission binds these. Direct check_execution calls stay closed only
+# on the explicit kill-switch, freshness, and risk-service arguments.
+_clock_healthy: ContextVar[bool] = ContextVar("osiris_paper_clock_healthy", default=True)
+_timestamp_verdict: ContextVar[str | None] = ContextVar(
+    "osiris_paper_timestamp_verdict", default=None,
+)
+
+
+def bind_paper_clock_gate(*, clock_healthy: bool, timestamp_verdict: str | None):
+    """Fail closed for new orders when host time is degraded or an event is untrusted."""
+    return (
+        _clock_healthy.set(clock_healthy is True),
+        _timestamp_verdict.set(timestamp_verdict),
+    )
+
+
+def reset_paper_clock_gate(tokens) -> None:
+    _clock_healthy.reset(tokens[0])
+    _timestamp_verdict.reset(tokens[1])
 
 
 @dataclass(frozen=True)
@@ -80,8 +101,13 @@ def pretrade_gate(
     """Fail closed unless risk is reachable, the kill switch is off, and the feed is fresh.
 
     Defaults are closed. Approval is not possible from this gate, and it does not
-    route orders.
+    route orders. A degraded host clock or an untrusted event time, when the
+    paper path has bound one, is closed before the other checks.
     """
+    if _clock_healthy.get() is not True:
+        return False, "clock_degraded"
+    if _timestamp_verdict.get() == "timestamp_untrusted":
+        return False, "timestamp_untrusted"
     if risk_service_available is not True:
         return False, "risk_service_unavailable"
     if kill_switch_active is not False:

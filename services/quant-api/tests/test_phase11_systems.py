@@ -8,11 +8,11 @@ from osiris_api.phase11_systems import (
 )
 client = TestClient(app)
 
-def test_ledger_reconciliation_fails_closed():
-    ok = reconcile_ledger([{"asset":"A","quantity":2}], [{"asset":"A","quantity":2}], 100, 100)
-    assert ok["new_risk_allowed"] is True
-    bad = reconcile_ledger([{"asset":"A","quantity":2}], [{"asset":"A","quantity":1}], 100, 90)
-    assert bad["new_risk_allowed"] is False
+def test_ledger_reconciliation_rejects_caller_numbers():
+    with pytest.raises(ValueError, match="caller_supplied_numbers_rejected"):
+        reconcile_ledger([{"asset": "A", "quantity": 2}], [{"asset": "A", "quantity": 2}], 100, 100)
+    with pytest.raises(ValueError, match="caller_supplied_numbers_rejected"):
+        reconcile_ledger([{"asset": "A", "quantity": 2}], [{"asset": "A", "quantity": 1}], 100, 90)
 
 def test_order_lifecycle_and_cost_calibration():
     state = simulate_order_lifecycle({"quantity":10,"filled_quantity":4,"status":"partially_filled"})

@@ -312,7 +312,9 @@ DEFAULT_IDENTITY_DB_PATH = "./data/osiris-p2p.sqlite3"
 PEER_NODE_LIST_LIMIT = 50
 OPEN_POSITION_LIMIT = 50
 PAPER_ORDER_LIMIT = 20
-_ORDER_STATES = frozenset({"accepted", "partially_filled", "filled", "cancelled", "rejected"})
+_ORDER_STATES = frozenset({
+    "accepted", "partially_filled", "filled", "cancelled", "rejected", "expired",
+})
 _OPEN_ORDER_STATES = frozenset({"accepted", "partially_filled"})
 _ORDER_SIDES = frozenset({"BUY", "SELL"})
 _ORDER_ID_TEXT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -1250,14 +1252,49 @@ def operations_status(
             "daily_loss_gate": _daily_loss_view("permission_denied"),
             "live_trading_authorized": False,
         }
+    from .control_plane.clock import current_clock_health
     return {
         "schema": OPERATIONS_SCHEMA,
         "generated_at": generated,
         "read_only": True,
         "live_trading_authorized": False,
+        "clock_health": current_clock_health(),
         "nodes": _operations_nodes(network if isinstance(network, Mapping) else None, generated),
         "paper_trading": trading,
+        "event_bus": _event_bus_view() if paper_allowed else _event_bus_denied(),
     }
+
+
+def _event_bus_denied() -> dict[str, Any]:
+    return {
+        "schema": "osiris.paper_event_bus.v1",
+        "available": False,
+        "reason": "permission_denied",
+        "streams": [],
+        "consumers": [],
+        "live_execution": False,
+        "live_trading_authorized": False,
+        "broker_order_submitted": False,
+    }
+
+
+def _event_bus_view() -> dict[str, Any]:
+    """Lag per consumer. A missing ledger stays unavailable and is not created."""
+    try:
+        from .paper_event_bus import health_if_configured
+
+        return health_if_configured()
+    except (OSError, sqlite3.Error, ValueError):
+        return {
+            "schema": "osiris.paper_event_bus.v1",
+            "available": False,
+            "reason": "event_bus_unavailable",
+            "streams": [],
+            "consumers": [],
+            "live_execution": False,
+            "live_trading_authorized": False,
+            "broker_order_submitted": False,
+        }
 
 
 def _hidden_exposure(status: str = "unavailable_without_marks") -> dict[str, Any]:

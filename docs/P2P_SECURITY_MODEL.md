@@ -131,6 +131,17 @@ GossipSub synchronization and disconnect revoked peers. This is eventual
 operator-authorized synchronization, not consensus, quorum authorization or
 threshold authority rotation. See [revocation protocol](GLOBAL_REVOCATION_PROTOCOL.md).
 
+GossipSub uses manual application admission before forwarding. Both the signed
+publisher and the immediate forwarding peer must pass current trust/revocation
+policy. Plaintext observations pass payload-hash and configured freshness checks;
+local encrypted observations also pass authenticated decryption before forwarding.
+Relays verify opaque ciphertext signatures, key epochs and envelope lifetimes
+without claiming to inspect its plaintext. Valid receipts and revocation pages
+addressed to other peers remain relayable after public authenticity checks;
+local pending-receipt, replay and paging state governs local handling separately.
+Messages lacking a required sender binding or configured revocation trust root
+are held from forwarding rather than accepted on an inferred identity.
+
 ## Remaining release gates
 
 - Dispatch the two-host and three-host recipient workflows on the release

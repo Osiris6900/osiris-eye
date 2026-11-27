@@ -4,7 +4,7 @@ This module does not connect to brokers or place orders.
 """
 from dataclasses import dataclass
 
-from .risk import RiskLimits, check_order
+from .risk import RiskLimits, check_execution
 
 
 @dataclass(frozen=True)
@@ -21,6 +21,7 @@ class PaperOrderContext:
     kill_switch_active: bool
     max_feed_age_ms: int = 5000
     symbol: str | None = None
+    current_gross_exposure: float | None = None
 
 
 def authorize_paper_order(
@@ -66,10 +67,20 @@ def authorize_paper_order(
     decision = assess_order(symbol, price=context.price, quantity=context.quantity)
     if not decision["ok"]:
         return False, decision["reason"]
-    return check_order(
+    if context.current_gross_exposure is None:
+        return False, "exposure_input_missing"
+    # This gate has no side. Project the order as a buy, which adds gross.
+    approved, reason, _evaluated = check_execution(
+        side="BUY",
         quantity=context.quantity,
         price=context.price,
         current_position_notional=context.current_position_notional,
+        current_gross_exposure=context.current_gross_exposure,
         daily_pnl=context.daily_pnl,
         limits=limits,
+        kill_switch_active=False,
+        market_data_fresh=True,
+        risk_service_available=True,
+        symbol=symbol,
     )
+    return approved, reason

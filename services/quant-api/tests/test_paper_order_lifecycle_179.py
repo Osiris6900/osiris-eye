@@ -68,10 +68,10 @@ def _fill(client_order_id="buy-1", client_fill_id="fill-1", quantity="4", **over
 def test_transition_table_accepts_only_legal_moves():
     legal = {
         "new": {"accepted", "rejected"},
-        "accepted": {"partially_filled", "filled", "cancelled"},
-        "partially_filled": {"partially_filled", "filled", "cancelled"},
+        "accepted": {"partially_filled", "filled", "cancelled", "expired"},
+        "partially_filled": {"partially_filled", "filled", "cancelled", "expired"},
     }
-    terminal = ("filled", "cancelled", "rejected")
+    terminal = ("filled", "cancelled", "rejected", "expired")
     for current, targets in legal.items():
         for target in targets:
             assert order_transition(current, target) == target
@@ -81,7 +81,9 @@ def test_transition_table_accepts_only_legal_moves():
             with pytest.raises(ValueError, match="invalid_order_transition"):
                 order_transition(current, target)
     for current in terminal:
-        for target in ("new", "accepted", "partially_filled", "filled", "cancelled", "rejected"):
+        for target in (
+            "new", "accepted", "partially_filled", "filled", "cancelled", "rejected", "expired",
+        ):
             with pytest.raises(ValueError, match="invalid_order_transition"):
                 order_transition(current, target)
 
@@ -268,6 +270,7 @@ def test_recovery_keeps_an_open_partial_order_actionable(db):
     assert resumed["open_orders"] == [{
         "client_order_id": "buy-1", "symbol": "BTC", "side": "BUY", "state": "partially_filled",
         "quantity": "10", "filled_quantity": "4", "leaves_quantity": "6", "price": "100",
+        "time_in_force": "day", "expires_at": "2026-11-09T00:00:00+00:00",
     }]
     done = _fill(client_fill_id="fill-2", quantity="6")
     assert done["state"] == "filled"
@@ -427,28 +430,31 @@ def test_legacy_ledger_migrates_and_still_reconciles(db):
 
 
 def test_http_lifecycle_stays_paper_only(db):
+    from datetime import datetime
+    from osiris_api.control_plane.clock import TrustedClock, install_runtime_clock
+    install_runtime_clock(TrustedClock(lambda: datetime.fromisoformat(NOW), source_id="osiris.test"))
     client = TestClient(app)
     opened = client.post("/paper/execution/initialize", json={"initial_cash": "1000"})
     assert opened.status_code == 200
     resting = client.post("/paper/execution/orders", json={
         "client_order_id": "http-1", "symbol": "BTC", "side": "BUY",
-        "quantity": "4", "price": "100", "observed_at": FRESH, "now": NOW, "working": True,
+        "quantity": "4", "price": "100", "observed_at": FRESH, "working": True,
     })
     assert resting.status_code == 200
     assert resting.json()["state"] == "accepted"
     assert resting.json()["broker_order_submitted"] is False
     live = client.post("/paper/execution/orders/http-1/fills", json={
-        "client_fill_id": "http-fill", "quantity": "1", "observed_at": FRESH, "now": NOW,
+        "client_fill_id": "http-fill", "quantity": "1", "observed_at": FRESH,
         "live_execution": True,
     })
     assert live.status_code == 422
     partial = client.post("/paper/execution/orders/http-1/fills", json={
-        "client_fill_id": "http-fill", "quantity": "1", "observed_at": FRESH, "now": NOW,
+        "client_fill_id": "http-fill", "quantity": "1", "observed_at": FRESH,
     })
     assert partial.status_code == 200
     assert partial.json()["state"] == "partially_filled"
     marked = client.post("/paper/execution/marks", json={
-        "marks": {"BTC": "90"}, "observed_at": FRESH, "now": NOW,
+        "marks": {"BTC": "90"}, "observed_at": FRESH,
     })
     assert marked.status_code == 200
     assert marked.json()["unrealized_pnl"] == "-10"

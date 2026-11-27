@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import re
 from pathlib import Path
 
@@ -19,6 +20,140 @@ _SHA40 = re.compile(r"[0-9a-f]{40}\Z")
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _RUN = re.compile(r"https://github\.com/Osiris6900/osiris-eye/actions/runs/[1-9][0-9]*\Z")
 _HOSTS = {"host-a", "host-b", "host-c"}
+
+
+
+def traffic_window_errors(data: dict) -> list[str]:
+    """Cross-check traffic-on claims against every actual workload record."""
+    errors = []
+    notes, outage = data.get("measurement_notes"), data.get("outage")
+    records, workload, delivery = data.get("delivery_records"), data.get("workload"), data.get("delivery")
+    if not all(isinstance(value, dict) for value in (notes, outage, workload, delivery)):
+        return ["traffic_on_sections_missing"]
+    if (notes.get("traffic_mode") != "continuous_during_outage"
+            or notes.get("workload_drained_before_outage") is not False
+            or notes.get("controller_workload_retransmissions") != 0
+            or type(notes.get("controller_workload_retransmissions")) is not int):
+        errors.append("traffic_on_mode_or_controller_resend_claim_invalid")
+    retries = notes.get("workload_retransmissions")
+    runtime = data.get("runtime_config")
+    queue_enabled = isinstance(runtime, dict) and runtime.get("publisher_outbound_queue") is True
+    if type(retries) is not int or retries < 0 or (retries > 0 and not queue_enabled):
+        errors.append("traffic_on_retry_scope_invalid")
+    boundaries = [outage.get(field) for field in (
+        "outage_start_ms", "sink_restart_ms", "all_publishers_recovered_ms")]
+    if (any(type(value) is not int or value < 0 for value in boundaries)
+            or not boundaries[0] < boundaries[1] <= boundaries[2]):
+        return errors + ["traffic_on_outage_window_invalid"]
+    start, restart, recovered = boundaries
+    duration = workload.get("duration_seconds")
+    if (not isinstance(duration, (int, float)) or isinstance(duration, bool)
+            or not 0 < duration <= 86400):
+        return errors + ["traffic_on_observation_duration_invalid"]
+    cutoff = math.ceil(duration * 1000) + 2
+    if recovered > cutoff:
+        errors.append("traffic_on_recovery_after_observation_cutoff")
+    if not isinstance(records, list) or len(records) != 10000:
+        return errors + ["traffic_on_exact_workload_records_required"]
+    seen, down_count, outage_count, delivered_count, lost_count, duplicates, late = set(), 0, 0, 0, 0, 0, 0
+    latencies, recovered_publications = [], 0
+    retry_total = 0
+    for item in records:
+        if not isinstance(item, dict):
+            errors.append("traffic_on_record_invalid")
+            break
+        digest, published = item.get("payload_sha256"), item.get("published_elapsed_ms")
+        if (not isinstance(digest, str) or not _SHA256.fullmatch(digest) or digest in seen
+                or not isinstance(item.get("source_host"), str) or item["source_host"] not in _HOSTS
+                or item.get("recipient_host") != "host-b"
+                or type(published) is not int or not 0 <= published <= cutoff):
+            errors.append("traffic_on_record_identity_or_time_invalid")
+            break
+        seen.add(digest)
+        during, down = start <= published < recovered, start <= published < restart
+        if item.get("during_outage") is not during or item.get("while_sink_stopped") is not down:
+            errors.append("traffic_on_record_window_mismatch")
+            break
+        outage_count += int(during)
+        down_count += int(down)
+        count, duplicate = item.get("delivery_count"), item.get("duplicate_deliveries")
+        retry_attempts = item.get("definitely_unsent_retry_attempts")
+        if (type(count) is not int or count < 0 or type(duplicate) is not int
+                or duplicate != max(count - 1, 0)
+                or type(retry_attempts) is not int or retry_attempts < 0
+                or (retry_attempts > 0 and not queue_enabled)):
+            errors.append("traffic_on_duplicate_or_retry_accounting_invalid")
+            break
+        duplicates += duplicate
+        retry_total += retry_attempts
+        received = item.get("delivered_elapsed_ms")
+        after_restart = False
+        if item.get("outcome") == "delivered":
+            if (count < 1 or type(received) is not int or not published <= received <= cutoff
+                    or not isinstance(item.get("latency_ms"), (int, float))
+                    or isinstance(item.get("latency_ms"), bool)
+                    or not 0 <= item["latency_ms"] <= cutoff + 2):
+                errors.append("traffic_on_delivery_invalid")
+                break
+            if abs((received - published) - item["latency_ms"]) > 1.001:
+                errors.append("traffic_on_latency_time_mismatch")
+                break
+            # The controller waits for the sink-stop acknowledgement before
+            # sending more workload. A publication inside that stopped window
+            # cannot be decrypted before the restart request. Millisecond
+            # timestamps are independently truncated: leave one millisecond
+            # at each boundary for events sharing a clock tick.
+            if down and published > start + 1 and received < restart - 1:
+                errors.append("traffic_on_delivery_while_sink_stopped")
+                break
+            delivered_count += 1
+            latencies.append(item["latency_ms"])
+            after_restart = received >= restart
+        elif item.get("outcome") == "lost":
+            if count != 0 or received is not None or item.get("latency_ms") is not None:
+                errors.append("traffic_on_loss_invalid")
+                break
+            lost_count += 1
+        else:
+            errors.append("traffic_on_outcome_invalid")
+            break
+        if item.get("delivered_after_restart") is not after_restart:
+            errors.append("traffic_on_late_delivery_mismatch")
+            break
+        late += int(after_restart)
+        recovered_publication = during and after_restart
+        if item.get("outage_publication_delivered_after_restart") is not recovered_publication:
+            errors.append("traffic_on_outage_publication_delivery_mismatch")
+            break
+        recovered_publications += int(recovered_publication)
+    if not down_count:
+        errors.append("traffic_on_no_workload_while_sink_stopped")
+    latency_summary = data.get("latency_ms")
+    ordered = sorted(latencies)
+    expected = {name: (ordered[max(0, math.ceil(len(ordered) * q) - 1)] if ordered else 0)
+                for name, q in (("p50", .5), ("p95", .95), ("p99", .99), ("max", 1))}
+    if not isinstance(latency_summary, dict) or any(
+        latency_summary.get(name) != value for name, value in expected.items()
+    ):
+        errors.append("traffic_on_latency_summary_mismatch")
+    if (workload.get("messages_while_sink_stopped") != down_count
+            or type(workload.get("messages_while_sink_stopped")) is not int
+            or workload.get("messages_during_outage") != outage_count
+            or type(workload.get("messages_during_outage")) is not int):
+        errors.append("traffic_on_publication_counts_mismatch")
+    if (workload.get("definitely_unsent_retry_attempts") != retry_total
+            or type(workload.get("definitely_unsent_retry_attempts")) is not int
+            or retries != retry_total):
+        errors.append("traffic_on_retry_totals_mismatch")
+    if (delivery.get("sent") != len(records) or delivery.get("delivered") != delivered_count
+            or delivery.get("lost") != lost_count or delivery.get("duplicate_deliveries") != duplicates
+            or type(delivery.get("duplicate_deliveries")) is not int
+            or delivery.get("delivered_after_restart") != late
+            or type(delivery.get("delivered_after_restart")) is not int
+            or delivery.get("outage_publications_delivered_after_restart") != recovered_publications
+            or type(delivery.get("outage_publications_delivered_after_restart")) is not int):
+        errors.append("traffic_on_delivery_totals_mismatch")
+    return errors
 
 
 def validate(data: object, *, commit: str, run_url: str, attempt: int, policy: dict) -> dict:
@@ -58,7 +193,11 @@ def validate(data: object, *, commit: str, run_url: str, attempt: int, policy: d
             if not isinstance(host, dict):
                 errors.append("host_record_invalid")
                 continue
-            ids.add(host.get("host_id"))
+            host_id = host.get("host_id")
+            if isinstance(host_id, str):
+                ids.add(host_id)
+            else:
+                errors.append("host_record_invalid")
             digest = host.get("host_fingerprint_commitment")
             if not isinstance(digest, str) or not _SHA256.fullmatch(digest):
                 errors.append("host_commitment_invalid")
@@ -69,21 +208,61 @@ def validate(data: object, *, commit: str, run_url: str, attempt: int, policy: d
                 errors.append("binary_digest_invalid")
         if ids != _HOSTS or len(commitments) != 3:
             errors.append("distinct_three_hosts_not_reported")
+    if "runtime_config" in data:
+        runtime = data["runtime_config"]
+        if not isinstance(runtime, dict):
+            errors.append("runtime_configuration_invalid")
+        else:
+            workers = runtime.get("node_worker_threads_requested")
+            reconnect = runtime.get("publisher_bootstrap_reconnect_seconds")
+            if ((workers is not None and (type(workers) is not int or workers not in (1, 2, 4)))
+                    or runtime.get("tokio_worker_threads_env") != (None if workers is None else str(workers))
+                    or ("publisher_outbound_queue" in runtime and runtime["publisher_outbound_queue"] is not True)
+                    or ("publisher_bootstrap_reconnect_seconds" in runtime and (
+                        type(reconnect) is not int or reconnect != 1 or runtime.get("publisher_outbound_queue") is not True
+                    ))
+                    or runtime.get("observed_runtime_worker_count_verified") is not False):
+                errors.append("runtime_configuration_invalid")
+            if not isinstance(hosts, list) or any(
+                not isinstance(host, dict) or host.get("runtime_config") != runtime
+                or type(host["runtime_config"].get("node_worker_threads_requested")) is not type(workers)
+                or host["runtime_config"].get("observed_runtime_worker_count_verified") is not False
+                or host["runtime_config"].get("publisher_outbound_queue") is not runtime.get("publisher_outbound_queue")
+                or type(host["runtime_config"].get("publisher_bootstrap_reconnect_seconds")) is not type(reconnect)
+                for host in hosts
+            ):
+                errors.append("host_runtime_configuration_mismatch")
     notes = data.get("measurement_notes")
+    traffic_on = isinstance(notes, dict) and notes.get("traffic_during_outage") is True
     if not isinstance(notes, dict) or (
         notes.get("open_mesh_capacity_tested") is not False
-        or notes.get("workload_paused_during_outage") is not True
+        or notes.get("workload_paused_during_outage") is not (not traffic_on)
         or notes.get("independent_host_fingerprints_distinct") is not True
+        or ("traffic_during_outage" in notes and type(notes["traffic_during_outage"]) is not bool)
+        or ("traffic_mode" in notes and notes["traffic_mode"] != (
+            "continuous_during_outage" if traffic_on else "drained_restart"))
     ):
         errors.append("declared_star_and_outage_limits_missing")
+    if traffic_on:
+        errors.extend(traffic_window_errors(data))
 
     policy_result = None
     try:
         policy_result = check(data, policy)
-    except (ValueError, TypeError, KeyError) as exc:
+    except (ValueError, TypeError, KeyError, OverflowError) as exc:
         errors.append("load_policy_shape_invalid:" + str(exc))
     if policy_result is None or policy_result["status"] != "pass":
         errors.append("predeclared_load_policy_not_met")
+    if policy_result is not None and traffic_on:
+        # The generic outage policy checks the first successful probe. The
+        # sustained harness also declares when every publisher has recovered;
+        # a fast probe from one sender cannot excuse slower peer recovery.
+        boundaries = data.get("outage", {})
+        start = boundaries.get("outage_start_ms")
+        recovered = boundaries.get("all_publishers_recovered_ms")
+        if (type(start) is int and type(recovered) is int
+                and recovered - start > policy["maximum_recovery_ms"]):
+            errors.append("traffic_on_all_publishers_recovery_limit_exceeded")
     return {
         "schema": "osiris.p2p_sustained_offline_review.v1",
         "passed_offline_consistency": not errors,
@@ -92,6 +271,7 @@ def validate(data: object, *, commit: str, run_url: str, attempt: int, policy: d
         "workflow_url_claimed": run_url,
         "attempt_claimed": attempt,
         "load_policy_verdict": policy_result,
+        "declared_traffic_mode": "continuous_during_outage" if traffic_on else "drained_restart",
         "independent_host_identity_verified": False,
         "github_workflow_conclusion_verified": False,
         "production_network_or_open_mesh_verified": False,
@@ -115,7 +295,7 @@ def main() -> int:
         result = validate(data, commit=args.commit, run_url=args.run_url,
                           attempt=args.attempt, policy=policy)
         result["raw_report_sha256"] = hashlib.sha256(data_bytes).hexdigest()
-    except (ValueError, OSError, TypeError) as exc:
+    except (ValueError, OSError, TypeError, RecursionError) as exc:
         result = {
             "schema": "osiris.p2p_sustained_offline_review.v1",
             "passed_offline_consistency": False,

@@ -678,8 +678,16 @@ def test_operations_reports_node_version_and_paper_loss_gate(client, monkeypatch
     assert body["read_only"] is True
     assert body["live_trading_authorized"] is False
     assert set(body) == {
-        "schema", "generated_at", "read_only", "live_trading_authorized", "nodes", "paper_trading",
+        "schema", "generated_at", "read_only", "live_trading_authorized", "clock_health", "nodes", "paper_trading",
+        "event_bus",
     }
+    assert body["event_bus"]["available"] is False
+    assert body["event_bus"]["reason"] == "permission_denied"
+    assert body["event_bus"]["consumers"] == []
+    assert body["event_bus"]["live_trading_authorized"] is False
+    assert body["clock_health"]["orders_fail_closed"] is False
+    assert body["clock_health"]["live_trading_authorized"] is False
+    assert body["clock_health"]["network_probe"] is False
     enrolled = body["nodes"]["nodes"]
     assert body["nodes"]["status"] == "enrolled_registry"
     assert body["nodes"]["enrolled_count"] == 1
@@ -707,6 +715,12 @@ def test_operations_reports_node_version_and_paper_loss_gate(client, monkeypatch
     assert identity["private_key"] not in viewer.text
     assert str(path) not in viewer.text
     paper = analyst.json()["paper_trading"]
+    bus = analyst.json()["event_bus"]
+    assert bus["available"] is True
+    assert bus["live_trading_authorized"] is False
+    assert bus["live_execution"] is False
+    assert bus["broker_order_submitted"] is False
+    assert next(row["head_seq"] for row in bus["streams"] if row["stream"] == "paper.orders") >= 1
     assert paper["status"] == "available"
     assert paper["source_ledger"] == "canonical_execution"
     assert paper["mode"] == "paper_only"

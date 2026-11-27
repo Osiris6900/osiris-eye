@@ -18,7 +18,7 @@ from .deployment import KubernetesTarget, RolloutController
 from .observability import Observability
 from .peer_telemetry import collect
 from .replication import Replicator
-from .secrets import resolve_reference
+from .secrets import KeyConfigurationError, resolve_reference, run_keys_action
 from .vendors import HttpJson
 
 
@@ -46,7 +46,24 @@ class RemoteQueue:
         )
 
 
-def main():
+def _keys(parser, args) -> None:
+    if not args.action:
+        parser.error("--action is required")
+    try:
+        result = run_keys_action(
+            args.action,
+            database=args.database or os.getenv("OSIRIS_CONTROL_DB"),
+            purpose=args.purpose,
+            key_id=args.key_id,
+            output=args.output,
+            from_ring=args.from_ring,
+        )
+    except (KeyConfigurationError, ValueError) as exc:
+        parser.exit(2, str(exc).splitlines()[0] + "\n")
+    print(json.dumps(result), flush=True)
+
+
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "command",
@@ -58,12 +75,23 @@ def main():
             "replicate",
             "retain-evidence",
             "rollout",
+            "keys",
         ],
     )
-    parser.add_argument("--database", default=os.getenv("OSIRIS_CONTROL_DB"))
+    parser.add_argument("--database", default=None)
     parser.add_argument("--input")
     parser.add_argument("--once", action="store_true")
-    args = parser.parse_args()
+    parser.add_argument("--action", choices=("validate", "init", "rotate", "reencrypt"))
+    parser.add_argument("--purpose")
+    parser.add_argument("--key-id")
+    parser.add_argument("--output")
+    parser.add_argument("--from-ring")
+    args = parser.parse_args(argv)
+    if args.command == "keys":
+        _keys(parser, args)
+        return
+    if not args.database:
+        args.database = os.getenv("OSIRIS_CONTROL_DB")
     if not args.database:
         parser.error("--database or OSIRIS_CONTROL_DB is required")
     db, transport = Database(args.database), HttpJson()

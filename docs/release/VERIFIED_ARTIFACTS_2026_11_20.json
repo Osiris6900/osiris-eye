@@ -1,0 +1,754 @@
+{
+  "schema": "osiris.downloaded-release-evidence.v1",
+  "verified_at": "2026-11-20T10:28:26.587694+00:00",
+  "baseline_commit": "f38fa9a5757efed904e9b0967e3b6d3be5cc78f7",
+  "tested_candidate_commit": "84f307bbc7fafaceea88d5ee628a1151795c6243",
+  "test_merge_commit": "252970302366f8e305361571bb03ed9bd5cc7ad3",
+  "candidate_tree": "5a8c233233b64ee3976f6eb7a663a45958c3cc13",
+  "test_merge_tree": "5a8c233233b64ee3976f6eb7a663a45958c3cc13",
+  "candidate_tree_matches_test_merge": true,
+  "review_scope": "Historical PR447 downloaded artifacts plus exact-source local engineering and genuine-data verification on f29d961. Failed historical capacity measurements remain failures; no new multi-host operational measurement is claimed.",
+  "new_source_validation_complete": true,
+  "release_gate_accepted": false,
+  "independent_review_verified": false,
+  "live_trading_authorized": false,
+  "previously_remaining_gates_accepted": 0,
+  "gate_counts": {
+    "Implemented with evidence": 3,
+    "Partial": 14,
+    "Remaining": 3
+  },
+  "workflows": [
+    {
+      "run_id": 43594333571,
+      "name": "Deployment recovery dry run",
+      "event": "workflow_dispatch",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "84f307bbc7fafaceea88d5ee628a1151795c6243",
+      "run_attempt": 1,
+      "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43594333571",
+      "updated_at": "2026-11-14T12:21:07Z"
+    },
+    {
+      "run_id": 43593983448,
+      "name": "P2P three-host capacity evidence (10/50/100 peers)",
+      "event": "workflow_dispatch",
+      "status": "completed",
+      "conclusion": "failure",
+      "head_sha": "84f307bbc7fafaceea88d5ee628a1151795c6243",
+      "run_attempt": 1,
+      "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43593983448",
+      "updated_at": "2026-11-14T12:46:18Z"
+    },
+    {
+      "run_id": 43593970718,
+      "name": "P2P three-host capacity evidence (10/50/100 peers)",
+      "event": "workflow_dispatch",
+      "status": "completed",
+      "conclusion": "failure",
+      "head_sha": "84f307bbc7fafaceea88d5ee628a1151795c6243",
+      "run_attempt": 1,
+      "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43593970718",
+      "updated_at": "2026-11-14T12:19:07Z"
+    },
+    {
+      "run_id": 43593947487,
+      "name": "Immutable GitHub Actions pin ratchet",
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "84f307bbc7fafaceea88d5ee628a1151795c6243",
+      "run_attempt": 1,
+      "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43593947487",
+      "updated_at": "2026-11-14T12:16:01Z"
+    },
+    {
+      "run_id": 43593947429,
+      "name": "New platform modules unit tests",
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "84f307bbc7fafaceea88d5ee628a1151795c6243",
+      "run_attempt": 1,
+      "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43593947429",
+      "updated_at": "2026-11-14T12:16:00Z"
+    },
+    {
+      "run_id": 43593947430,
+      "name": "Release gate inventory",
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "84f307bbc7fafaceea88d5ee628a1151795c6243",
+      "run_attempt": 1,
+      "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43593947430",
+      "updated_at": "2026-11-14T12:16:01Z"
+    },
+    {
+      "run_id": 43593947495,
+      "name": "182 evidence contract tests",
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "84f307bbc7fafaceea88d5ee628a1151795c6243",
+      "run_attempt": 1,
+      "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43593947495",
+      "updated_at": "2026-11-14T12:16:02Z"
+    },
+    {
+      "run_id": 43593947399,
+      "name": "179 evidence contract tests",
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "84f307bbc7fafaceea88d5ee628a1151795c6243",
+      "run_attempt": 1,
+      "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43593947399",
+      "updated_at": "2026-11-14T12:16:17Z"
+    },
+    {
+      "run_id": 43593947478,
+      "name": "Quant API CI",
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "84f307bbc7fafaceea88d5ee628a1151795c6243",
+      "run_attempt": 1,
+      "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43593947478",
+      "updated_at": "2026-11-14T12:18:05Z"
+    },
+    {
+      "run_id": 43593947457,
+      "name": "Dependency Security Audit",
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "84f307bbc7fafaceea88d5ee628a1151795c6243",
+      "run_attempt": 1,
+      "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43593947457",
+      "updated_at": "2026-11-14T12:18:16Z"
+    },
+    {
+      "run_id": 43593947435,
+      "name": "CI",
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "84f307bbc7fafaceea88d5ee628a1151795c6243",
+      "run_attempt": 1,
+      "url": "https://github.com/Osiris6900/osiris-eye/actions/runs/43593947435",
+      "updated_at": "2026-11-14T12:23:00Z"
+    }
+  ],
+  "artifacts": [
+    {
+      "artifact_id": 14113887414,
+      "name": "core-relay-e2ee-43593947435-1",
+      "run_id": 43593947435,
+      "run_attempt": 1,
+      "candidate_commit": "84f307bbc7fafaceea88d5ee628a1151795c6243",
+      "checkout_commit": "252970302366f8e305361571bb03ed9bd5cc7ad3",
+      "expires_at": "2026-11-21T12:22:55Z",
+      "size_in_bytes": 880,
+      "zip_sha256": "c71b54974c953fd3744085ef6e16fad3583e1fef5f808da2b4f031c24f8b8d64",
+      "api_digest_matches_download": true,
+      "downloaded_bytes_verified": true,
+      "files_sha256": {
+        "core-relay-e2ee.json": "b7587210be5960e644897787757177f42a3d18dbd231d0e14d2e5a06b27b1ee1"
+      }
+    },
+    {
+      "artifact_id": 14113867109,
+      "name": "receipt-paper-43593947435-1",
+      "run_id": 43593947435,
+      "run_attempt": 1,
+      "candidate_commit": "84f307bbc7fafaceea88d5ee628a1151795c6243",
+      "checkout_commit": "252970302366f8e305361571bb03ed9bd5cc7ad3",
+      "expires_at": "2026-11-28T12:22:03Z",
+      "size_in_bytes": 46537,
+      "zip_sha256": "7141740571e7a1855520d6c4613b7858622ebfb995c09df3726448614ea79645",
+      "api_digest_matches_download": true,
+      "downloaded_bytes_verified": true,
+      "files_sha256": {
+        "receipt-paper.json": "c7598dfd30a98f7b805507408a24f04f6238c8350902342607728b7779ab1856",
+        "receipt-paper.json.sha256": "62f5067aec68c8824aa8f6be0b82fd4e9483724c164d9f6120f275b51181c316"
+      },
+      "verification": {
+        "archive_sha256": "7141740571e7a1855520d6c4613b7858622ebfb995c09df3726448614ea79645",
+        "audit_rows_verified": 10,
+        "binary_reproduced": false,
+        "binary_sha256": "ec7aeffaccf927098b6797d7b143e0dac722373bcb56b9471a0e2696f65f4faf",
+        "checkout_commit": "252970302366f8e305361571bb03ed9bd5cc7ad3",
+        "checkout_tree": "5a8c233233b64ee3976f6eb7a663a45958c3cc13",
+        "checks": [
+          "actual_child_loss_after_fill_commit",
+          "actual_rust_e2ee_and_recipient_receipt",
+          "canonical_admin_account_matches",
+          "current_kill_switch_and_revocation_guard",
+          "exact_fee_inclusive_round_trip_pnl",
+          "kernel_pinned_event_persisted",
+          "new_process_idempotent_recovery",
+          "no_paper_execution_before_acknowledgement",
+          "receipt_to_risk_decision_to_fill_trace",
+          "replay_and_changed_economics_guard"
+        ],
+        "ci_identity_authenticated": false,
+        "files_sha256": {
+          "receipt-paper.json": "c7598dfd30a98f7b805507408a24f04f6238c8350902342607728b7779ab1856",
+          "receipt-paper.json.sha256": "62f5067aec68c8824aa8f6be0b82fd4e9483724c164d9f6120f275b51181c316"
+        },
+        "independent_hosts_verified": false,
+        "independent_review_verified": false,
+        "live_trading_authorized": false,
+        "passed": true,
+        "receipt_origin_recomputed": false,
+        "receipt_signature_reverified": false,
+        "release_gate_accepted": false,
+        "run_truth_independently_verified": false,
+        "schema": "osiris.receipt-paper-artifact-verification.v1",
+        "scope": "two-local-rust-nodes-and-independent-local-python-processes",
+        "source_files_verified": 840,
+        "traces_verified": 2,
+        "worktree_sha256": "a74bb19d3aac821cbfaecca7d56317b046508dfa4ac8c5be9eddb7854a8e9d62"
+      }
+    },
+    {
+      "artifact_id": 14113831469,
+      "name": "platform20-browser-43593947435-1",
+      "run_id": 43593947435,
+      "run_attempt": 1,
+      "candidate_commit": "84f307bbc7fafaceea88d5ee628a1151795c6243",
+      "checkout_commit": "252970302366f8e305361571bb03ed9bd5cc7ad3",
+      "expires_at": "2026-11-28T12:16:28Z",
+      "size_in_bytes": 956002,
+      "zip_sha256": "d27e600dcc0c5e702fe1c723f77751f3bd2e1a180695ac3067593027a2b07ccb",
+      "api_digest_matches_download": true,
+      "downloaded_bytes_verified": true,
+      "files_sha256": {
+        "dashboard-browser.png": "7b02b145c8a338e15399304175a743c5ce0a1b074b7287ece6682c7811151156",
+        "platform20-browser.png": "893c05f5a7f186aaa634799754a96d957c83f03cb5aae57f08f5908e7964cb9f",
+        "platform20-browser.json": "af39b0b266cd9276feed51565192a2ab04d11ee80ba5e9a762626fe21be904bd"
+      }
+    },
+    {
+      "artifact_id": 14113667794,
+      "name": "systemd-profile-43593947435-1",
+      "run_id": 43593947435,
+      "run_attempt": 1,
+      "candidate_commit": "84f307bbc7fafaceea88d5ee628a1151795c6243",
+      "checkout_commit": "252970302366f8e305361571bb03ed9bd5cc7ad3",
+      "expires_at": "2026-11-28T12:22:54Z",
+      "size_in_bytes": 658,
+      "zip_sha256": "53818891a1f4df483d46d98184113ef5ddb3b0b6908a49fb0b7b109bb13205b9",
+      "api_digest_matches_download": true,
+      "downloaded_bytes_verified": true,
+      "files_sha256": {
+        "systemd-profile-smoke.json": "b0e66e3316114c2fbb2eceaa5b5ac5dfa7c34963a6d17e86493d01441fc66543"
+      }
+    },
+    {
+      "artifact_id": 14113551492,
+      "name": "market-paper-acceptance-43593947435-1",
+      "run_id": 43593947435,
+      "run_attempt": 1,
+      "candidate_commit": "84f307bbc7fafaceea88d5ee628a1151795c6243",
+      "checkout_commit": "252970302366f8e305361571bb03ed9bd5cc7ad3",
+      "expires_at": "2026-11-28T12:17:14Z",
+      "size_in_bytes": 5853,
+      "zip_sha256": "5dd32c82a6bb96ed3776f47fdeba61f5a17d2f88c5e4eebb8b9b6448acebf7b8",
+      "api_digest_matches_download": true,
+      "downloaded_bytes_verified": true,
+      "files_sha256": {
+        "market-paper-acceptance.json": "f8798ed5d90175973040233dcf3719aa69f6d99117fff2b52a555bf06cfbea75",
+        "market-paper-acceptance.json.sha256": "3a31745c4b66b92c70e80b60e4807629585257852de94bcd32acf6f67a79bcaf"
+      }
+    },
+    {
+      "artifact_id": 14113008616,
+      "name": "paper-service-dr-43593947435-1",
+      "run_id": 43593947435,
+      "run_attempt": 1,
+      "candidate_commit": "84f307bbc7fafaceea88d5ee628a1151795c6243",
+      "checkout_commit": "252970302366f8e305361571bb03ed9bd5cc7ad3",
+      "expires_at": "2026-11-28T12:17:16Z",
+      "size_in_bytes": 7458,
+      "zip_sha256": "61c7f404bdbfd93ac3e866fee9f9e2a91dc645782739c3f0f5f323aa8e66b8ed",
+      "api_digest_matches_download": true,
+      "downloaded_bytes_verified": true,
+      "files_sha256": {
+        "files-sha256.json": "ead93fb3136f3a03c39f361e88adc7c4b3abd562e3cedad7fe20e8762ba1ee7e",
+        "service-recovery-report.json": "c2d88198555f2a18278f1f5d86c015dad198d3cbe43226e2a1cdf7a899f05824",
+        "service-online-backup.sqlite3": "a09037160414dd1f61c9a59f8012803f270261af4eb0e1c39fe2a570f243409c",
+        "service-resumed.sqlite3": "f152b34f6037e596c5cc491acaf341c5af7db493b082f2d8cbd2c475c559785b"
+      }
+    },
+    {
+      "artifact_id": 14112968650,
+      "name": "dependency-sbom-43593947457-1",
+      "run_id": 43593947457,
+      "run_attempt": 1,
+      "candidate_commit": "84f307bbc7fafaceea88d5ee628a1151795c6243",
+      "checkout_commit": "252970302366f8e305361571bb03ed9bd5cc7ad3",
+      "expires_at": "2026-11-28T12:16:02Z",
+      "size_in_bytes": 87019,
+      "zip_sha256": "d697258173b7d0bd4dfeee2092ddcd4a14617d384d6788253a83c9f4ab229dc1",
+      "api_digest_matches_download": true,
+      "downloaded_bytes_verified": true,
+      "files_sha256": {
+        "dependency-sbom.json": "75bf80041097973cf25d91822978a04e4a2b32ed31e3c394cc3a8fe031c4d7ac",
+        "dependency-sbom.json.sha256": "b32a04c8e26910412e64fbe68aa3b0e5251260cced7a715ee829680410d6dd03",
+        "dependency-sbom-provenance.json": "7bdc7f72db7feb0f1a99e012097f99f16b9f67d0aac7a9f6b913cd185b4579aa"
+      },
+      "verification": {
+        "archive_sha256": "d697258173b7d0bd4dfeee2092ddcd4a14617d384d6788253a83c9f4ab229dc1",
+        "candidate_commit": "84f307bbc7fafaceea88d5ee628a1151795c6243",
+        "candidate_tree_matches_checkout": true,
+        "checkout_commit": "252970302366f8e305361571bb03ed9bd5cc7ad3",
+        "checkout_tree": "5a8c233233b64ee3976f6eb7a663a45958c3cc13",
+        "ci_identity_authenticated": false,
+        "ci_run_attempt": "1",
+        "ci_run_id": "43593947457",
+        "component_count": 613,
+        "files_sha256": {
+          "dependency-sbom-provenance.json": "7bdc7f72db7feb0f1a99e012097f99f16b9f67d0aac7a9f6b913cd185b4579aa",
+          "dependency-sbom.json": "75bf80041097973cf25d91822978a04e4a2b32ed31e3c394cc3a8fe031c4d7ac",
+          "dependency-sbom.json.sha256": "b32a04c8e26910412e64fbe68aa3b0e5251260cced7a715ee829680410d6dd03"
+        },
+        "independent_review_verified": false,
+        "input_sha256": {
+          "apps/web/package-lock.json": "fc7b7c0a8bc7216c037feea96eeae9003d32a059d2f34a538de8313136f21c49",
+          "crates/native-feed/Cargo.lock": "a3245172f873236cbe927b02085f8c02c1b07a6a1d66166c54e8370524eec938",
+          "crates/risk-kernel/Cargo.lock": "4323ac3971f58ff86b58615597d6fb3522b0adcd9d34368bf434d7fe4d065f0c",
+          "services/p2p-node/Cargo.lock": "29ae2856e7576c3e8474ad55478992166d73ddf586e17f7c7622af200287e07c",
+          "services/quant-api/pyproject.toml": "cc09246e40902345e7b7eac605e9b528e36c7bbc7df7d35c2229c1dee7676050",
+          "services/quant-api/requirements-lock.txt": "ff5e5ece6f90c6f97786e3cb3f199d06c57cef282b7daa057485277cf5b77ae5"
+        },
+        "live_trading_authorized": false,
+        "passed": true,
+        "release_gate_accepted": false,
+        "schema": "osiris.sbom-artifact-verification.v1"
+      }
+    },
+    {
+      "artifact_id": 14113682461,
+      "name": "paper-ledger-cross-job-restore-43594333571-1",
+      "run_id": 43594333571,
+      "run_attempt": 1,
+      "candidate_commit": "84f307bbc7fafaceea88d5ee628a1151795c6243",
+      "checkout_commit": "84f307bbc7fafaceea88d5ee628a1151795c6243",
+      "expires_at": "2026-11-28T12:21:03Z",
+      "size_in_bytes": 860,
+      "zip_sha256": "c65b65c7eebda3305b93199a0bdedf789d432be6c58ed901482e18e96dee9e7d",
+      "api_digest_matches_download": true,
+      "downloaded_bytes_verified": true,
+      "files_sha256": {
+        "paper-ci-cross-job-restore.json": "953c1822ed19495a8a1e0521d963d920a2936f58b9bb48a43468480b1ed60333",
+        "paper-ci-cross-job-restore.json.sha256": "c983d115c80c6f82ad66833d5c18d80d156a1598ae2ff83aec731d45516a70a1"
+      }
+    },
+    {
+      "artifact_id": 14113533105,
+      "name": "paper-ledger-local-dr-43594333571-1",
+      "run_id": 43594333571,
+      "run_attempt": 1,
+      "candidate_commit": "84f307bbc7fafaceea88d5ee628a1151795c6243",
+      "checkout_commit": "84f307bbc7fafaceea88d5ee628a1151795c6243",
+      "expires_at": "2026-11-28T12:20:48Z",
+      "size_in_bytes": 4866,
+      "zip_sha256": "04f90c0bea98255eccdc45e25082192b0f869748c1a10e7e65c99408ffb8f1e0",
+      "api_digest_matches_download": true,
+      "downloaded_bytes_verified": true,
+      "files_sha256": {
+        "local-paper-restored.sqlite3": "9c43faac9c79368039887c0c18ac7e65373f4fdfbcbfed36a3a6846dde94ce2a",
+        "local-paper-recovery-report.json": "6a0b4ae056097fd44c4be4a8457b154009cdd824ad923638527921a356a85030",
+        "local-paper-backup.sqlite3": "9c43faac9c79368039887c0c18ac7e65373f4fdfbcbfed36a3a6846dde94ce2a",
+        "sha256-manifest.txt": "95bc8627fdb5bd01d6662bacb4231cd37e58ac40a8b96e6ee5e82a76b83d5f5b"
+      }
+    },
+    {
+      "artifact_id": 14114756523,
+      "name": "capacity-report-43593983448-1",
+      "run_id": 43593983448,
+      "run_attempt": 1,
+      "candidate_commit": "84f307bbc7fafaceea88d5ee628a1151795c6243",
+      "checkout_commit": "84f307bbc7fafaceea88d5ee628a1151795c6243",
+      "expires_at": "2026-11-28T12:46:09Z",
+      "size_in_bytes": 632496,
+      "zip_sha256": "3bc7fb591d239138396438691c62f51eb2254be1b6c18c6815101ceff69086a6",
+      "api_digest_matches_download": true,
+      "downloaded_bytes_verified": true,
+      "files_sha256": {
+        "capacity-10.json": "625022f3b0fbddc6e447c3acc1c0c3fc86d5f9d7150fb7ace86ade9a0c9b327c",
+        "capacity-100.json": "20d73c7b464cec93d436cf6128c0beb74718d4a17bcb925bde7ea43dd015f496",
+        "capacity-50.json": "97973f49617feef48a71011cd5784427491a9d6b0c4405ba58dcacb42ee36fa3",
+        "capacity-sha256.txt": "58857c448e931036fa2e72cc6e5d1f90383746347d2c43d6e6848b1e96809150",
+        "sustained-100.json": "191c25bebb0aca919aa72bf21c84b65f4809fe3b886267aedbc1af86c5783b40",
+        "sustained-review.json": "9aa13b7607fa6905945a78af4a5483586d6c8ff2737454a6c89c28b2f442c136"
+      }
+    }
+  ],
+  "operational_results": [
+    {
+      "run_id": 43593970718,
+      "mode": "historical_drained_paused",
+      "conclusion": "failure",
+      "measurement_completed": false,
+      "failure": "Host A could not download the capacity-b-endpoint artifact; the sustained measurement was not reached.",
+      "failed_job_id": 132444437427,
+      "downloaded_capacity_report": false
+    },
+    {
+      "run_id": 43593983448,
+      "mode": "continuous_during_outage",
+      "conclusion": "failure",
+      "measurement_completed": true,
+      "failed_job_id": 132445166070,
+      "duration_seconds": 957.404375,
+      "peers": 100,
+      "messages": 10000,
+      "sent": 10000,
+      "delivered": 9819,
+      "lost": 181,
+      "duplicate_deliveries": 0,
+      "messages_while_sink_stopped": 55,
+      "messages_during_outage": 223,
+      "outage_publications_delivered_after_restart": 43,
+      "sampled_recovery_ms": 27069,
+      "runtime_worker_threads_requested": 1,
+      "observed_runtime_worker_count_verified": false,
+      "rss_limit_bytes_per_host": 536870912,
+      "rss_peak_bytes": {
+        "host-a": 550522880,
+        "host-b": 559902720,
+        "host-c": 522551296
+      },
+      "policy_failures": [
+        "maximum_lost_messages",
+        "maximum_rss_bytes_per_host:host-a",
+        "maximum_rss_bytes_per_host:host-b"
+      ],
+      "raw_report_sha256": "191c25bebb0aca919aa72bf21c84b65f4809fe3b886267aedbc1af86c5783b40",
+      "production_network_or_open_mesh_verified": false,
+      "independent_hosts_verified": false,
+      "t04_t19_release_gates_accepted": false
+    }
+  ],
+  "local_service_recovery": {
+    "run_id": 43593947435,
+    "checkout_commit": "252970302366f8e305361571bb03ed9bd5cc7ad3",
+    "reported_passed": true,
+    "actual_primary_sigkill": true,
+    "authenticated_api_tested": true,
+    "consistent_online_backup_tested": true,
+    "different_database_restore_tested": true,
+    "previous_process_credential_refused": true,
+    "measured_rto_ms_local_only": 379.797,
+    "recovery_point_age_at_failure_ms_local_only": 4.985,
+    "latest_lost_ack_age_at_failure_ms_local_only": 1.479,
+    "acknowledged_fills_missing_at_restore": 1,
+    "lost_intent_reapplied_once": true,
+    "scope": "one-local-host-disposable-authenticated-api-processes",
+    "independent_hosts_verified": false,
+    "production_service_recovery_verified": false,
+    "rto_slo_certified": false,
+    "rpo_slo_certified": false,
+    "t18_release_gate_accepted": false
+  },
+  "custody": "Original downloaded ZIP bytes are retained in the current task workspace under /tmp/osiris-pr447-evidence. This temporary task-local custody is not independently approved, durable, production or WORM storage; GitHub expiry and workspace loss can remove the bytes. This record publishes hashes and sanitized summaries only.",
+  "remaining_requirements": [
+    "Repeat relevant engineering checks on the final new source revision and record its exact commit/tree.",
+    "Repair endpoint coordination and validate with new measured paused/traffic-on runs; do not weaken predeclared loss/RSS policy or relabel failures.",
+    "Obtain independently attested topology/host evidence, NAT/relay/open-mesh and sustained capacity/failover acceptance.",
+    "Obtain original vendor/source rights and signed independent crypto/model/risk/compliance decisions, calibrated execution evidence, approved service DR custody/targets and operator paper-only signoff."
+  ],
+  "local_engineering": {
+    "candidate_commit": "f29d961882ee3b6c564e509119155609d95e1adf",
+    "candidate_tree": "e0a1c88ccddc3960f1205ff30a50b713d871286c",
+    "working_tree_dirty": false,
+    "source_unchanged": true,
+    "all_passed": true,
+    "checks": [
+      {
+        "name": "release-inventory",
+        "status": "passed"
+      },
+      {
+        "name": "release-evidence-contracts",
+        "status": "passed"
+      },
+      {
+        "name": "dependency-advisories",
+        "status": "passed"
+      },
+      {
+        "name": "python-lock",
+        "status": "passed"
+      },
+      {
+        "name": "license-provenance",
+        "status": "passed"
+      },
+      {
+        "name": "supply-chain-sbom",
+        "status": "passed"
+      },
+      {
+        "name": "p2p-workflows",
+        "status": "passed"
+      },
+      {
+        "name": "rust-risk",
+        "status": "passed"
+      },
+      {
+        "name": "rust-p2p",
+        "status": "passed"
+      },
+      {
+        "name": "rust-native",
+        "status": "passed"
+      },
+      {
+        "name": "native-build",
+        "status": "passed"
+      },
+      {
+        "name": "p2p-build",
+        "status": "passed"
+      },
+      {
+        "name": "python-tests",
+        "status": "passed"
+      },
+      {
+        "name": "native-process",
+        "status": "passed"
+      },
+      {
+        "name": "peer-receipts",
+        "status": "passed"
+      },
+      {
+        "name": "receipt-paper",
+        "status": "passed"
+      },
+      {
+        "name": "receipt-artifact-integrity",
+        "status": "passed"
+      },
+      {
+        "name": "market-paper",
+        "status": "passed"
+      },
+      {
+        "name": "local-paper-dr",
+        "status": "passed"
+      },
+      {
+        "name": "local-paper-service-dr",
+        "status": "passed"
+      },
+      {
+        "name": "local-dr-integrity",
+        "status": "passed"
+      },
+      {
+        "name": "portable-recovery",
+        "status": "passed"
+      },
+      {
+        "name": "paper-failures",
+        "status": "passed"
+      },
+      {
+        "name": "model-archive",
+        "status": "passed"
+      },
+      {
+        "name": "recovery-intakes",
+        "status": "passed"
+      },
+      {
+        "name": "security-intake",
+        "status": "passed"
+      },
+      {
+        "name": "vendor-intake",
+        "status": "passed"
+      },
+      {
+        "name": "frontend-typecheck",
+        "status": "passed"
+      },
+      {
+        "name": "frontend-tests",
+        "status": "passed"
+      },
+      {
+        "name": "frontend-build",
+        "status": "passed"
+      },
+      {
+        "name": "browser",
+        "status": "passed"
+      }
+    ],
+    "report_sha256": "1074c8a189952e63025c84d2fe98ef01f81aed7ea5857ed387714b4f532482ad",
+    "python_test_evidence": {
+      "sha256": "5921a0b86e312f8f0fedb9bb54d2f05577fd1c80cc672cbc8b5b16ca9935403a",
+      "test_cases": 2245,
+      "skipped": 0,
+      "failures": 0
+    },
+    "p2p_rust_tests": 247,
+    "native_rust_tests": 3,
+    "frontend_tests": 119,
+    "browser_flows": 10,
+    "service_dr": {
+      "passed": true,
+      "candidate_commit": "f29d961882ee3b6c564e509119155609d95e1adf",
+      "working_tree_dirty": false,
+      "measured_rto_ms_local_only": 585.606,
+      "acknowledged_fills_missing_at_restore": 1,
+      "api_outage_observed": true,
+      "lost_intent_reapplied_once": true,
+      "production_service_recovery_verified": false,
+      "t18_release_gate_accepted": false
+    },
+    "service_dr_report_sha256": "3d611246fac5366f958001bdb4a4f81ffb0e865004cd9ece6c6187f983f7c1fc",
+    "release_accepted": false
+  },
+  "genuine_data": {
+    "candidate_commit": "f29d961882ee3b6c564e509119155609d95e1adf",
+    "source_clean": true,
+    "runtime": {
+      "numpy": "2.4.6",
+      "python": "3.12.14"
+    },
+    "summary_file_sha256": "8f070bc8c399dfbf73c95202c7565674a56855c912b0489f9daf6904b45840af",
+    "bls": {
+      "capture": {
+        "available_values": 64,
+        "candidate_commit": "f29d961882ee3b6c564e509119155609d95e1adf",
+        "capture_sha256": "7c6d61c30c81052a0a5f1cbb1ec2de6dc8d96606789e2f87e18e1d5beaf255af",
+        "http_status": 200,
+        "independent_provenance_verified": false,
+        "live_trading_authorized": false,
+        "numeric_feed_complete": false,
+        "observations": 66,
+        "observations_sha256": "413064509034520ee547a7d249f05d0b1d9c6adbb556c6136317f32f4da6ec09",
+        "passed": true,
+        "plan_sha256": "2308515811cf6fdd3627c396e017a95fef93762229d5fc84a790850efb435fac",
+        "received_at": "2026-11-20T10:30:43.009761+00:00",
+        "release_gate_accepted": false,
+        "request_sha256": "5cc1c53c69ecba383a2a6e269f169292e5a84b81bd06242417c7319cca22a3ec",
+        "response_sha256": "17671d3de91232d7ec439727eb4b806d7be7512ea7f187dcb4c65e11437ecc1f",
+        "schema": "osiris.bls-capture.v1",
+        "series": 3,
+        "source_url": "https://api.bls.gov/publicAPI/v2/timeseries/data/",
+        "unavailable_values": 2,
+        "vendor_rights_verified": false
+      },
+      "offline_verification": {
+        "available_values": 64,
+        "candidate_commit": "f29d961882ee3b6c564e509119155609d95e1adf",
+        "capture_sha256": "7c6d61c30c81052a0a5f1cbb1ec2de6dc8d96606789e2f87e18e1d5beaf255af",
+        "independent_provenance_verified": false,
+        "live_trading_authorized": false,
+        "numeric_feed_complete": false,
+        "observations": 66,
+        "passed": true,
+        "release_gate_accepted": false,
+        "response_sha256": "17671d3de91232d7ec439727eb4b806d7be7512ea7f187dcb4c65e11437ecc1f",
+        "unavailable_values": 2,
+        "vendor_rights_verified": false
+      }
+    },
+    "keyless": {
+      "archive_sha256": "98cdc83b4ab9b504c958a9f052058dd16f8e7a40a42c6f54100bb326dd11bf4e",
+      "captured_samples": 32,
+      "plan_sha256": "b1fd100432cbdaeed7ceb89135090018b289e166f10772aa43fee5da2e8ccd05",
+      "source_capture_end": "2026-11-20T10:32:20.114070+00:00",
+      "source_capture_start": "2026-11-20T10:30:44.199392+00:00",
+      "verification": {
+        "archive_sha256": "98cdc83b4ab9b504c958a9f052058dd16f8e7a40a42c6f54100bb326dd11bf4e",
+        "consistent": true,
+        "folds": 5,
+        "independent_model_reviewed": false,
+        "live_trading_authorized": false,
+        "release_gate_accepted": false,
+        "reproduced": true,
+        "samples": 32,
+        "source_origin_independently_attested": false,
+        "vendor_rights_verified": false
+      }
+    },
+    "ridge": {
+      "aggregate": {
+        "0": {
+          "fixed_only": {
+            "fixed_cost_sum": 0.0,
+            "net_return": 0.0010301294205692368,
+            "quoted_spread_cost_sum": 0.0,
+            "unit_turnover": 12.0
+          },
+          "fixed_plus_quote_spread": {
+            "fixed_cost_sum": 0.0,
+            "net_return": 0.0010291601994503186,
+            "quoted_spread_cost_sum": 9.683234540305062e-07,
+            "unit_turnover": 12.0
+          }
+        },
+        "10": {
+          "fixed_only": {
+            "fixed_cost_sum": 0.012,
+            "net_return": -0.010917147218820755,
+            "quoted_spread_cost_sum": 0.0,
+            "unit_turnover": 12.0
+          },
+          "fixed_plus_quote_spread": {
+            "fixed_cost_sum": 0.012,
+            "net_return": -0.010918106150895501,
+            "quoted_spread_cost_sum": 9.683234540305062e-07,
+            "unit_turnover": 12.0
+          }
+        },
+        "25": {
+          "fixed_only": {
+            "fixed_cost_sum": 0.03,
+            "net_return": -0.02860047637985874,
+            "quoted_spread_cost_sum": 0.0,
+            "unit_turnover": 12.0
+          },
+          "fixed_plus_quote_spread": {
+            "fixed_cost_sum": 0.03,
+            "net_return": -0.02860142005834798,
+            "quoted_spread_cost_sum": 9.683234540305062e-07,
+            "unit_turnover": 12.0
+          }
+        }
+      },
+      "blinded_holdout": false,
+      "folds": 4,
+      "independent_model_reviewed": false,
+      "plan_sha256": "d804539fc301d33facce4c055d3bb93fbe16a30c52655827c4354c2d08561694",
+      "report_sha256": "8b7d85bafb9b6227ee706ea534b233c6b44db4059929e3bf12a4850c3c84ebfd",
+      "source_capture_seconds": 95.914678,
+      "verification": {
+        "consistent": true,
+        "folds": 4,
+        "independent_model_reviewed": false,
+        "live_trading_authorized": false,
+        "release_gate_accepted": false,
+        "report_sha256": "8b7d85bafb9b6227ee706ea534b233c6b44db4059929e3bf12a4850c3c84ebfd",
+        "reproduced": true
+      }
+    },
+    "limitations": [
+      "Short forward sample and post-capture analysis; no blinded/representative model acceptance.",
+      "Source rights, independent review, venue cost calibration and operational acceptance remain pending.",
+      "No database ingestion, broker order or live execution."
+    ]
+  }
+}

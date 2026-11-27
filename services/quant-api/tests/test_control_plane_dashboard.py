@@ -1,6 +1,7 @@
 """Dashboard reads existing projections without bypassing identity or account integrity."""
 import base64
 import json
+import os
 import sqlite3
 import time
 from datetime import UTC, datetime, timedelta
@@ -20,7 +21,9 @@ from osiris_api.paper_execution import initialize_paper_account, mark_to_market,
 @pytest.fixture
 def api(tmp_path, monkeypatch):
     monkeypatch.setenv("OSIRIS_CONTROL_DB", str(tmp_path / "control.sqlite3"))
-    monkeypatch.setenv("OSIRIS_CONTROL_MASTER_KEY", base64.b64encode(b"k" * 32).decode())
+    monkeypatch.setenv("OSIRIS_CONTROL_MASTER_KEY", base64.b64encode(os.urandom(32)).decode())
+    monkeypatch.setenv("OSIRIS_CONTROL_MASTER_KEY_ID", "identity-master-1")
+    monkeypatch.setenv("OSIRIS_CONTROL_MASTER_KEY_VERSION", "1")
     monkeypatch.setenv("OSIRIS_ADMIN_TOKENS", json.dumps({
         "analyst": "fixture-analyst-token", "viewer": "fixture-viewer-token",
     }))

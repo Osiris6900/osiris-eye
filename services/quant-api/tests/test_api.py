@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 
+from osiris_api.control_plane.clock import current_clock_health
 from osiris_api.main import app
 
 client = TestClient(app)
@@ -14,6 +15,7 @@ def test_health_is_research_only():
         "live_execution": False,
         "data_store": "sqlite",
         "module_count": 107,
+        "clock_health": current_clock_health(),
     }
 
 
