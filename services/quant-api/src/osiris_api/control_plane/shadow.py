@@ -295,6 +295,13 @@ class ShadowService:
         item = self.db.get(RUNS, run_id)
         return None if item is None else _validated_run(item["value"], run_id)
 
+    def list_runs(self, *, limit: int = 20) -> list[dict]:
+        """Verify listed bodies while retaining their matching snapshot versions."""
+        items = self.db.list(RUNS, limit=limit)
+        for item in items:
+            _validated_run(item["value"], identifier(item["id"]))
+        return items
+
     def run(
         self,
         run_id: str,

@@ -15,6 +15,8 @@ candidate; it does not accept release gates or authorize live execution.
 | #456–#457 | Signed audit evidence and versioned control-plane key management |
 | #458–#459 | Market-data admission and trusted receive-clock provenance |
 | #461 | Durable paper-event delivery, consumer acknowledgement and replay |
+| #469 | Rechecked fill clock health, order release under a broker halt and ordered live-event recovery |
+| #467, #470 | Sealed shadow runs/comparisons, exact finite arithmetic, bounded allocation and v1 record compatibility |
 
 The current main instrument catalog, executable tick/lot validation, depth
 midpoint handling and newer dependency advisory/provenance records are retained.
@@ -39,6 +41,25 @@ The stack's historical measurements retain their original candidate identities.
 - HTTP fills retain the server clock's identity and measurements; assigning a
   server timestamp does not label it as an injected caller clock.
 - Newer-main identity/MFA fixtures use the strict versioned-key configuration.
+- Shadow API MFA fixtures also declare versioned random test key material,
+  matching the integrated identity store rather than relying on an unversioned
+  placeholder key.
+- The consolidated reports route verifies the listed shadow records before
+  returning them, preserving the fail-closed behavior of dedicated run reads.
+
+## Review follow-up sources
+
+The combined candidate includes paper review fixes at
+`37f6855bcd73de3bb8a20556beb2696386dbe1e2` and shadow review fixes at
+`6cb2a7f24a04445123fa84dbdff34818ada11e5e`. Both standalone candidates passed
+their applicable GitHub checks before integration. The shadow changes retain
+previous-tick execution and zero broker submissions; the new numerical policies
+and historical-record rules are documented in
+[`SHADOW_NUMERICS.md`](../SHADOW_NUMERICS.md).
+
+Combined validation results and the exact tested commit are recorded in the
+integration PR. Scoped backend/frontend/browser checks are not a claim that
+the full 33-check engineering profile or independent release acceptance ran.
 
 ## Verification
 

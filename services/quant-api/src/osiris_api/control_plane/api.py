@@ -572,13 +572,15 @@ def metrics(request: Request):
 
 @router.get("/reports")
 def reports(request: Request):
+    from .shadow import ShadowService
+
     db = database()
     actor = principal(request, db, "research-read")
     return {
         "jobs": Coordinator(db).jobs(),
         "experiments": db.list("agent-requests", limit=20),
         "models": db.list("models", limit=20),
-        "shadow_runs": db.list("shadow-runs", limit=20),
+        "shadow_runs": run(ShadowService(db).list_runs, limit=20),
         "role": actor["role"],
         "live_execution": False,
         "independent_review": "pending",
