@@ -256,7 +256,8 @@ def test_cumulative_average_cannot_hide_invalid_incremental_fill(
     {"status": "new", "filled_qty": "0", "filled_avg_price": None},
     {"status": "partially_filled", "filled_qty": "1", "filled_avg_price": "99"},
 ])
-def test_done_for_day_with_no_fill_cannot_resume(tmp_path, later):
+def test_done_for_day_with_no_fill_cannot_resume(tmp_path, monkeypatch, later):
+    open_book(monkeypatch, tmp_path)
     db = Database(str(tmp_path / "broker.db"))
     finished = snapshot(status="done_for_day", filled_qty="0", filled_avg_price=None)
     transport = Transport(finished, snapshot(**later))
@@ -276,7 +277,8 @@ def test_done_for_day_with_no_fill_cannot_resume(tmp_path, later):
     {"status": "partially_filled", "filled_qty": "2", "filled_avg_price": "99.5"},
     {"status": "filled", "filled_qty": "3", "filled_avg_price": "99.5"},
 ])
-def test_done_for_day_partial_cannot_reopen_or_gain_fills(tmp_path, later):
+def test_done_for_day_partial_cannot_reopen_or_gain_fills(tmp_path, monkeypatch, later):
+    open_book(monkeypatch, tmp_path)
     db = Database(str(tmp_path / "broker.db"))
     finished = snapshot(status="done_for_day", filled_qty="1", filled_avg_price="99")
     transport = Transport(finished, snapshot(**later))
@@ -288,7 +290,8 @@ def test_done_for_day_partial_cannot_reopen_or_gain_fills(tmp_path, later):
     assert db.get("broker-orders", "order-1") == before
 
 
-def test_partial_day_order_can_finish_and_replay_without_further_fills(tmp_path):
+def test_partial_day_order_can_finish_and_replay_without_further_fills(tmp_path, monkeypatch):
+    open_book(monkeypatch, tmp_path)
     db = Database(str(tmp_path / "broker.db"))
     part = snapshot(status="partially_filled", filled_qty="1", filled_avg_price="99")
     done = snapshot(status="done_for_day", filled_qty="1", filled_avg_price="99")

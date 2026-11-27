@@ -129,6 +129,11 @@ class Service:
             "OSIRIS_PUBLIC_BINANCE_ENABLED": "false",
             "OSIRIS_PUBLIC_STOOQ_ENABLED": "false",
         })
+        # This local synthetic exercise may be given an explicit clock-health
+        # fixture. Preserve only that declaration, not unrelated OSIRIS state.
+        # Without one, the child retains normal host-health checks.
+        if "OSIRIS_CLOCK_HEALTH_JSON" in os.environ:
+            environment["OSIRIS_CLOCK_HEALTH_JSON"] = os.environ["OSIRIS_CLOCK_HEALTH_JSON"]
         with socket.socket() as listener:
             listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             listener.bind(("127.0.0.1", self.port))
@@ -214,6 +219,10 @@ def run(output: Path) -> dict:
         "live_execution": False, "broker_order_submitted": False,
         "independent_hosts_verified": False, "production_service_recovery_verified": False,
         "rto_slo_certified": False, "rpo_slo_certified": False,
+        "clock_health_input": (
+            "explicit_declaration" if "OSIRIS_CLOCK_HEALTH_JSON" in os.environ
+            else "host_status"
+        ),
         "t18_release_gate_accepted": False,
     }
     with tempfile.TemporaryDirectory(prefix="osiris-paper-service-dr-") as temporary:
@@ -229,11 +238,11 @@ def run(output: Path) -> dict:
             now = datetime.now(timezone.utc).isoformat()
             order = {"client_order_id": "service-dr-order", "symbol": "BTC", "side": "BUY",
                      "quantity": "2", "price": "100", "fee": "1", "working": True,
-                     "observed_at": now, "now": now}
+                     "observed_at": now}
             require(primary.call("POST", "/paper/execution/orders", order)["state"] == "accepted",
                     "working_order_not_accepted")
             first = {"client_fill_id": "service-dr-backed-up", "quantity": "1",
-                     "observed_at": now, "now": now}
+                     "observed_at": now}
             path = "/paper/execution/orders/service-dr-order/fills"
             primary.call("POST", path, first)
             expected = primary.call("GET", "/paper/execution/snapshot")
@@ -245,7 +254,7 @@ def run(output: Path) -> dict:
             backup_completed = time.monotonic()
             backup_sha = digest(backup)
             last = {"client_fill_id": "service-dr-after-backup", "quantity": "1",
-                    "observed_at": now, "now": now}
+                    "observed_at": now}
             require(primary.call("POST", path, last)["state"] == "filled", "post_backup_write_failed")
             last_acknowledged = time.monotonic()
             acknowledged = primary.call("GET", "/paper/execution/snapshot")

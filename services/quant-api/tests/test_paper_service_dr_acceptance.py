@@ -19,6 +19,15 @@ def exercise(tmp_path_factory):
     # A deployment shell's Uvicorn settings must not introduce a supervisor
     # whose workers survive the exercise's actual SIGKILL.
     with pytest.MonkeyPatch.context() as patch:
+        # Module fixtures precede the function-scoped healthy-clock fixture.
+        # Give this synthetic child-process exercise its own explicit input.
+        patch.setenv("OSIRIS_CLOCK_HEALTH_JSON", json.dumps({
+            "status": "healthy", "reason": "synchronized",
+            "clock_source_id": "osiris.service-dr-fixture",
+            "offset_ms": 0.0, "uncertainty_ms": 1.0,
+            "orders_fail_closed": False, "live_trading_authorized": False,
+            "network_probe": False,
+        }))
         patch.setenv("WEB_CONCURRENCY", "2")
         patch.setenv("UVICORN_WORKERS", "2")
         patch.setenv("UVICORN_RELOAD", "true")
