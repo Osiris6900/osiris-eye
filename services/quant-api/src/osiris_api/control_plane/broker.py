@@ -121,6 +121,25 @@ def money(value: object, *, positive: bool = True) -> Decimal:
     return amount
 
 
+def _saved_broker_order(state: object, client_id: str) -> dict:
+    """Require an intact saved intent belonging to the database's client key."""
+    order = state.get("order") if isinstance(state, dict) else None
+    try:
+        if not (
+            isinstance(order, dict) and set(order) == _ORDER_FIELDS
+            and identifier(order["client_order_id"]) == client_id
+            and identifier(order["symbol"]) == order["symbol"]
+            and isinstance(order["side"], str) and order["side"].upper() in {"BUY", "SELL"}
+            and digest(order) == state.get("fingerprint")
+        ):
+            raise ValueError("invalid_saved_intent")
+        money(order["quantity"])
+        money(order["limit_price"])
+    except (ValueError, TypeError):
+        raise ValueError("broker_order_contract_required") from None
+    return order
+
+
 class AlpacaPaperBroker:
     ORIGIN = "https://paper-api.alpaca.markets"
 
@@ -220,21 +239,31 @@ class AlpacaPaperBroker:
         return response
 
     def reconcile(self, client_id: str):
+        """Verify retained identity and progress before fetching a newer snapshot."""
         client_id = identifier(client_id)
-        prior = self.db.get("broker-orders", client_id)
-        if not prior:
+        try:
+            prior = self.db.get("broker-orders", client_id)
+        except (ValueError, RecursionError):
+            raise ValueError("broker_order_contract_required") from None
+        if prior is None:
             raise ValueError("unknown_client_order")
-        order = prior["value"].get("order")
-        if not isinstance(order, dict) or digest(order) != prior["value"].get("fingerprint"):
-            raise ValueError("broker_order_contract_required")
+        state = prior["value"]
+        order = _saved_broker_order(state, client_id)
+        if state.get("status") not in ("acknowledged", "submitting"):
+            raise ValueError("order_outcome_unknown_reconcile_first")
+        previous = state.get("response")
+        if state["status"] == "acknowledged" or "response" in state:
+            # Never use an absent or corrupt acknowledged snapshot as a new
+            # baseline. A genuine uncertain send has no response to validate.
+            validate_broker_snapshot(order, previous)
         response = self._request(
             "GET", "/v2/orders:by_client_order_id?" + urlencode({"client_order_id": client_id})
         )
-        validate_broker_snapshot(order, response, previous=prior["value"].get("response"))
+        validate_broker_snapshot(order, response, previous=previous)
         self.db.put(
             "broker-orders",
             client_id,
-            {**prior["value"], "status": "acknowledged", "response": response},
+            {**state, "status": "acknowledged", "response": response},
             expected_version=prior["version"],
         )
         return response
@@ -269,19 +298,8 @@ class AlpacaPaperBroker:
         if target is None:
             raise ValueError("unknown_broker_order")
         client_id, state = target
-        order, response = state.get("order"), state["response"]
-        try:
-            bound = (
-                isinstance(order, dict) and set(order) == _ORDER_FIELDS
-                and identifier(order["client_order_id"]) == client_id
-                and identifier(order["symbol"]) == order["symbol"]
-                and isinstance(order["side"], str) and order["side"].upper() in {"BUY", "SELL"}
-                and digest(order) == state.get("fingerprint")
-            )
-        except (ValueError, TypeError):
-            bound = False
-        if not bound:
-            raise ValueError("broker_order_contract_required")
+        order = _saved_broker_order(state, client_id)
+        response = state["response"]
         if state.get("status") != "acknowledged":
             raise ValueError("order_outcome_unknown_reconcile_first")
         validate_broker_snapshot(order, response)
