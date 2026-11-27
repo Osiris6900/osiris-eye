@@ -291,31 +291,41 @@ def test_resting_order_requires_an_open_session_when_a_venue_is_bound(db):
         _working(client_order_id="missing", now=NOW, observed_at=FRESH, venue="XNYS")
 
 
-def test_http_expire_stays_paper_only(db):
+def test_http_expire_stays_paper_only(db, monkeypatch):
+    from osiris_api.control_plane.clock import TrustedClock
+    from osiris_api.control_plane import clock
+
+    current = [datetime.fromisoformat(NOW)]
+    monkeypatch.setattr(clock, "_runtime", TrustedClock(lambda: current[0]))
     client = TestClient(app)
     assert client.post("/paper/execution/initialize", json={"initial_cash": "1000"}).status_code == 200
     resting = client.post("/paper/execution/orders", json={
         "client_order_id": "http-1", "symbol": "BTC", "side": "BUY",
-        "quantity": "4", "price": "100", "observed_at": FRESH, "now": NOW, "working": True,
+        "quantity": "4", "price": "100", "observed_at": FRESH, "working": True,
     })
     assert resting.status_code == 200
     assert resting.json()["time_in_force"] == "day"
     assert resting.json()["broker_order_submitted"] is False
-    expired = client.post("/paper/execution/orders/expire", json={"now": NEXT})
+    refused = client.post("/paper/execution/orders/expire", json={"now": NEXT})
+    assert refused.status_code == 422
+    assert refused.json()["detail"] == "caller_clock_rejected"
+    assert snapshot()["orders"][0]["state"] == "accepted"
+    current[0] = datetime.fromisoformat(NEXT)
+    expired = client.post("/paper/execution/orders/expire", json={})
     assert expired.status_code == 200
     body = expired.json()
     assert body["expired"] == ["http-1"]
     assert body["live_execution"] is False
     assert body["broker_order_submitted"] is False
     assert body["mode"] == "paper_only"
-    again = client.post("/paper/execution/orders/expire", json={"now": NEXT})
+    again = client.post("/paper/execution/orders/expire", json={})
     assert again.json()["expired"] == []
     late = client.post("/paper/execution/orders/http-1/fills", json={
-        "client_fill_id": "late", "quantity": "1", "observed_at": NEXT_FRESH, "now": NEXT,
+        "client_fill_id": "late", "quantity": "1", "observed_at": NEXT_FRESH,
     })
     assert late.status_code == 422
     assert late.json()["detail"] == "order_expired"
-    cancelled = client.post("/paper/execution/orders/http-1/cancel", json={"now": NEXT})
+    cancelled = client.post("/paper/execution/orders/http-1/cancel", json={})
     assert cancelled.status_code == 422
     assert cancelled.json()["detail"] == "order_expired"
     report = client.get("/paper/execution/reconciliation-report")

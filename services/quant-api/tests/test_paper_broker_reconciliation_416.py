@@ -433,6 +433,10 @@ def test_unacknowledged_broker_order_is_unverifiable(db, tmp_path, monkeypatch):
 
 
 def test_routes_reject_caller_numbers_and_empty_body_uses_the_book(db, tmp_path, monkeypatch):
+    from datetime import datetime
+    from osiris_api.control_plane import clock
+
+    monkeypatch.setattr(clock, "_runtime", clock.TrustedClock(lambda: datetime.fromisoformat(NOW)))
     _forbid_network(monkeypatch)
     _flat()
     _write(tmp_path, monkeypatch, _book())
@@ -458,13 +462,18 @@ def test_routes_reject_caller_numbers_and_empty_body_uses_the_book(db, tmp_path,
     assert paper.json()["new_risk_allowed"] is False
 
     supplied = client.post("/paper/execution/broker-reconcile", json={
-        "now": NOW, "cash": "1", "positions": [],
+        "cash": "1", "positions": [],
     })
     assert supplied.status_code == 200
     assert supplied.json()["reason"] == "caller_supplied_numbers_rejected"
     assert broker_reconciliation_history() == []
 
-    ran = client.post("/portfolio/ledger/reconcile", json={"now": NOW})
+    for route in ("/portfolio/ledger/reconcile", "/paper/trading/reconcile", "/paper/execution/broker-reconcile"):
+        rejected_clock = client.post(route, json={"now": NOW})
+        assert rejected_clock.status_code == 422
+        assert rejected_clock.json()["detail"] == "caller_clock_rejected"
+    assert broker_reconciliation_history() == []
+    ran = client.post("/portfolio/ledger/reconcile", json={})
     assert ran.status_code == 200
     assert ran.json()["status"] == "clean"
     assert ran.json()["new_risk_allowed"] is True

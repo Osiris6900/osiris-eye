@@ -317,12 +317,13 @@ def phase8_model_observability(p: dict[str, Any] = Body(...)):
 
 @app.post("/paper/trading/reconcile")
 def phase8_paper_reconciliation(p: dict[str, Any] = Body(...)):
-    from .paper_execution import reconcile_broker_book, reject_caller_supplied_book
+    from .paper_execution import _reject_caller_clock, reconcile_broker_book, reject_caller_supplied_book
 
+    guarded(_reject_caller_clock, p)
     rejected = reject_caller_supplied_book(p)
     if rejected is not None:
         return rejected
-    return guarded(reconcile_broker_book, now=p.get("now"))
+    return guarded(reconcile_broker_book)
 
 @app.post("/platform/security/resilience-audit")
 def phase8_security_resilience(p: dict[str, Any] = Body(...)):
@@ -694,12 +695,13 @@ from .phase11_systems import (
 
 @app.post("/portfolio/ledger/reconcile")
 def api_phase11_ledger(p: dict[str, Any] = Body(...)):
-    from .paper_execution import reconcile_broker_book, reject_caller_supplied_book
+    from .paper_execution import _reject_caller_clock, reconcile_broker_book, reject_caller_supplied_book
 
+    guarded(_reject_caller_clock, p)
     rejected = reject_caller_supplied_book(p)
     if rejected is not None:
         return rejected
-    return guarded(reconcile_broker_book, now=p.get("now"))
+    return guarded(reconcile_broker_book)
 
 @app.post("/execution/orders/lifecycle-audit")
 def api_phase11_order_lifecycle(p: dict[str, Any] = Body(...)):

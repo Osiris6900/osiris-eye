@@ -2066,6 +2066,8 @@ def _apply_paper_fill(
     """Shared transaction; source provenance is library-only, never an HTTP field."""
     _refuse_live(live_execution)
     key = _text_id(client_order_id, "invalid_client_order_id")
+    if now is None:
+        now = _broker_decision_clock()
     fill_id = _text_id(client_fill_id, "invalid_client_fill_id")
     fill_qty = _number(quantity, positive=depth_context is None)
     explicit_price = None if price is None else _number(price, positive=True)
@@ -3389,7 +3391,8 @@ def _persist_broker_run(conn: sqlite3.Connection, payload: dict[str, Any]) -> tu
 
 def _decision_clock(now: object) -> datetime:
     if now is None:
-        return datetime.now(timezone.utc)
+        from .control_plane.clock import server_receive_time
+        return server_receive_time()
     if isinstance(now, datetime):
         if now.tzinfo is None or now.utcoffset() is None:
             raise ValueError("invalid_clock")
@@ -4253,10 +4256,11 @@ def api_fill(client_order_id: str, p: dict = Body(...)):
 @router.post("/paper/execution/broker-reconcile")
 def api_broker_reconcile(p: dict | None = Body(default=None)):
     body = p or {}
+    _guard(_reject_caller_clock, body)
     rejected = reject_caller_supplied_book(body)
     if rejected is not None:
         return rejected
-    return _guard(reconcile_broker_book, now=body.get("now"))
+    return _guard(reconcile_broker_book)
 
 
 @router.get("/paper/execution/broker-reconcile")
@@ -4277,17 +4281,19 @@ def api_reconciliation_report_record():
 @router.post("/paper/execution/orders/expire")
 def api_expire(p: dict | None = Body(default=None)):
     payload = p or {}
-    return _guard(expire_paper_orders, now=payload.get("now"))
+    _guard(_reject_caller_clock, payload)
+    return _guard(expire_paper_orders, now=_broker_decision_clock())
 
 
 @router.post("/paper/execution/orders/{client_order_id}/cancel")
 def api_cancel(client_order_id: str, p: dict | None = Body(default=None)):
     payload = p or {}
+    _guard(_reject_caller_clock, payload)
     return _guard(
         cancel_paper_order,
         client_order_id=client_order_id,
         live_execution=payload.get("live_execution") is True,
-        now=payload.get("now"),
+        now=_broker_decision_clock(),
     )
 
 
