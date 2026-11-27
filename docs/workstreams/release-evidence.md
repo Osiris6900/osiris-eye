@@ -21,7 +21,8 @@ Every result preserves `release_accepted=false`,
 test-fixture approvals into a real evidence record.
 
 Core CI and both `verify_all.py` profiles run the release-evidence contract
-tests. The engineering profile now has 30 checks, including this contract suite;
+tests. The engineering profile now has 31 checks, including this contract suite
+and the actual local paper API process/backup/outage/recovery exercise;
 passing it does not promote any release gate.
 
 Reproduce the focused checks with the repository's development dependencies:

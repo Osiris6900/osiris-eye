@@ -26,7 +26,7 @@ class VerifyAllTests(unittest.TestCase):
         result = subprocess.run([sys.executable, str(SCRIPT), "--profile", "engineering"],
                                 cwd=ROOT, capture_output=True, text=True, check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
-        for name in ("rust-native", "native-process", "peer-receipts", "browser", "recovery-intakes"):
+        for name in ("rust-native", "native-process", "peer-receipts", "outbound-recovery", "soak-cleanup", "browser", "recovery-intakes", "local-paper-service-dr"):
             self.assertIn("PLAN " + name + ":", result.stdout)
         self.assertNotIn("PLAN release-strict:", result.stdout)
         for name in ("dependency-advisories", "python-lock", "license-provenance"):
@@ -62,6 +62,18 @@ class VerifyAllTests(unittest.TestCase):
         self.assertIn("T06", report["remaining_release_gates"])
         self.assertTrue(all(not row["current_candidate_acceptance_inferred"] for row in report["release_gates"].values()))
         self.assertIn("receipt-paper", report["release_gates"]["T19"]["checks"])
+        missing_outbound = module.engineering_report(
+            [row for row in passed if row["name"] != "outbound-recovery"], source, source)
+        self.assertFalse(missing_outbound["all_passed"])
+        self.assertFalse(missing_outbound["workstreams"]["W08"]["engineering_checks_passed"])
+        for gate in ("T04", "T19"):
+            self.assertFalse(missing_outbound["release_gates"][gate]["local_checks_passed"])
+        missing_cleanup = module.engineering_report(
+            [row for row in passed if row["name"] != "soak-cleanup"], source, source)
+        self.assertFalse(missing_cleanup["all_passed"])
+        self.assertFalse(missing_cleanup["workstreams"]["W08"]["engineering_checks_passed"])
+        for gate in ("T04", "T19"):
+            self.assertFalse(missing_cleanup["release_gates"][gate]["local_checks_passed"])
         self.assertIn("supply-chain-sbom", report["release_gates"]["T01"]["checks"])
         without_sbom = module.engineering_report([row for row in passed if row["name"] != "supply-chain-sbom"], source, source)
         self.assertFalse(without_sbom["release_gates"]["T01"]["local_checks_passed"])
@@ -77,6 +89,11 @@ class VerifyAllTests(unittest.TestCase):
         self.assertFalse(without_integrity["all_passed"])
         for gate in ("T13", "T14", "T15", "T16", "T19"):
             self.assertFalse(without_integrity["release_gates"][gate]["local_checks_passed"])
+        without_service_dr = module.engineering_report(
+            [row for row in passed if row["name"] != "local-paper-service-dr"], source, source)
+        self.assertFalse(without_service_dr["all_passed"])
+        self.assertFalse(without_service_dr["release_gates"]["T18"]["local_checks_passed"])
+        self.assertFalse(without_service_dr["workstreams"]["W18"]["engineering_checks_passed"])
         self.assertTrue(all(row["independent_acceptance"] == "pending" for row in report["workstreams"].values()))
         failed = module.engineering_report([row for row in passed if row["name"] != "native-process"], source, source)
         self.assertFalse(failed["all_passed"])

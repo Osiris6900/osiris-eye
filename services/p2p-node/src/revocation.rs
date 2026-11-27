@@ -141,6 +141,12 @@ pub struct RevocationRegistry {
 }
 
 impl RevocationRegistry {
+    /// Authenticate a record for gossip forwarding without applying it or
+    /// confusing another requester's synchronization state with local state.
+    pub fn verify_for_forwarding(&self, record: &SignedRevocationRecord) -> Result<PeerId, Box<dyn Error>> {
+        record.verify(&self.authority_hex)
+    }
+
     pub fn open(path: PathBuf, authority_hex: String) -> Result<Self, Box<dyn Error>> {
         // Validate the configured trust root before reading any records.
         VerifyingKey::from_bytes(&decode_hex::<32>(&authority_hex)?)?;
@@ -278,6 +284,25 @@ mod tests {
         };
         record.signature = encode_hex(&key.sign(&record.payload().unwrap()).to_bytes());
         record
+    }
+
+    #[test]
+    fn forwarding_verification_authenticates_without_applying_local_sequence_state() {
+        let key = SigningKey::from_bytes(&[32u8; 32]);
+        let other_key = SigningKey::from_bytes(&[33u8; 32]);
+        let directory = std::env::temp_dir().join(format!("osiris-forwarding-root-{}-{}",
+            std::process::id(), PeerId::random()));
+        fs::create_dir_all(&directory).unwrap();
+        let mut registry = RevocationRegistry::open(directory.join("revocations.json"),
+            encode_hex(key.verifying_key().as_bytes())).unwrap();
+        let peer = PeerId::random();
+        registry.apply(signed_record(&key, peer, 2), false).unwrap();
+        // An older, genuinely signed snapshot can be useful to a different
+        // requester. Forwarding it must neither apply nor roll back local state.
+        assert_eq!(registry.verify_for_forwarding(&signed_record(&key, peer, 1)).unwrap(), peer);
+        assert!(registry.verify_for_forwarding(&signed_record(&other_key, peer, 3)).is_err());
+        assert_eq!(registry.records()[0].sequence, 2);
+        fs::remove_dir_all(directory).unwrap();
     }
 
 

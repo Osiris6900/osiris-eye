@@ -471,20 +471,35 @@ pub fn encrypt_for_recipient(
     Ok(envelope)
 }
 
-/// Verify sender binding/signature and recipient/epoch before decrypting.
-pub fn decrypt_for_recipient(
+struct VerifiedEnvelopeParts {
+    ephemeral_bytes: [u8; 32],
+    salt: Vec<u8>,
+    nonce: [u8; 12],
+    ciphertext: Vec<u8>,
+    aad: Vec<u8>,
+}
+
+/// Public envelope admission needs no recipient key. A relay verifies the
+/// authenticated sender, routing metadata, freshness and signature while the
+/// observation remains opaque. Callers must also enforce trust/revocation.
+pub fn verify_envelope_for_forwarding(
     envelope: &EncryptedEnvelope,
     sender_binding: &VerifiedKeyBinding,
-    recipient_peer_id: &PeerId,
-    recipient_key_epoch: u64,
-    recipient_private_key: &StaticSecret,
     now: u64,
-) -> Result<Vec<u8>, &'static str> {
+) -> Result<(), &'static str> {
+    verified_envelope_parts(envelope, sender_binding, now).map(|_| ())
+}
+
+fn verified_envelope_parts(
+    envelope: &EncryptedEnvelope,
+    sender_binding: &VerifiedKeyBinding,
+    now: u64,
+) -> Result<VerifiedEnvelopeParts, &'static str> {
     if envelope.schema != ENCRYPTED_ENVELOPE_SCHEMA
         || envelope.sender_peer_id != sender_binding.peer_id.to_string()
         || envelope.sender_key_epoch != sender_binding.key_epoch
-        || envelope.recipient_peer_id != recipient_peer_id.to_string()
-        || envelope.recipient_key_epoch != recipient_key_epoch
+        || envelope.sender_key_epoch == 0
+        || envelope.recipient_key_epoch == 0
         || envelope.created_at > now.saturating_add(MAX_CLOCK_SKEW_SECS)
         || envelope.expires_at < now
         || envelope.expires_at <= envelope.created_at
@@ -503,6 +518,11 @@ pub fn decrypt_for_recipient(
         || envelope.signature.len() != 86
         || envelope.ciphertext.len() > 1_398_123 {
         return Err("envelope_field_size_invalid");
+    }
+    let recipient: PeerId = envelope.recipient_peer_id.parse()
+        .map_err(|_| "envelope_identity_or_time_check_failed")?;
+    if recipient.to_string() != envelope.recipient_peer_id {
+        return Err("envelope_identity_or_time_check_failed");
     }
     let message_id = STANDARD_NO_PAD.decode(&envelope.message_id)
         .map_err(|_| "invalid_message_id_encoding")?;
@@ -527,7 +547,29 @@ pub fn decrypt_for_recipient(
     if !sender_binding.identity_public_key.verify(&signed, &signature) {
         return Err("envelope_signature_invalid");
     }
+    // Even an empty ChaCha20-Poly1305 plaintext requires its 16-byte tag.
+    // Relays can reject impossible ciphertext lengths without decrypting.
+    if ciphertext.len() < 16 { return Err("ciphertext_too_short"); }
+    validate_transport_public_key(&ephemeral_bytes)
+        .map_err(|_| "invalid_low_order_shared_secret")?;
+    Ok(VerifiedEnvelopeParts { ephemeral_bytes, salt, nonce, ciphertext, aad })
+}
 
+/// Verify sender binding/signature and recipient/epoch before decrypting.
+pub fn decrypt_for_recipient(
+    envelope: &EncryptedEnvelope,
+    sender_binding: &VerifiedKeyBinding,
+    recipient_peer_id: &PeerId,
+    recipient_key_epoch: u64,
+    recipient_private_key: &StaticSecret,
+    now: u64,
+) -> Result<Vec<u8>, &'static str> {
+    if envelope.recipient_peer_id != recipient_peer_id.to_string()
+        || envelope.recipient_key_epoch != recipient_key_epoch {
+        return Err("envelope_identity_or_time_check_failed");
+    }
+    let VerifiedEnvelopeParts { ephemeral_bytes, salt, nonce, ciphertext, aad } =
+        verified_envelope_parts(envelope, sender_binding, now)?;
     let ephemeral_public = x25519_dalek::PublicKey::from(ephemeral_bytes);
     let shared = recipient_private_key.diffie_hellman(&ephemeral_public);
     let key = derive_message_key(
@@ -587,6 +629,52 @@ mod adversarial_envelope_tests {
         let mut signed = envelope_aad(envelope).unwrap();
         signed.extend_from_slice(&STANDARD_NO_PAD.decode(&envelope.ciphertext).unwrap());
         envelope.signature = STANDARD_NO_PAD.encode(f.sender_identity.sign(&signed).unwrap());
+    }
+
+    #[test]
+    fn opaque_envelope_is_forwardable_without_recipient_secret() {
+        let f = fixture();
+        let e = envelope(&f);
+        assert_eq!(verify_envelope_for_forwarding(&e, &f.sender_binding, 160), Ok(()));
+        // A relay has neither the recipient identity nor its transport key.
+        // Public verification must not depend on local decryption succeeding.
+        let relay_peer = PeerId::random();
+        let relay_transport = TransportKeyPair::generate();
+        assert_eq!(decrypt_for_recipient(
+            &e, &f.sender_binding, &relay_peer, 1, relay_transport.private_key(), 160,
+        ).err(), Some("envelope_identity_or_time_check_failed"));
+        assert_eq!(decrypt(&f, &e, 160).unwrap(), b"adversarial-test-payload");
+    }
+
+    #[test]
+    fn opaque_forwarding_refuses_tampering_and_expired_or_invalid_routing() {
+        let f = fixture();
+        let e = envelope(&f);
+        assert_eq!(verify_envelope_for_forwarding(&e, &f.sender_binding, 181),
+                   Err("envelope_identity_or_time_check_failed"));
+        let mut tampered = e.clone();
+        tampered.ciphertext = STANDARD_NO_PAD.encode(b"replacement");
+        assert_eq!(verify_envelope_for_forwarding(&tampered, &f.sender_binding, 160),
+                   Err("envelope_signature_invalid"));
+        for (recipient, epoch) in [("not-a-peer".to_owned(), 1), (e.recipient_peer_id.clone(), 0)] {
+            let mut invalid = e.clone();
+            invalid.recipient_peer_id = recipient;
+            invalid.recipient_key_epoch = epoch;
+            resign(&f, &mut invalid);
+            assert_eq!(verify_envelope_for_forwarding(&invalid, &f.sender_binding, 160),
+                       Err("envelope_identity_or_time_check_failed"));
+        }
+        let mut too_short = e.clone();
+        too_short.ciphertext = STANDARD_NO_PAD.encode([7u8; 15]);
+        resign(&f, &mut too_short);
+        assert_eq!(verify_envelope_for_forwarding(&too_short, &f.sender_binding, 160),
+                   Err("ciphertext_too_short"));
+        let future = encrypt_for_recipient(
+            &f.sender_identity, 1, &f.recipient_peer.to_string(),
+            &f.recipient_transport.public_key, 1, b"future", 1_000, 1_100,
+        ).unwrap();
+        assert_eq!(verify_envelope_for_forwarding(&future, &f.sender_binding, 150),
+                   Err("envelope_identity_or_time_check_failed"));
     }
 
     #[test]

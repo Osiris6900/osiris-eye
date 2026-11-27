@@ -57,13 +57,13 @@ For resilience, configure more than one independently hosted bootstrap node, com
 
 ### Bootstrap reconnect policy
 
-Nodes retry disconnected configured bootstrap peers periodically. The default retry interval is 15 seconds; operators can tune it between 5 and 300 seconds:
+Nodes retry disconnected configured bootstrap peers periodically. The default retry interval is 15 seconds. Operators can tune it between 1 and 300 seconds.
 
 ```bash
 export OSIRIS_BOOTSTRAP_RECONNECT_INTERVAL_SECS=15
 ```
 
-Invalid values fall back to the 15-second default, and values outside the supported range are clamped. Keep the interval conservative on large deployments so an outage does not create unnecessary dial pressure. This setting controls retry cadence; it does not guarantee that a peer is reachable or that a connection will succeed.
+Invalid values fall back to the 15-second default, and values outside the supported range are clamped. Successive failed dials skip 1, 2, 4, then 8 reconnect ticks. Keep the interval conservative on large deployments to limit dial pressure during outages.
 
 ### Optional core-node peer allowlist
 
