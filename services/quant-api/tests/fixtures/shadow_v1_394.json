@@ -1,0 +1,187 @@
+{
+  "source_commit": "c196eab4a2f3cc3bf4bdda2070b213b90d537dcd",
+  "source_sha256": "06fff87e9c6f1369c5c23108fce939390458ee470ef76ab1f1bc0870638cb883",
+  "decimal_precision": 28,
+  "ticks": [
+    {
+      "event_ms": 1,
+      "price": "100",
+      "target": 1
+    },
+    {
+      "event_ms": 2,
+      "price": "103",
+      "target": 1
+    },
+    {
+      "event_ms": 3,
+      "price": "107",
+      "target": 0
+    },
+    {
+      "event_ms": 4,
+      "price": "109",
+      "target": 0
+    }
+  ],
+  "run": {
+    "run_id": "legacy-run",
+    "input_sha256": "95435500bd4b12703ddcb2ef62d042a0ced74eed2ffd7c08fdbc8fab74b7166f",
+    "policy": "lagged-long-flat-independent-risk-v1",
+    "configuration": {
+      "initial_cash": "10000",
+      "max_order_amount": "1000",
+      "daily_loss_limit": "500",
+      "fee_rate": "0.001"
+    },
+    "event_times_ms": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "initial_equity": "10000",
+    "final_equity": "10055.46901370111605117502949",
+    "cash": "10055.46901370111605117502949",
+    "quantity": "0E-27",
+    "fees": "2.057526540241357408583613102",
+    "pnl": "55.46901370111605117502949",
+    "equity": [
+      "10000",
+      "9999.000000000000000000000000",
+      "10037.79611650485436893203884",
+      "10055.46901370111605117502949"
+    ],
+    "fills": [
+      {
+        "event_ms": 2,
+        "quantity": "9.708737864077669902912621359",
+        "price": "103",
+        "fee": "1.000000000000000000000000000"
+      },
+      {
+        "event_ms": 3,
+        "quantity": "-0.362943471554305416931312948",
+        "price": "107",
+        "fee": "0.03883495145631067961165048544"
+      },
+      {
+        "event_ms": 4,
+        "quantity": "-9.345794392523364485981308411",
+        "price": "109",
+        "fee": "1.018691588785046728971962617"
+      }
+    ],
+    "risk_halted": false,
+    "signal_alignment": "previous_tick_target",
+    "broker_orders": 0,
+    "live_execution": false,
+    "shadow_run_sha256": "3129909cbe4c292b421ac8f676a0d95bac239eff758c5ed90d6126921f02e60d"
+  },
+  "request": {
+    "run_id": "legacy-run",
+    "comparison_as_of_ms": 5,
+    "paper_observations": [
+      {
+        "event_ms": 1,
+        "available_ms": 2,
+        "equity": "10000",
+        "source_sha256": "2eed8b97a88ef536453839e61cec2ee7f1169b7f5a37789cef6126e0c2b7b918"
+      },
+      {
+        "event_ms": 2,
+        "available_ms": 3,
+        "equity": "9999.000000000000000000000000",
+        "source_sha256": "1dbef7bd7209588ef9f8325cbf780f7d6b93132d6686730175f5ee06bf7fb781"
+      },
+      {
+        "event_ms": 3,
+        "available_ms": 4,
+        "equity": "10037.79611650485436893203884",
+        "source_sha256": "f7f6ef1cda83daef2f985f053a51b77224c60616ed62ad7984520376744ac79c"
+      },
+      {
+        "event_ms": 4,
+        "available_ms": 5,
+        "equity": "10080.46901370111605117502949",
+        "source_sha256": "5d5f42d9b49e4ac8ed778b01dc9baffd5da7c090156281c5bfc1f7c62b88a1ad"
+      }
+    ]
+  },
+  "comparison": {
+    "comparison_id": "legacy-comparison",
+    "actor": "alice",
+    "input_sha256": "d3d4736749184758c7abeba57f39a9e35fe57761b4ef5659139fd3d201c1474b",
+    "policy": "event-aligned-paper-equity-v1",
+    "request": {
+      "run_id": "legacy-run",
+      "comparison_as_of_ms": 5,
+      "paper_observations": [
+        {
+          "event_ms": 1,
+          "available_ms": 2,
+          "equity": "10000",
+          "source_sha256": "2eed8b97a88ef536453839e61cec2ee7f1169b7f5a37789cef6126e0c2b7b918"
+        },
+        {
+          "event_ms": 2,
+          "available_ms": 3,
+          "equity": "9999",
+          "source_sha256": "1dbef7bd7209588ef9f8325cbf780f7d6b93132d6686730175f5ee06bf7fb781"
+        },
+        {
+          "event_ms": 3,
+          "available_ms": 4,
+          "equity": "10037.79611650485436893203884",
+          "source_sha256": "f7f6ef1cda83daef2f985f053a51b77224c60616ed62ad7984520376744ac79c"
+        },
+        {
+          "event_ms": 4,
+          "available_ms": 5,
+          "equity": "10080.46901370111605117502949",
+          "source_sha256": "5d5f42d9b49e4ac8ed778b01dc9baffd5da7c090156281c5bfc1f7c62b88a1ad"
+        }
+      ]
+    },
+    "run_id": "legacy-run",
+    "shadow_run_sha256": "3129909cbe4c292b421ac8f676a0d95bac239eff758c5ed90d6126921f02e60d",
+    "rows": [
+      {
+        "event_ms": 1,
+        "shadow_equity": "10000",
+        "paper_equity": "10000",
+        "difference": "0"
+      },
+      {
+        "event_ms": 2,
+        "shadow_equity": "9999",
+        "paper_equity": "9999",
+        "difference": "0"
+      },
+      {
+        "event_ms": 3,
+        "shadow_equity": "10037.79611650485436893203884",
+        "paper_equity": "10037.79611650485436893203884",
+        "difference": "0"
+      },
+      {
+        "event_ms": 4,
+        "shadow_equity": "10055.46901370111605117502949",
+        "paper_equity": "10080.46901370111605117502949",
+        "difference": "-25"
+      }
+    ],
+    "initial_equity": "10000",
+    "final_shadow_equity": "10055.46901370111605117502949",
+    "final_paper_equity": "10080.46901370111605117502949",
+    "shadow_pnl": "55.46901370111605117502949",
+    "paper_pnl": "80.46901370111605117502949",
+    "final_difference": "-25",
+    "max_absolute_difference": "25",
+    "paper_evidence": "operator_supplied",
+    "independent_paper_verification": false,
+    "execution_authorized": false,
+    "live_execution": false,
+    "comparison_sha256": "ff839a5512f15b81f1780a40ca73bb078296caac594cf9e544ada238ad08fee6"
+  }
+}
