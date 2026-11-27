@@ -4,16 +4,20 @@ from __future__ import annotations
 
 import json
 import re
-from decimal import Decimal
+from decimal import ROUND_DOWN, Context, Decimal, Inexact, localcontext
+from fractions import Fraction
 from itertools import pairwise
 
+from ..decimal_safety import bounded_decimal
 from .broker import money
 from .database import Database, canonical, digest, identifier
 
 RUNS = "shadow-runs"
 COMPARISONS = "shadow-comparisons"
-RUN_POLICY = "lagged-long-flat-independent-risk-v1"
-COMPARISON_POLICY = "event-aligned-paper-equity-v1"
+LEGACY_RUN_POLICY = "lagged-long-flat-independent-risk-v1"
+RUN_POLICY = "lagged-long-flat-independent-risk-v2"
+LEGACY_COMPARISON_POLICY = "event-aligned-paper-equity-v1"
+COMPARISON_POLICY = "event-aligned-paper-equity-v2"
 MAX_COMPARISON_ROWS = 2000
 
 
@@ -32,7 +36,55 @@ def _sha256(value: object) -> bool:
 
 
 def _decimal_text(value: Decimal) -> str:
-    return "0" if value == 0 else format(value.normalize(), "f")
+    """Canonicalize without normalize(), which rounds in the caller's context."""
+    if value == 0:
+        return "0"
+    sign, digits, exponent = value.as_tuple()
+    digits = list(digits)
+    while digits[-1] == 0:
+        digits.pop()
+        exponent += 1
+    normalized = Decimal((sign, tuple(digits), exponent))
+    fixed = format(normalized, "f")
+    # Keep ordinary v1 fingerprints while allowing compact bounded exponents.
+    return fixed if len(fixed) <= 64 else format(normalized, "E")
+
+
+def _stored_amount(value: object, *, positive: bool = False) -> Decimal:
+    """Generated finite results can have more digits than external money inputs."""
+    if not isinstance(value, (str, int)) or isinstance(value, bool):
+        raise ValueError("decimal_string_required")  # noqa: TRY004 - API maps ValueError to 422
+    amount = bounded_decimal(value)
+    if amount.copy_abs() > Decimal("1e15") or (positive and amount <= 0):
+        raise ValueError("decimal_out_of_range")
+    return amount
+
+
+def _finite(value: Fraction) -> Decimal:
+    # All cash flows are finite decimal sums/products. Refuse an unsupported
+    # result rather than silently rounding it or persisting an unreadable run.
+    with localcontext(Context(prec=4096)) as context:
+        context.traps[Inexact] = True
+        result = Decimal(value.numerator) / Decimal(value.denominator)
+    return bounded_decimal(result)
+
+
+def _text(value: Fraction) -> str:
+    return _decimal_text(_finite(value))
+
+
+def _allocation(value: Fraction) -> Fraction:
+    """Only position allocation rounds; downwards never spends beyond a cap."""
+    with localcontext(Context(prec=28, rounding=ROUND_DOWN)):
+        return Fraction(Decimal(value.numerator) / Decimal(value.denominator))
+
+
+def _difference(left: Decimal, right: Decimal, *, legacy: bool) -> Decimal:
+    if legacy:
+        # Read historical v1 seals with the arithmetic used by normal v1 runs.
+        with localcontext(Context(prec=28)):
+            return left - right
+    return _finite(Fraction(left) - Fraction(right))
 
 
 def _normalized_ticks(ticks: object) -> list[dict]:
@@ -62,6 +114,8 @@ def _normalized_ticks(ticks: object) -> list[dict]:
 def _validated_run(value: object, run_id: str) -> dict:
     body = _sealed(value, "shadow_run_sha256", "shadow_run_digest_mismatch")
     try:
+        legacy = body["policy"] == LEGACY_RUN_POLICY
+        parse = money if legacy else _stored_amount
         configuration = body["configuration"]
         if set(configuration) != {
             "initial_cash",
@@ -70,15 +124,15 @@ def _validated_run(value: object, run_id: str) -> dict:
             "fee_rate",
         }:
             raise ValueError("invalid_shadow_run")
-        initial = money(configuration["initial_cash"])
-        money(configuration["max_order_amount"])
-        money(configuration["daily_loss_limit"])
-        fee_rate = money(configuration["fee_rate"], positive=False)
+        initial = parse(configuration["initial_cash"], positive=True)
+        parse(configuration["max_order_amount"], positive=True)
+        parse(configuration["daily_loss_limit"], positive=True)
+        fee_rate = parse(configuration["fee_rate"], positive=False)
         equity = body["equity"]
         event_times = body["event_times_ms"]
         if (
             body["run_id"] != run_id
-            or body["policy"] != RUN_POLICY
+            or body["policy"] not in {LEGACY_RUN_POLICY, RUN_POLICY}
             or not _sha256(body["input_sha256"])
             or not 0 <= fee_rate <= Decimal("0.1")
             or not isinstance(equity, list)
@@ -87,13 +141,14 @@ def _validated_run(value: object, run_id: str) -> dict:
             or len(event_times) != len(equity)
             or any(type(stamp) is not int or stamp < 0 for stamp in event_times)
             or any(later <= earlier for earlier, later in pairwise(event_times))
-            or any(money(item, positive=False) is None for item in equity)
-            or money(body["initial_equity"]) != initial
-            or money(body["final_equity"], positive=False) != money(equity[-1], positive=False)
-            or money(body["pnl"], positive=False) != money(equity[-1], positive=False) - initial
-            or money(body["cash"], positive=False) < 0
-            or money(body["quantity"], positive=False) < 0
-            or money(body["fees"], positive=False) < 0
+            or any(parse(item, positive=False) is None for item in equity)
+            or parse(body["initial_equity"], positive=True) != initial
+            or parse(body["final_equity"], positive=False) != parse(equity[-1], positive=False)
+            or parse(body["pnl"], positive=False)
+            != _difference(parse(equity[-1], positive=False), initial, legacy=legacy)
+            or parse(body["cash"], positive=False) < 0
+            or parse(body["quantity"], positive=False) < 0
+            or parse(body["fees"], positive=False) < 0
             or not isinstance(body["fills"], list)
             or type(body["risk_halted"]) is not bool
             or body["signal_alignment"] != "previous_tick_target"
@@ -102,6 +157,19 @@ def _validated_run(value: object, run_id: str) -> dict:
             or body["live_execution"] is not False
         ):
             raise ValueError("invalid_shadow_run")
+        if not legacy:
+            valid_times = set(event_times)
+            for fill in body["fills"]:
+                if (
+                    not isinstance(fill, dict)
+                    or set(fill) != {"event_ms", "quantity", "price", "fee"}
+                    or type(fill["event_ms"]) is not int
+                    or fill["event_ms"] not in valid_times
+                    or parse(fill["quantity"]) == 0
+                    or parse(fill["price"], positive=True) <= 0
+                    or parse(fill["fee"]) < 0
+                ):
+                    raise ValueError("invalid_shadow_run")
     except (KeyError, TypeError, ValueError, ArithmeticError):
         raise ValueError("invalid_shadow_run") from None
     return value
@@ -138,7 +206,7 @@ def _comparison_request(payload: object) -> dict:
         ):
             raise ValueError("invalid_paper_observations")
         try:
-            equity = money(observation["equity"], positive=False)
+            equity = _stored_amount(observation["equity"])
         except ValueError:
             raise ValueError("invalid_paper_observations") from None
         normalized.append(
@@ -161,6 +229,8 @@ def _comparison_fingerprint(comparison_id: str, actor: str, request: dict) -> st
 def _validated_comparison(value: object, comparison_id: str) -> dict:
     body = _sealed(value, "comparison_sha256", "shadow_comparison_digest_mismatch")
     try:
+        legacy = body["policy"] == LEGACY_COMPARISON_POLICY
+        parse = money if legacy else _stored_amount
         request = _comparison_request(body["request"])
         rows = body["rows"]
         observations = request["paper_observations"]
@@ -169,7 +239,7 @@ def _validated_comparison(value: object, comparison_id: str) -> dict:
             or body["actor"] != identifier(body["actor"])
             or body["input_sha256"]
             != _comparison_fingerprint(comparison_id, body["actor"], request)
-            or body["policy"] != COMPARISON_POLICY
+            or body["policy"] not in {LEGACY_COMPARISON_POLICY, COMPARISON_POLICY}
             or body["run_id"] != request["run_id"]
             or not _sha256(body["shadow_run_sha256"])
             or not isinstance(rows, list)
@@ -184,28 +254,31 @@ def _validated_comparison(value: object, comparison_id: str) -> dict:
         for row, observation in zip(rows, observations):
             if set(row) != {"event_ms", "shadow_equity", "paper_equity", "difference"}:
                 raise ValueError("invalid_shadow_comparison")
-            shadow_equity = money(row["shadow_equity"], positive=False)
-            paper_equity = money(row["paper_equity"], positive=False)
-            difference = money(row["difference"], positive=False)
+            shadow_equity = parse(row["shadow_equity"], positive=False)
+            paper_equity = parse(row["paper_equity"], positive=False)
+            difference = parse(row["difference"], positive=False)
             if (
                 row["event_ms"] != observation["event_ms"]
-                or paper_equity != money(observation["equity"], positive=False)
-                or difference != shadow_equity - paper_equity
+                or paper_equity != _stored_amount(observation["equity"])
+                or difference != _difference(shadow_equity, paper_equity, legacy=legacy)
             ):
                 raise ValueError("invalid_shadow_comparison")
             differences.append(difference)
-        initial = money(body["initial_equity"])
-        final_shadow = money(body["final_shadow_equity"], positive=False)
-        final_paper = money(body["final_paper_equity"], positive=False)
+        initial = parse(body["initial_equity"], positive=True)
+        final_shadow = parse(body["final_shadow_equity"], positive=False)
+        final_paper = parse(body["final_paper_equity"], positive=False)
         if (
             rows[0]["event_ms"] != observations[0]["event_ms"]
-            or money(rows[-1]["shadow_equity"], positive=False) != final_shadow
-            or money(rows[-1]["paper_equity"], positive=False) != final_paper
-            or money(body["shadow_pnl"], positive=False) != final_shadow - initial
-            or money(body["paper_pnl"], positive=False) != final_paper - initial
-            or money(body["final_difference"], positive=False) != final_shadow - final_paper
-            or money(body["max_absolute_difference"], positive=False)
-            != max(abs(difference) for difference in differences)
+            or parse(rows[-1]["shadow_equity"], positive=False) != final_shadow
+            or parse(rows[-1]["paper_equity"], positive=False) != final_paper
+            or parse(body["shadow_pnl"], positive=False)
+            != _difference(final_shadow, initial, legacy=legacy)
+            or parse(body["paper_pnl"], positive=False)
+            != _difference(final_paper, initial, legacy=legacy)
+            or parse(body["final_difference"], positive=False)
+            != _difference(final_shadow, final_paper, legacy=legacy)
+            or parse(body["max_absolute_difference"], positive=False)
+            != max(difference.copy_abs() for difference in differences)
         ):
             raise ValueError("invalid_shadow_comparison")
     except (KeyError, TypeError, ValueError, ArithmeticError):
@@ -233,18 +306,20 @@ class ShadowService:
         fee_bps: str = "10",
     ) -> dict:
         run_id = identifier(run_id)
-        cash, cap, stop = money(initial_cash), money(max_order_amount), money(daily_loss_limit)
-        fee_rate = money(fee_bps, positive=False) / 10000
-        if not 0 <= fee_rate <= Decimal("0.1"):
+        cash, cap, stop = (
+            Fraction(money(value)) for value in (initial_cash, max_order_amount, daily_loss_limit)
+        )
+        fee_rate = Fraction(money(fee_bps, positive=False)) / 10000
+        if not 0 <= fee_rate <= Fraction(1, 10):
             raise ValueError("invalid_shadow_configuration")
         normalized_ticks = _normalized_ticks(ticks)
         fingerprint = digest(
             {
                 "ticks": normalized_ticks,
-                "cash": _decimal_text(cash),
-                "cap": _decimal_text(cap),
-                "stop": _decimal_text(stop),
-                "fee": _decimal_text(fee_rate),
+                "cash": _text(cash),
+                "cap": _text(cap),
+                "stop": _text(stop),
+                "fee": _text(fee_rate),
             }
         )
         old = self.get_run(run_id)
@@ -252,21 +327,23 @@ class ShadowService:
             if old["input_sha256"] != fingerprint:
                 raise ValueError("shadow_run_id_conflict")
             return old
-        initial, quantity, fees = cash, Decimal(0), Decimal(0)
+        initial, quantity, fees = cash, Fraction(0), Fraction(0)
         pending_target, fills, equity, halted = 0, [], [], False
         for tick in normalized_ticks:
             stamp, target = tick["event_ms"], tick["target"]
-            price = money(tick["price"])
+            price = Fraction(money(tick["price"]))
             current_equity = cash + quantity * price
             if current_equity - initial <= -stop:
                 halted = True
             # Execution uses the PREVIOUS observation's target, avoiding same-tick lookahead.
             desired = (
-                min(cap, current_equity) / price if pending_target and not halted else Decimal(0)
+                _allocation(min(cap, current_equity) / price)
+                if pending_target and not halted
+                else Fraction(0)
             )
             delta = desired - quantity
             if delta > 0:
-                delta = min(delta, cash / (price * (1 + fee_rate)))
+                delta = min(delta, _allocation(cash / (price * (1 + fee_rate))))
             if delta:
                 notional, fee = delta * price, abs(delta * price) * fee_rate
                 cash -= notional + fee
@@ -275,30 +352,30 @@ class ShadowService:
                 fills.append(
                     {
                         "event_ms": stamp,
-                        "quantity": str(delta),
-                        "price": str(price),
-                        "fee": str(fee),
+                        "quantity": _text(delta),
+                        "price": tick["price"],
+                        "fee": _text(fee),
                     }
                 )
-            equity.append(str(cash + quantity * price))
+            equity.append(_text(cash + quantity * price))
             pending_target = target
         result = {
             "run_id": run_id,
             "input_sha256": fingerprint,
             "policy": RUN_POLICY,
             "configuration": {
-                "initial_cash": _decimal_text(initial),
-                "max_order_amount": _decimal_text(cap),
-                "daily_loss_limit": _decimal_text(stop),
-                "fee_rate": _decimal_text(fee_rate),
+                "initial_cash": _text(initial),
+                "max_order_amount": _text(cap),
+                "daily_loss_limit": _text(stop),
+                "fee_rate": _text(fee_rate),
             },
             "event_times_ms": [tick["event_ms"] for tick in normalized_ticks],
-            "initial_equity": _decimal_text(initial),
+            "initial_equity": _text(initial),
             "final_equity": equity[-1],
-            "cash": str(cash),
-            "quantity": str(quantity),
-            "fees": str(fees),
-            "pnl": str(Decimal(equity[-1]) - initial),
+            "cash": _text(cash),
+            "quantity": _text(quantity),
+            "fees": _text(fees),
+            "pnl": _text(Fraction(equity[-1]) - initial),
             "equity": equity,
             "fills": fills,
             "risk_halted": halted,
@@ -307,6 +384,7 @@ class ShadowService:
             "live_execution": False,
         }
         result["shadow_run_sha256"] = digest(result)
+        _validated_run(result, run_id)
         with self.db.transaction() as conn:
             row = conn.execute(
                 "SELECT body FROM cp_documents WHERE collection=? AND id=?", (RUNS, run_id)
@@ -332,13 +410,13 @@ class ShadowService:
         ):
             raise ValueError("aligned_paper_equity_required")
         differences = [
-            money(a, positive=False) - money(b, positive=False)
+            _finite(Fraction(_stored_amount(a)) - Fraction(_stored_amount(b)))
             for a, b in zip(run["equity"], paper_equity)
         ]
         return {
             "run_id": run_id,
-            "equity_differences": [str(d) for d in differences],
-            "max_absolute_difference": str(max(abs(d) for d in differences)),
+            "equity_differences": [_decimal_text(d) for d in differences],
+            "max_absolute_difference": _decimal_text(max(d.copy_abs() for d in differences)),
             "execution_authorized": False,
         }
 
@@ -364,15 +442,15 @@ class ShadowService:
             raise ValueError("paper_event_alignment_mismatch")
         if run["event_times_ms"][-1] > request["comparison_as_of_ms"]:
             raise ValueError("shadow_run_not_available")
-        initial = money(run["initial_equity"])
-        if money(observations[0]["equity"], positive=False) != initial:
+        initial = _stored_amount(run["initial_equity"], positive=True)
+        if _stored_amount(observations[0]["equity"]) != initial:
             raise ValueError("paper_initial_equity_mismatch")
         rows = []
         differences = []
         for shadow_equity, observation in zip(run["equity"], observations):
-            shadow = money(shadow_equity, positive=False)
-            paper = money(observation["equity"], positive=False)
-            difference = shadow - paper
+            shadow = _stored_amount(shadow_equity)
+            paper = _stored_amount(observation["equity"])
+            difference = _finite(Fraction(shadow) - Fraction(paper))
             differences.append(difference)
             rows.append(
                 {
@@ -382,8 +460,8 @@ class ShadowService:
                     "difference": _decimal_text(difference),
                 }
             )
-        final_shadow = money(run["final_equity"], positive=False)
-        final_paper = money(observations[-1]["equity"], positive=False)
+        final_shadow = _stored_amount(run["final_equity"])
+        final_paper = _stored_amount(observations[-1]["equity"])
         comparison = {
             "comparison_id": comparison_id,
             "actor": actor,
@@ -396,16 +474,19 @@ class ShadowService:
             "initial_equity": _decimal_text(initial),
             "final_shadow_equity": _decimal_text(final_shadow),
             "final_paper_equity": _decimal_text(final_paper),
-            "shadow_pnl": _decimal_text(final_shadow - initial),
-            "paper_pnl": _decimal_text(final_paper - initial),
-            "final_difference": _decimal_text(final_shadow - final_paper),
-            "max_absolute_difference": _decimal_text(max(abs(value) for value in differences)),
+            "shadow_pnl": _text(Fraction(final_shadow) - Fraction(initial)),
+            "paper_pnl": _text(Fraction(final_paper) - Fraction(initial)),
+            "final_difference": _text(Fraction(final_shadow) - Fraction(final_paper)),
+            "max_absolute_difference": _decimal_text(
+                max(value.copy_abs() for value in differences)
+            ),
             "paper_evidence": "operator_supplied",
             "independent_paper_verification": False,
             "execution_authorized": False,
             "live_execution": False,
         }
         comparison["comparison_sha256"] = digest(comparison)
+        _validated_comparison(comparison, comparison_id)
         with self.db.transaction() as conn:
             row = conn.execute(
                 "SELECT body FROM cp_documents WHERE collection=? AND id=?",

@@ -56,7 +56,7 @@ def paper_request(run, *, final_delta="0"):
 def test_run_is_lagged_sealed_persistent_and_non_executing(shadow):
     db, service, ticks = shadow
     result = service.run("run-a", ticks)
-    assert result["policy"] == "lagged-long-flat-independent-risk-v1"
+    assert result["policy"] == "lagged-long-flat-independent-risk-v2"
     assert result["event_times_ms"] == [10, 20, 30, 40]
     assert result["fills"][0]["event_ms"] == 20
     assert result["fills"][-1]["event_ms"] == 40
