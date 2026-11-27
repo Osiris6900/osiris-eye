@@ -17,6 +17,7 @@ from osiris_api.paper_event_bus import (
     PaperEventBus,
     dedupe_events,
     detect_gaps,
+    dispatch_committed,
 )
 from osiris_api.paper_execution import (
     LIVE_EXECUTION_ENABLED,
@@ -350,3 +351,103 @@ def test_expiry_and_broker_reconciliation_notify_only_after_commit(db, tmp_path,
     assert reconcile_broker_book(now=expiry)["persisted"] is False
     assert bus.read_live("ops", "paper.reconciliation")["events"] == []
     assert bus.read_live("ops", "paper.orders")["events"] == []
+
+
+@pytest.mark.parametrize("change", [
+    "payload", "event_type", "client_order_id", "journal_seq", "missing_reference",
+    "event_id", "stream",
+])
+def test_journal_delivery_refuses_tampered_bus_copy(db, change):
+    _init()
+    bus = PaperEventBus(db)
+    bus.subscribe_live("live", "paper.orders")
+    _working()
+    stream = "paper.orders"
+    with sqlite3.connect(db) as conn:
+        if change == "payload":
+            payload = json.loads(conn.execute(
+                "SELECT payload FROM paper_event_log WHERE stream=?", (stream,),
+            ).fetchone()[0])
+            payload["price"] = "999999"
+            value = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+            field = "payload"
+        else:
+            field = "journal_seq" if change == "missing_reference" else change
+            value = {
+                "event_type": "order_cancelled", "client_order_id": "other-order",
+                "journal_seq": 1, "missing_reference": None, "event_id": "forged-id",
+                "stream": "paper.audit",
+            }[change]
+        conn.execute(f"UPDATE paper_event_log SET {field}=? WHERE stream=?", (value, stream))
+    # The canonical order remains sound; only the delivery projection changed.
+    assert reconciliation_report()["passed"] is True
+    if change == "stream":
+        stream = "paper.audit"
+    with pytest.raises(ValueError, match="event_journal_integrity_failed"):
+        bus.pull("pull", stream)
+    with pytest.raises(ValueError, match="event_journal_integrity_failed"):
+        bus.replay("replay", stream, from_seq=0)
+    with pytest.raises(ValueError, match="event_journal_integrity_failed"):
+        bus.read_live("live", "paper.orders")
+
+
+def test_journal_delivery_refuses_corrupt_canonical_chain(db):
+    _init()
+    bus = PaperEventBus(db)
+    bus.subscribe_live("live", "paper.orders")
+    _working()
+    # The delivery copy still matches its row. An unrelated broken journal link
+    # must nevertheless invalidate the batch's claimed canonical provenance.
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE paper_exec_audit SET row_hash='corrupt' WHERE seq=1")
+    with pytest.raises(ValueError, match="event_journal_integrity_failed"):
+        bus.pull("pull", "paper.orders")
+    with pytest.raises(ValueError, match="event_journal_integrity_failed"):
+        bus.replay("replay", "paper.orders", from_seq=0)
+    with pytest.raises(ValueError, match="event_journal_integrity_failed"):
+        bus.read_live("live", "paper.orders")
+
+
+def test_forged_live_journal_notification_cannot_override_retained_event(db):
+    _init()
+    _working()
+    bus = PaperEventBus(db)
+    original = bus.replay("audit", "paper.orders", from_seq=0)["events"][0]
+    bus.subscribe_live("live", "paper.orders")
+    forged = {**original, "payload": {**original["payload"], "price": "999999"}}
+    dispatch_committed(str(db), [forged])
+    with pytest.raises(ValueError, match="event_journal_integrity_failed"):
+        bus.read_live("live", "paper.orders")
+    assert bus.pull("audit", "paper.orders")["events"][0]["payload"]["price"] == "100"
+
+
+def test_journal_chain_is_verified_once_for_a_delivery_batch(db, monkeypatch):
+    from osiris_api import paper_execution
+
+    _init()
+    _working("one", quantity="1")
+    _working("two", quantity="1")
+    original = paper_execution._verify_audit
+    verified = []
+
+    def verify_once(conn):
+        verified.append(True)
+        original(conn)
+
+    monkeypatch.setattr(paper_execution, "_verify_audit", verify_once)
+    assert len(PaperEventBus(db).pull("audit", "paper.orders")["events"]) == 2
+    assert len(verified) == 1
+
+
+def test_http_delivery_refuses_tampered_journal_projection(db):
+    _init()
+    _working()
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "UPDATE paper_event_log SET event_type='order_cancelled' WHERE stream='paper.orders'",
+        )
+    response = TestClient(app).get(
+        "/paper/execution/events/paper.orders", params={"consumer": "review"},
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"] == "event_journal_integrity_failed"
