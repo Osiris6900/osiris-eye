@@ -74,26 +74,46 @@ class _LiveQueue:
     instead. The SQLite log still has every event.
     """
 
-    def __init__(self, max_pending: int):
+    def __init__(self, max_pending: int, *, head_seq: int):
         self.max_pending = max_pending
         self.items: deque[dict[str, Any]] = deque()
         self.resync = False
         self.dropped = 0
+        self.next_seq = head_seq + 1
+        self.delivered_seq = head_seq
+        self.seen_head = head_seq
 
     def offer(self, event: dict[str, Any]) -> None:
-        if self.resync or len(self.items) >= self.max_pending:
+        seq = event["seq"]
+        self.seen_head = max(self.seen_head, seq)
+        # SQLite serializes commits, but their subsequent notifications can
+        # race. Never deliver a later transition ahead of the missing one.
+        if self.resync or len(self.items) >= self.max_pending or seq > self.next_seq:
             self.dropped += len(self.items) + 1
             self.items.clear()
             self.resync = True
             return
+        if seq == self.next_seq:
+            self.next_seq += 1
+        # Keep delayed duplicates for integrity verification before read_live
+        # filters them out; an old notification must not bypass that check.
         self.items.append(event)
 
-    def take(self) -> tuple[str, list[dict[str, Any]], int]:
+    def take(self) -> tuple[str, list[dict[str, Any]], int, int]:
         if self.resync:
-            return "resync", [], self.dropped
+            return "resync", [], self.dropped, self.delivered_seq
         events = list(self.items)
         self.items.clear()
-        return "ok", events, self.dropped
+        return "ok", events, self.dropped, self.delivered_seq
+
+    def replayed_through(self, head_seq: int) -> None:
+        """Reset only notifications covered by the successful replay snapshot."""
+        self.delivered_seq = max(self.delivered_seq, head_seq)
+        self.items = deque(event for event in self.items if event["seq"] > head_seq)
+        if self.seen_head <= head_seq:
+            self.resync = False
+            self.next_seq = head_seq + 1
+            self.seen_head = head_seq
 
 
 _LIVE_LOCK = Lock()
@@ -487,10 +507,14 @@ class PaperEventBus:
         _check_stream(stream)
         self._touch_consumer(consumer_id, stream, status="active")
         with _LIVE_LOCK:
+            # Register against the durable head while dispatch is excluded.
+            # A writer that commits during this read will either be included
+            # in the baseline or enqueue the very next sequence afterwards.
+            view = self._consumer_view(consumer_id, stream)
             key = (self.path, consumer_id, stream)
             if key not in _LIVE:
-                _LIVE[key] = _LiveQueue(self.max_pending)
-        return self._consumer_view(consumer_id, stream)
+                _LIVE[key] = _LiveQueue(self.max_pending, head_seq=view["head_seq"])
+        return view
 
     def disconnect(self, consumer_id: str, stream: str) -> dict[str, Any]:
         _check_consumer(consumer_id)
@@ -509,14 +533,28 @@ class PaperEventBus:
             queue = _LIVE.get((self.path, consumer_id, stream))
             if queue is None:
                 raise ValueError("not_subscribed")
-            kind, events, dropped = queue.take()
+            kind, events, dropped, delivered_seq = queue.take()
         if events:
             conn = self._connect()
             try:
                 conn.execute("BEGIN")
                 _verify_live_copies(conn, events)
+            except Exception:
+                with _LIVE_LOCK:
+                    queue.resync = True
+                raise
             finally:
                 conn.close()
+            fresh_events = []
+            cursor = delivered_seq
+            for event in events:
+                if event["seq"] > cursor:
+                    fresh_events.append(event)
+                    cursor = event["seq"]
+            events = fresh_events
+            if events:
+                with _LIVE_LOCK:
+                    queue.delivered_seq = max(queue.delivered_seq, events[-1]["seq"])
         view = self._consumer_view(consumer_id, stream)
         if kind == "resync":
             return _page(
@@ -537,7 +575,7 @@ class PaperEventBus:
             status="ok",
             signal=None,
             events=events,
-            gaps=detect_gaps(events, expected_seq=events[0]["seq"]) if events else [],
+            gaps=detect_gaps(events, expected_seq=delivered_seq + 1) if events else [],
             acked=view["acked_seq"],
             head=view["head_seq"],
             dropped=dropped,
@@ -612,11 +650,6 @@ class PaperEventBus:
         _check_stream(stream)
         from_seq = _check_sequence(from_seq, allow_zero=True)
         limit = _check_limit(limit)
-        with _LIVE_LOCK:
-            queue = _LIVE.get((self.path, consumer_id, stream))
-            if queue is not None:
-                queue.resync = False
-                queue.items.clear()
         conn = self._connect()
         try:
             conn.execute("BEGIN IMMEDIATE")
@@ -627,6 +660,10 @@ class PaperEventBus:
             events = _after(conn, stream, from_seq, limit)
             gaps = detect_gaps(events, expected_seq=from_seq + 1) if events else []
             conn.commit()
+            with _LIVE_LOCK:
+                queue = _LIVE.get((self.path, consumer_id, stream))
+                if queue is not None:
+                    queue.replayed_through(head)
             return _page(
                 stream=stream,
                 consumer_id=consumer_id,

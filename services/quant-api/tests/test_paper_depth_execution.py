@@ -282,3 +282,22 @@ def test_mutable_financial_rows_cannot_change_a_source_bound_fill(session):
     assert ledger.reconciliation_report()["passed"] is False
     with pytest.raises(ValueError, match="reconciliation"):
         fill(service, "buy", "next")
+
+
+def test_depth_fill_rechecks_clock_without_consuming_liquidity_on_rejection(session):
+    from osiris_api.control_plane.clock import install_clock_health
+
+    service, now, _ = session
+    assert order("clock-depth", now[0], quantity="1")["state"] == "accepted"
+    install_clock_health({"status": "degraded", "orders_fail_closed": True})
+    with pytest.raises(ValueError, match="^clock_degraded$"):
+        fill(service, "clock-depth", "clock-plan")
+    assert ledger.snapshot()["fill_count"] == 0
+    assert ledger.snapshot()["cash"] == "10000"
+    assert ledger.reconcile()["passed"] is True
+    install_clock_health({"status": "healthy", "orders_fail_closed": False})
+    recovered = fill(service, "clock-depth", "clock-plan")
+    assert recovered["state"] == "filled"
+    assert recovered["fill"]["quantity"] == "1"
+    assert ledger.snapshot()["fill_count"] == 1
+    assert ledger.reconcile()["passed"] is True

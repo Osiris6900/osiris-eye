@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 
 import pytest
 from fastapi.testclient import TestClient
@@ -161,6 +163,134 @@ def test_slow_consumer_gets_resync_signal_and_retains_events(db):
     recovered = bus.replay("desk", "paper.orders", from_seq=0, limit=10)
     assert [event["payload"]["n"] for event in recovered["events"]] == [0, 1, 2]
     assert recovered["status"] == "ok"
+
+
+@pytest.mark.parametrize("release_before_read", [False, True])
+def test_racing_commit_notifications_require_ordered_replay(db, monkeypatch, release_before_read):
+    from osiris_api import paper_event_bus
+
+    bus = PaperEventBus(db)
+    bus.subscribe_live("desk", "paper.orders")
+    first_committed, release_first = Event(), Event()
+    original = paper_event_bus.dispatch_committed
+
+    def delayed_dispatch(path, events):
+        if events[0]["seq"] == 1:
+            first_committed.set()
+            assert release_first.wait(5)
+        original(path, events)
+
+    monkeypatch.setattr(paper_event_bus, "dispatch_committed", delayed_dispatch)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        first = pool.submit(
+            bus.publish, "paper.orders", "order_decided", {"state": "accepted"}, "accepted",
+        )
+        try:
+            assert first_committed.wait(5)
+            bus.publish("paper.orders", "order_cancelled", {"state": "cancelled"}, "cancelled")
+            if release_before_read:
+                release_first.set()
+                first.result(timeout=5)
+            page = bus.read_live("desk", "paper.orders")
+            assert page["events"] == []
+            assert page["signal"] == "drop_to_resync"
+        finally:
+            release_first.set()
+        first.result(timeout=5)
+
+    assert bus.read_live("desk", "paper.orders")["signal"] == "drop_to_resync"
+    replay = bus.replay("desk", "paper.orders", from_seq=0)
+    assert [event["seq"] for event in replay["events"]] == [1, 2]
+    assert replay["next_from"] == 2
+    bus.ack("desk", "paper.orders", 2)
+    bus.publish("paper.orders", "order_decided", {"state": "accepted"}, "next-order")
+    assert [event["seq"] for event in bus.read_live("desk", "paper.orders")["events"]] == [3]
+
+
+def test_duplicate_live_notifications_cannot_move_delivery_cursor_backwards(db):
+    bus = PaperEventBus(db)
+    bus.subscribe_live("desk", "paper.orders")
+    first = bus.publish("paper.orders", "order_decided", {"state": "accepted"}, "accepted")
+    bus.publish("paper.orders", "order_cancelled", {"state": "cancelled"}, "cancelled")
+    dispatch_committed(str(db), [{key: value for key, value in first.items() if key != "duplicate"}])
+    page = bus.read_live("desk", "paper.orders")
+    assert [event["seq"] for event in page["events"]] == [1, 2]
+    assert page["next_from"] == 2
+    dispatch_committed(str(db), [{key: value for key, value in first.items() if key != "duplicate"}])
+    assert bus.read_live("desk", "paper.orders")["events"] == []
+
+
+def test_subscription_baseline_excludes_delayed_historical_notification(db, monkeypatch):
+    from osiris_api import paper_event_bus
+
+    bus = PaperEventBus(db)
+    first_committed, release_first = Event(), Event()
+    original = paper_event_bus.dispatch_committed
+
+    def delayed_dispatch(path, events):
+        if events[0]["seq"] == 1:
+            first_committed.set()
+            assert release_first.wait(5)
+        original(path, events)
+
+    monkeypatch.setattr(paper_event_bus, "dispatch_committed", delayed_dispatch)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        first = pool.submit(bus.publish, "paper.orders", "order_decided", {"n": 1}, "e1")
+        try:
+            assert first_committed.wait(5)
+            assert bus.subscribe_live("desk", "paper.orders")["head_seq"] == 1
+        finally:
+            release_first.set()
+        first.result(timeout=5)
+    bus.publish("paper.orders", "order_cancelled", {"n": 2}, "e2")
+    page = bus.read_live("desk", "paper.orders")
+    assert page["signal"] is None
+    assert [event["seq"] for event in page["events"]] == [2]
+    assert page["gaps"] == []
+
+
+def test_failed_replay_does_not_clear_live_resync(db):
+    _init()
+    bus = PaperEventBus(db, max_pending=1)
+    bus.subscribe_live("desk", "paper.orders")
+    _working("first", quantity="1")
+    _working("second", quantity="1")
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE paper_event_log SET event_type='forged' WHERE stream='paper.orders'")
+    with pytest.raises(ValueError, match="event_journal_integrity_failed"):
+        bus.replay("desk", "paper.orders", from_seq=0)
+    assert bus.read_live("desk", "paper.orders")["signal"] == "drop_to_resync"
+
+
+def test_replay_does_not_clear_newer_overflow_after_its_snapshot(db, monkeypatch):
+    bus = PaperEventBus(db, max_pending=1)
+    writer = PaperEventBus(db)
+    bus.subscribe_live("desk", "paper.orders")
+    writer.publish("paper.orders", "order_decided", {"n": 1}, "e1")
+    connect = bus._connect
+
+    class PublishAfterCommit:
+        def __init__(self):
+            self.conn = connect()
+
+        def __getattr__(self, name):
+            return getattr(self.conn, name)
+
+        def commit(self):
+            self.conn.commit()
+            # These commits are newer than replay's head=1 snapshot. Its
+            # successful read cannot recover their overflowed notifications.
+            writer.publish("paper.orders", "order_decided", {"n": 2}, "e2")
+            writer.publish("paper.orders", "order_decided", {"n": 3}, "e3")
+
+    monkeypatch.setattr(bus, "_connect", PublishAfterCommit)
+    replay = bus.replay("desk", "paper.orders", from_seq=0)
+    assert [event["seq"] for event in replay["events"]] == [1]
+    monkeypatch.setattr(bus, "_connect", connect)
+    assert bus.read_live("desk", "paper.orders")["signal"] == "drop_to_resync"
+    recovered = bus.replay("desk", "paper.orders", from_seq=1)
+    assert [event["seq"] for event in recovered["events"]] == [2, 3]
+    assert bus.read_live("desk", "paper.orders")["signal"] is None
 
 
 def test_pull_is_bounded_by_limit(db):

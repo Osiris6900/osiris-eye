@@ -1196,12 +1196,21 @@ def _journal_projection_breaks(conn: sqlite3.Connection) -> list[str]:
         return ["journal_projection_invalid"]
 
 
-def _assert_ready(conn: sqlite3.Connection) -> None:
+def _assert_ready(conn: sqlite3.Connection, *, allow_broker_break: bool = False) -> None:
+    """Verify book integrity; order release may proceed under the broker halt.
+
+    A broker mismatch blocks new orders and fills, but cannot prevent cancelling
+    or expiring existing reservations. Every internal reconciliation and journal
+    check remains mandatory for those risk-reducing transitions.
+    """
     account = conn.execute("SELECT 1 FROM paper_exec_meta WHERE id=1").fetchone()
     if account is None:
         raise ValueError("account_not_initialized")
     _verify_audit(conn)
-    if _reconcile_breaks(conn):
+    breaks = _reconcile_breaks(conn)
+    if allow_broker_break:
+        breaks = [item for item in breaks if item != "broker_reconciliation"]
+    if breaks:
         raise ValueError("reconciliation_break")
 
 
@@ -2194,7 +2203,7 @@ def _apply_paper_fill(
                     )
                     verdict = _timestamp_verdict(provenance, account, observed_at, now)
                     clock_tokens = _bind_provenance(
-                        provenance, clock_healthy=True, verdict=verdict,
+                        provenance, clock_healthy=_clock_allows_orders(), verdict=verdict,
                     )
                 else:
                     verdict = None
@@ -2346,7 +2355,7 @@ def cancel_paper_order(
         conn = _connect()
         try:
             conn.execute("BEGIN IMMEDIATE")
-            _assert_ready(conn)
+            _assert_ready(conn, allow_broker_break=True)
             order = conn.execute(
                 "SELECT * FROM paper_exec_orders WHERE client_order_id=?", (key,)
             ).fetchone()
@@ -2358,7 +2367,7 @@ def cancel_paper_order(
                     "filled_quantity": order["filled_quantity"],
                     "live_execution": False, "broker_order_submitted": False,
                 })
-                _assert_ready(conn)
+                _assert_ready(conn, allow_broker_break=True)
                 _commit(conn)
                 result = _public(order, _latest_fill(conn, key), replay=True)
             elif _expire_if_due(conn, order, now):
@@ -2366,7 +2375,7 @@ def cancel_paper_order(
                     "from": "expired", "to": "cancelled", "reason": "order_expired",
                     "live_execution": False, "broker_order_submitted": False,
                 })
-                _assert_ready(conn)
+                _assert_ready(conn, allow_broker_break=True)
                 _commit(conn)
                 error = "order_expired"
             else:
@@ -2377,7 +2386,7 @@ def cancel_paper_order(
                         "from": order["state"], "to": "cancelled",
                         "live_execution": False, "broker_order_submitted": False,
                     })
-                    _assert_ready(conn)
+                    _assert_ready(conn, allow_broker_break=True)
                     _commit(conn)
                     error = "invalid_order_transition"
                 else:
@@ -2392,7 +2401,7 @@ def cancel_paper_order(
                         "released_quantity": order["leaves_quantity"],
                         "live_execution": False, "broker_order_submitted": False,
                     })
-                    _assert_ready(conn)
+                    _assert_ready(conn, allow_broker_break=True)
                     if simulate_crash:
                         raise RuntimeError("simulated_crash_before_commit")
                     _commit(conn)
@@ -2426,7 +2435,7 @@ def expire_paper_orders(*, now: object = None, simulate_crash: bool = False) -> 
         conn = _connect()
         try:
             conn.execute("BEGIN IMMEDIATE")
-            _assert_ready(conn)
+            _assert_ready(conn, allow_broker_break=True)
             rows = conn.execute(
                 """SELECT * FROM paper_exec_orders
                    WHERE state IN ('accepted', 'partially_filled')
@@ -2436,7 +2445,7 @@ def expire_paper_orders(*, now: object = None, simulate_crash: bool = False) -> 
                 if _resting_day_expired(order, as_of):
                     _expire_open_order(conn, order, as_of=as_of)
                     expired.append(order["client_order_id"])
-            _assert_ready(conn)
+            _assert_ready(conn, allow_broker_break=True)
             if simulate_crash:
                 raise RuntimeError("simulated_crash_before_commit")
             _commit(conn)

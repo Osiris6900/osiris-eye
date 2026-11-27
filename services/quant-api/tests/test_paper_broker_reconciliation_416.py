@@ -4,6 +4,7 @@ Caller floats are not a source. The broker side is a recorded fixture or a
 stored paper-broker document. Nothing in this module opens a network socket.
 """
 import json
+import sqlite3
 
 import pytest
 from fastapi.testclient import TestClient
@@ -18,10 +19,12 @@ from osiris_api.paper_execution import (
     apply_paper_fill,
     broker_book_digest,
     broker_reconciliation_history,
+    cancel_paper_order,
     expire_paper_orders,
     initialize_paper_account,
     reconcile,
     reconcile_broker_book,
+    snapshot,
     submit_paper_order,
 )
 from osiris_api.phase11_systems import reconcile_ledger
@@ -503,3 +506,86 @@ def test_expired_partial_day_order_reconciles_released_reservation(db, tmp_path,
     assert report["status"] == "clean"
     assert report["breaks"] == []
     assert reconcile()["passed"] is True
+
+
+@pytest.mark.parametrize("broker_state", ["missing", "stale", "breaks"])
+@pytest.mark.parametrize("action", ["cancel", "expire", "cancel_after_expiry"])
+def test_broker_gate_allows_releasing_existing_orders(
+    db, tmp_path, monkeypatch, broker_state, action,
+):
+    _init()
+    _working()
+    assert _fill(quantity="1")["state"] == "partially_filled"
+    if broker_state != "missing":
+        _write(tmp_path, monkeypatch, _book(
+            as_of=STALE if broker_state == "stale" else NOW,
+        ))
+    report = reconcile_broker_book(now=NOW)
+    assert report["status"] == ("breaks" if broker_state == "breaks" else "unreconciled")
+    expiry = "2026-11-09T00:00:00+00:00"
+    if action == "cancel":
+        assert cancel_paper_order(client_order_id="buy-1", now=NOW)["state"] == "cancelled"
+        assert cancel_paper_order(client_order_id="buy-1", now=NOW)["status"] == "idempotent_replay"
+        terminal = "cancelled"
+    elif action == "expire":
+        assert expire_paper_orders(now=expiry)["expired"] == ["buy-1"]
+        assert expire_paper_orders(now=expiry)["expired"] == []
+        terminal = "expired"
+    else:
+        for _ in range(2):
+            with pytest.raises(ValueError, match="^order_expired$"):
+                cancel_paper_order(client_order_id="buy-1", now=expiry)
+        terminal = "expired"
+    view = snapshot()
+    assert view["open_orders"] == []
+    assert view["orders"][0]["state"] == terminal
+    assert view["orders"][0]["filled_quantity"] == "1"
+    assert view["orders"][0]["leaves_quantity"] == "0"
+    assert view["cash"] == "900"
+    assert view["positions"][0]["quantity"] == "1"
+    assert [row["event"] for row in view["audit"]].count(f"order_{terminal}") == 1
+    assert broker_reconciliation_history()[-1]["payload"]["status"] == report["status"]
+    assert reconcile()["breaks"] == ["broker_reconciliation"]
+    with pytest.raises(ValueError, match="^reconciliation_break$"):
+        _working("new-risk")
+    with pytest.raises(ValueError, match="^reconciliation_break$"):
+        _fill(client_fill_id="new-fill", quantity="1")
+
+
+@pytest.mark.parametrize("action", ["cancel", "expire"])
+@pytest.mark.parametrize("corruption", ["cash", "order", "audit"])
+def test_broker_gate_exception_preserves_internal_integrity_checks(db, action, corruption):
+    _init()
+    _working()
+    assert reconcile_broker_book(now=NOW)["status"] == "unreconciled"
+    with sqlite3.connect(db) as conn:
+        if corruption == "cash":
+            conn.execute("UPDATE paper_exec_meta SET cash='999'")
+        elif corruption == "order":
+            # Arithmetic alone accepts this reduction; journal projection must refuse it.
+            conn.execute("UPDATE paper_exec_orders SET price='99'")
+        else:
+            conn.execute("UPDATE paper_exec_audit SET payload='{}' WHERE seq=1")
+        before = conn.execute("SELECT count(*) FROM paper_exec_audit").fetchone()[0]
+    with pytest.raises(ValueError, match="^(audit_chain_corrupt|reconciliation_break)$"):
+        if action == "cancel":
+            cancel_paper_order(client_order_id="buy-1", now=NOW)
+        else:
+            expire_paper_orders(now="2026-11-09T00:00:00+00:00")
+    with sqlite3.connect(db) as conn:
+        assert conn.execute("SELECT state FROM paper_exec_orders").fetchone()[0] == "accepted"
+        assert conn.execute("SELECT count(*) FROM paper_exec_audit").fetchone()[0] == before
+
+
+@pytest.mark.parametrize("action", ["cancel", "expire"])
+def test_broker_gate_order_release_rolls_back_on_crash(db, action):
+    _init()
+    _working()
+    assert reconcile_broker_book(now=NOW)["status"] == "unreconciled"
+    before = snapshot()
+    with pytest.raises(RuntimeError, match="^simulated_crash_before_commit$"):
+        if action == "cancel":
+            cancel_paper_order(client_order_id="buy-1", now=NOW, simulate_crash=True)
+        else:
+            expire_paper_orders(now="2026-11-09T00:00:00+00:00", simulate_crash=True)
+    assert snapshot() == before
