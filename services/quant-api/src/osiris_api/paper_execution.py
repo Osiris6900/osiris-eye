@@ -2527,6 +2527,13 @@ def api_paper_counterparties(as_of: str):
     return _guard(paper_counterparty_exposure, as_of)
 
 
+@router.get("/paper/execution/collateral")
+def api_paper_collateral(as_of: str):
+    """Cash collateral from the paper book. Other query fields are ignored."""
+    from .paper_collateral import paper_collateral
+    return _guard(paper_collateral, as_of)
+
+
 @router.post("/paper/execution/initialize")
 def api_initialize(p: dict = Body(...)):
     limits = None
