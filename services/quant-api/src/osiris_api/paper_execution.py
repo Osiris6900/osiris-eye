@@ -2527,6 +2527,13 @@ def api_paper_counterparties(as_of: str):
     return _guard(paper_counterparty_exposure, as_of)
 
 
+@router.get("/paper/execution/capital")
+def api_paper_capital(as_of: str):
+    """Book equity and stored limits. Caller strategy budgets are ignored."""
+    from .paper_capital import paper_capital_usage
+    return _guard(paper_capital_usage, as_of)
+
+
 @router.post("/paper/execution/initialize")
 def api_initialize(p: dict = Body(...)):
     limits = None
