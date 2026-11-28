@@ -98,3 +98,52 @@ accounts/stores and independently placed orders cannot be discovered here.
 Tests use fake transport and isolated SQLite accounts. They do not activate an
 order route, connect a real broker, promote a release gate or authorize live
 trading.
+
+## Bounded execution evidence capture
+
+`AlpacaPaperBroker.fetch_execution_evidence(client_id, page_size=100, max_pages=10)`
+retrieves actual provider FILL activities for an already bound, acknowledged
+PAPER order. Inputs select the retained order and resource bounds; prices,
+executions, fees and completeness flags are never caller inputs. This is a
+library method, not an enabled HTTP order or accounting route.
+
+The collector validates the retained intent and canonical reservation before
+network access, fetches an order snapshot, pages the fixed PAPER origin's
+`GET /v2/account/activities/FILL` endpoint using its broker order ID and ascending
+activity-ID cursors, then fetches the order again. Page size is 1–100 and the
+page budget is 1–10. An empty terminator page is required; reaching a cap never
+silently establishes completeness. Decoded source JSON is bounded to 1 MiB in
+aggregate and stored bundles must satisfy the existing bounded JSON contract.
+
+Actual provider activity IDs remain verbatim, including IDs unsuitable for local
+client identifiers. Each record must match the bound broker order, symbol and
+side, positive finite quantity/price, limit price, timestamp order, cumulative
+quantity and remaining quantity. Totals must equal the stable before/after order
+state and cumulative notional. Because no documented average-rounding tolerance
+is configured, a rounded broker average that cannot establish exact individual
+notional fails closed; no synthetic executions are derived from that average.
+
+After successful collection, the adapter checks the control-store version and
+persists its acknowledgement. A canonical transaction then records monotonic
+reservation progress and immutable execution evidence together. Source JSON
+page hashes use canonical serialization of decoded provider values, rather than
+original HTTP wire bytes. They are provenance references, not broker signatures.
+The execution journal binds the latest bundle and per-provider activity index;
+conflicting IDs, edited rows, missing rows and orphan rows close reconciliation.
+Repeated identical evidence is idempotent across restarts. A failure between
+control-store acknowledgement and canonical commit leaves conservative capacity
+held until reconciliation/retry, following the existing recovery protocol.
+
+The execution snapshot exposes `broker_execution_evidence` summaries with source
+IDs, activity count, evidence hash and retrieval time. No credentials are stored
+in these summaries. Capture changes no cash, positions, fills or P&L and cannot
+clear a filled-risk hold. The receipt explicitly reports `fee_status=unknown`,
+`accounting_authorized=false` and `financial_state_changed=false`.
+
+Alpaca's documented [FILL activity fields](https://docs.alpaca.markets/us/docs/account-activities)
+omit per-execution fees. Separate FEE/CFEE activities do not establish a general
+per-fill final-fee binding; [crypto fees](https://docs.alpaca.markets/us/docs/crypto-trading)
+can be charged in the credited asset and may arrive later. A future accounting
+integration therefore needs independently authoritative fee amount, currency,
+execution binding and finality evidence. Mutable control-store `fee=0` or
+`complete=true` flags cannot supply that authority.

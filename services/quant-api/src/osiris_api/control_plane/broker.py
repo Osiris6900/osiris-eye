@@ -345,6 +345,28 @@ class AlpacaPaperBroker:
             synchronize_broker_reservation(broker_binding(self.db.path, order), order, response)
         return response
 
+    def fetch_execution_evidence(self, client_id: str, *, page_size: int = 100, max_pages: int = 10):
+        """Fetch actual PAPER activities; final fees and accounting remain unknown.
+
+        Only fresh provider responses reach the canonical evidence writer. A
+        control-store version conflict or failed collection cannot partially
+        replace canonical evidence or release a filled commitment.
+        """
+        from ..paper_broker_execution_evidence import collect
+        from ..paper_broker_execution_store import _persist_verified_execution_evidence
+
+        bundle = collect(self, client_id, page_size=page_size, max_pages=max_pages)
+        retained = self.db.get("broker-orders", bundle["client_order_id"])
+        if retained is None or retained["version"] != bundle["control_version"]:
+            raise ValueError("version_conflict")
+        state = retained["value"]
+        if _saved_broker_order(state, bundle["client_order_id"]) != bundle["order"]:
+            raise ValueError("broker_order_contract_required")
+        self.db.put("broker-orders", bundle["client_order_id"], {
+            **state, "status": "acknowledged", "response": bundle["after_snapshot"],
+        }, expected_version=bundle["control_version"])
+        return _persist_verified_execution_evidence(self.db.path, bundle)
+
     def cancel(self, broker_order_id: str):
         """Request cancellation only for a bound, verified nonterminal order.
 
