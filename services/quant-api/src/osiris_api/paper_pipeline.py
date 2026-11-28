@@ -63,6 +63,7 @@ def _decision(run_id: str, fingerprint: str, result: dict | None = None) -> dict
     path = os.environ["OSIRIS_PAPER_EXECUTION_DB"]
     with sqlite3.connect(path, timeout=15) as conn:
         conn.execute("BEGIN IMMEDIATE")
+        execution.hold_paper_authority(conn)
         conn.execute("""CREATE TABLE IF NOT EXISTS paper_pipeline_decisions (
             run_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, result TEXT)""")
         prior = conn.execute(
