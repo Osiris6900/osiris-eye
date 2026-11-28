@@ -165,8 +165,8 @@ def _session_reason(metadata: dict[str, Any], as_of: str | None, cutoff: str) ->
 
     Hours are a half-open local-minute window: ``[open, close)``. A missing
     clock fails closed for that window. Versions with no stored hours, and
-    continuous 00:00–23:59 books, are unchanged. This is not an exchange
-    holiday calendar.
+    continuous 00:00–23:59 books, are unchanged. Exchange venues use the
+    seeded holiday calendar and fail closed outside its coverage.
     """
     hours = metadata.get("trading_hours")
     if hours is None:
@@ -182,10 +182,16 @@ def _session_reason(metadata: dict[str, Any], as_of: str | None, cutoff: str) ->
         local = datetime.fromisoformat(cutoff).astimezone(ZoneInfo(zone))
     except (ValueError, ZoneInfoNotFoundError, OverflowError, OSError):
         return "trading_hours_unavailable"
-    # Exchange sessions are closed Saturday and Sunday. Holidays still require
-    # a loaded exchange calendar; this is not that calendar.
+    # Exchange sessions are closed Saturday and Sunday.
     if metadata.get("session_type") == "exchange" and local.weekday() >= 5:
         return "exchange_closed"
+    if metadata.get("session_type") == "exchange":
+        from .exchange_holiday_calendar import session_holiday_reason
+        holiday = session_holiday_reason(
+            metadata.get("venue"), local.date(), datetime.fromisoformat(cutoff),
+        )
+        if holiday is not None:
+            return holiday
     minute = f"{local.hour:02d}:{local.minute:02d}"
     if open_at <= minute < close_at:
         return None

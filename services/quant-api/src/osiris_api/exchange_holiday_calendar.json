@@ -1,0 +1,97 @@
+{
+  "schema": "osiris.exchange-holiday-calendar.v1",
+  "notes": [
+    "Weekday full closes only. Saturday and Sunday closes are enforced separately.",
+    "Early closes are not full holidays and are not seeded.",
+    "NSE muhurat trading on 2026-11-08 was a Sunday with timings not fixed in the cited circular, so it is not a regular open.",
+    "BSE is not an instrument-master venue and is not copied from the NSE circulars."
+  ],
+  "sources": {
+    "nyse-ice-2023-11-10": {
+      "publisher": "NYSE Group / Intercontinental Exchange",
+      "title": "NYSE Group Announces 2024, 2025 and 2026 Holiday and Early Closings Calendar",
+      "published": "2023-11-10",
+      "url": "https://ir.theice.com/press/news-details/2023/NYSE-Group-Announces-2024-2025-and-2026-Holiday-and-Early-Closings-Calendar/default.aspx"
+    },
+    "nse-cmtr-71775": {
+      "publisher": "National Stock Exchange of India Limited",
+      "title": "Trading holidays for the calendar year 2026",
+      "reference": "NSE/CMTR/71775",
+      "circular_ref": "172/2025",
+      "published": "2025-12-12",
+      "url": "https://nsearchives.nseindia.com/content/circulars/CMTR71775.pdf"
+    },
+    "nse-cmtr-72260": {
+      "publisher": "National Stock Exchange of India Limited",
+      "title": "Trading Holiday on January 15, 2026 on account of Municipal Corporation Election in Maharashtra in Capital Market Segment",
+      "reference": "NSE/CMTR/72260",
+      "circular_ref": "07/2026",
+      "published": "2026-01-12",
+      "modifies": "nse-cmtr-71775",
+      "url": "https://nsearchives.nseindia.com/content/circulars/CMTR72260.pdf"
+    }
+  },
+  "venues": {
+    "XNYS": {
+      "coverage_start": "2024-01-01",
+      "coverage_end": "2026-12-31",
+      "timezone": "America/New_York",
+      "holidays": [
+        {"date": "2024-01-01", "name": "New Year's Day", "source": "nyse-ice-2023-11-10"},
+        {"date": "2024-01-15", "name": "Martin Luther King, Jr. Day", "source": "nyse-ice-2023-11-10"},
+        {"date": "2024-02-19", "name": "Washington's Birthday", "source": "nyse-ice-2023-11-10"},
+        {"date": "2024-03-29", "name": "Good Friday", "source": "nyse-ice-2023-11-10"},
+        {"date": "2024-05-27", "name": "Memorial Day", "source": "nyse-ice-2023-11-10"},
+        {"date": "2024-06-19", "name": "Juneteenth National Independence Day", "source": "nyse-ice-2023-11-10"},
+        {"date": "2024-07-04", "name": "Independence Day", "source": "nyse-ice-2023-11-10"},
+        {"date": "2024-09-02", "name": "Labor Day", "source": "nyse-ice-2023-11-10"},
+        {"date": "2024-11-28", "name": "Thanksgiving Day", "source": "nyse-ice-2023-11-10"},
+        {"date": "2024-12-25", "name": "Christmas Day", "source": "nyse-ice-2023-11-10"},
+        {"date": "2025-01-01", "name": "New Year's Day", "source": "nyse-ice-2023-11-10"},
+        {"date": "2025-01-20", "name": "Martin Luther King, Jr. Day", "source": "nyse-ice-2023-11-10"},
+        {"date": "2025-02-17", "name": "Washington's Birthday", "source": "nyse-ice-2023-11-10"},
+        {"date": "2025-04-18", "name": "Good Friday", "source": "nyse-ice-2023-11-10"},
+        {"date": "2025-05-26", "name": "Memorial Day", "source": "nyse-ice-2023-11-10"},
+        {"date": "2025-06-19", "name": "Juneteenth National Independence Day", "source": "nyse-ice-2023-11-10"},
+        {"date": "2025-07-04", "name": "Independence Day", "source": "nyse-ice-2023-11-10"},
+        {"date": "2025-09-01", "name": "Labor Day", "source": "nyse-ice-2023-11-10"},
+        {"date": "2025-11-27", "name": "Thanksgiving Day", "source": "nyse-ice-2023-11-10"},
+        {"date": "2025-12-25", "name": "Christmas Day", "source": "nyse-ice-2023-11-10"},
+        {"date": "2026-01-01", "name": "New Year's Day", "source": "nyse-ice-2023-11-10"},
+        {"date": "2026-01-19", "name": "Martin Luther King, Jr. Day", "source": "nyse-ice-2023-11-10"},
+        {"date": "2026-02-16", "name": "Washington's Birthday", "source": "nyse-ice-2023-11-10"},
+        {"date": "2026-04-03", "name": "Good Friday", "source": "nyse-ice-2023-11-10"},
+        {"date": "2026-05-25", "name": "Memorial Day", "source": "nyse-ice-2023-11-10"},
+        {"date": "2026-06-19", "name": "Juneteenth National Independence Day", "source": "nyse-ice-2023-11-10"},
+        {"date": "2026-07-03", "name": "Independence Day observed", "source": "nyse-ice-2023-11-10"},
+        {"date": "2026-09-07", "name": "Labor Day", "source": "nyse-ice-2023-11-10"},
+        {"date": "2026-11-26", "name": "Thanksgiving Day", "source": "nyse-ice-2023-11-10"},
+        {"date": "2026-12-25", "name": "Christmas Day", "source": "nyse-ice-2023-11-10"}
+      ]
+    },
+    "NSE": {
+      "coverage_start": "2026-01-01",
+      "coverage_end": "2026-12-31",
+      "timezone": "Asia/Kolkata",
+      "segment": "capital-market",
+      "holidays": [
+        {"date": "2026-01-15", "name": "Municipal Corporation Election in Maharashtra", "source": "nse-cmtr-72260"},
+        {"date": "2026-01-26", "name": "Republic Day", "source": "nse-cmtr-71775"},
+        {"date": "2026-03-03", "name": "Holi", "source": "nse-cmtr-71775"},
+        {"date": "2026-03-26", "name": "Shri Ram Navami", "source": "nse-cmtr-71775"},
+        {"date": "2026-03-31", "name": "Shri Mahavir Jayanti", "source": "nse-cmtr-71775"},
+        {"date": "2026-04-03", "name": "Good Friday", "source": "nse-cmtr-71775"},
+        {"date": "2026-04-14", "name": "Dr. Baba Saheb Ambedkar Jayanti", "source": "nse-cmtr-71775"},
+        {"date": "2026-05-01", "name": "Maharashtra Day", "source": "nse-cmtr-71775"},
+        {"date": "2026-05-28", "name": "Bakri Id", "source": "nse-cmtr-71775"},
+        {"date": "2026-06-26", "name": "Muharram", "source": "nse-cmtr-71775"},
+        {"date": "2026-09-14", "name": "Ganesh Chaturthi", "source": "nse-cmtr-71775"},
+        {"date": "2026-10-02", "name": "Mahatma Gandhi Jayanti", "source": "nse-cmtr-71775"},
+        {"date": "2026-10-20", "name": "Dussehra", "source": "nse-cmtr-71775"},
+        {"date": "2026-11-10", "name": "Diwali-Balipratipada", "source": "nse-cmtr-71775"},
+        {"date": "2026-11-24", "name": "Prakash Gurpurb Sri Guru Nanak Dev", "source": "nse-cmtr-71775"},
+        {"date": "2026-12-25", "name": "Christmas", "source": "nse-cmtr-71775"}
+      ]
+    }
+  }
+}
