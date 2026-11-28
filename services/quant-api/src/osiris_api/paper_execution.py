@@ -249,6 +249,13 @@ def _connect() -> sqlite3.Connection:
     conn.execute("""CREATE TABLE IF NOT EXISTS paper_exec_marks (
         symbol TEXT PRIMARY KEY, price TEXT NOT NULL, observed_at TEXT NOT NULL)""")
     ensure_authority_table(conn)
+    conn.execute("""CREATE TABLE IF NOT EXISTS paper_exec_corporate_applications (
+        content_hash TEXT PRIMARY KEY,
+        audit_seq INTEGER NOT NULL UNIQUE,
+        symbol TEXT NOT NULL,
+        action_type TEXT NOT NULL,
+        effective_at TEXT NOT NULL,
+        payload TEXT NOT NULL)""")
     _migrate(conn)
     return conn
 
@@ -467,7 +474,14 @@ def _recompute(conn: sqlite3.Connection) -> tuple[Decimal, Decimal, dict[str, tu
     allocated: dict[str, Fraction] = {}
     positions: dict[str, tuple[Decimal, Decimal]] = {}
     fills = conn.execute("SELECT * FROM paper_exec_fills ORDER BY seq").fetchall()
+    adjustments = _stored_corporate_actions(conn)
+    adjustment_at = 0
     for fill in fills:
+        while adjustment_at < len(adjustments) and adjustments[adjustment_at][0] < int(fill["seq"]):
+            cash, realized, positions = _replay_corporate_action(
+                cash, realized, positions, adjustments[adjustment_at][1], exact=settle,
+            )
+            adjustment_at += 1
         held, avg = positions.get(fill["symbol"], (Decimal("0"), Decimal("0")))
         applied = _apply(
             cash, held, avg, fill["side"], Decimal(fill["quantity"]),
@@ -493,6 +507,76 @@ def _recompute(conn: sqlite3.Connection) -> tuple[Decimal, Decimal, dict[str, tu
             positions[fill["symbol"]] = (new_qty, new_avg)
         if Decimal(fill["realized_pnl"]) != delta:
             raise ValueError("reconciliation_break")
+    while adjustment_at < len(adjustments):
+        cash, realized, positions = _replay_corporate_action(
+            cash, realized, positions, adjustments[adjustment_at][1], exact=settle,
+        )
+        adjustment_at += 1
+    return cash, realized, positions
+
+
+def _stored_corporate_actions(conn: sqlite3.Connection) -> list[tuple[int, dict[str, Any]]]:
+    present = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_exec_corporate_applications'"
+    ).fetchone()
+    if present is None:
+        return []
+    rows = []
+    for row in conn.execute(
+        "SELECT audit_seq, payload FROM paper_exec_corporate_applications ORDER BY audit_seq"
+    ):
+        rows.append((int(row["audit_seq"]), json.loads(row["payload"])))
+    return rows
+
+
+def corporate_action_view(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    present = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_exec_corporate_applications'"
+    ).fetchone()
+    if present is None:
+        return []
+    return [
+        {
+            "content_hash": row["content_hash"], "symbol": row["symbol"],
+            "action_type": row["action_type"], "effective_at": row["effective_at"],
+        }
+        for row in conn.execute(
+            """SELECT content_hash, symbol, action_type, effective_at
+               FROM paper_exec_corporate_applications ORDER BY audit_seq"""
+        )
+    ]
+
+
+def _replay_corporate_action(cash, realized, positions, payload, *, exact: bool):
+    """Replay one journaled master action. A mismatch with the stored position fails."""
+    symbol = payload["symbol"]
+    qty, avg = positions.get(symbol, (Decimal("0"), Decimal("0")))
+    if _canonical(qty) != payload["quantity_before"] or _canonical(avg) != payload["average_cost_before"]:
+        raise ValueError("reconciliation_break")
+    if payload["action_type"] == "split":
+        ratio = Decimal(payload["ratio"])
+        new_qty = _finite_decimal(Fraction(qty) * Fraction(ratio))
+        new_avg = _finite_decimal(Fraction(avg) / Fraction(ratio)) if qty != 0 else Decimal("0")
+        if (
+            Fraction(qty) * Fraction(avg) != Fraction(new_qty) * Fraction(new_avg)
+            or payload.get("cash_delta") != "0"
+        ):
+            raise ValueError("reconciliation_break")
+    elif payload["action_type"] == "cash_dividend":
+        credit = _finite_decimal(Fraction(qty) * Fraction(Decimal(payload["cash_per_share"])))
+        new_qty, new_avg = qty, avg
+        cash = _finite_decimal(Fraction(cash) + Fraction(credit)) if exact else cash + credit
+        realized = _finite_decimal(Fraction(realized) + Fraction(credit)) if exact else realized + credit
+        if _canonical(credit) != payload["cash_delta"]:
+            raise ValueError("reconciliation_break")
+    else:
+        raise ValueError("reconciliation_break")
+    if _canonical(new_qty) != payload["quantity_after"] or _canonical(new_avg) != payload["average_cost_after"]:
+        raise ValueError("reconciliation_break")
+    if new_qty == 0:
+        positions.pop(symbol, None)
+    else:
+        positions[symbol] = (new_qty, new_avg)
     return cash, realized, positions
 
 
@@ -2019,6 +2103,7 @@ def _snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
             "broker_order_submitted": False, "fill_count": 0, "positions": [],
             "audit": [],
             "authority": authority_view(conn),
+            "corporate_actions": corporate_action_view(conn),
         }
     positions = [
         {"symbol": row["symbol"], "quantity": row["quantity"], "average_cost": row["average_cost"]}
@@ -2072,6 +2157,7 @@ def _snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
         ],
         "audit": audit,
         "authority": authority_view(conn),
+        "corporate_actions": corporate_action_view(conn),
     }
 
 
@@ -2525,6 +2611,15 @@ def api_paper_counterparties(as_of: str):
     """Venue exposure from the paper book. Caller exposures are ignored."""
     from .paper_counterparty import paper_counterparty_exposure
     return _guard(paper_counterparty_exposure, as_of)
+
+
+@router.post("/paper/execution/corporate-actions")
+def api_corporate_actions(p: dict = Body(...)):
+    """Apply stored master actions. The body cannot supply a ratio or dividend."""
+    if not isinstance(p, dict) or set(p) - {"as_of"}:
+        raise HTTPException(status_code=422, detail="corporate_action_economics_not_accepted")
+    from .paper_corporate_actions import apply_paper_corporate_actions
+    return _guard(apply_paper_corporate_actions, p.get("as_of"))
 
 
 @router.post("/paper/execution/initialize")
