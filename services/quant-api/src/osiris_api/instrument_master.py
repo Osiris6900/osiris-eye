@@ -3,6 +3,7 @@
 The checked-in fixture is the only seed. Nothing in this module fetches a
 vendor security master or authorizes a live order. Stored exchange trading
 hours are a half-open local clock window. They are not a holiday calendar.
+An optional halt window is a half-open UTC interval on that version.
 """
 from __future__ import annotations
 
@@ -91,6 +92,30 @@ def _trading_hours(value: Any) -> dict[str, str]:
     return {"open": open_at, "close": close_at, "timezone": zone}
 
 
+def _halt_windows(value: Any) -> list[dict[str, str]]:
+    """Half-open UTC intervals. Overlaps and naive clocks are rejected."""
+    if not isinstance(value, list) or not 1 <= len(value) <= 8:
+        raise ValueError("invalid_halt_window")
+    parsed: list[tuple[str, str]] = []
+    for item in value:
+        if not isinstance(item, dict) or set(item) != {"start", "end"}:
+            raise ValueError("invalid_halt_window")
+        if not isinstance(item["start"], str) or not isinstance(item["end"], str):
+            raise ValueError("invalid_halt_window")
+        try:
+            start, end = _timestamp(item["start"]), _timestamp(item["end"])
+        except ValueError as exc:
+            raise ValueError("invalid_halt_window") from exc
+        if end <= start:
+            raise ValueError("invalid_halt_window")
+        parsed.append((start, end))
+    parsed.sort()
+    for previous, current in zip(parsed, parsed[1:]):
+        if current[0] < previous[1]:
+            raise ValueError("overlapping_halt_windows")
+    return [{"start": start, "end": end} for start, end in parsed]
+
+
 def _contract_terms(record: dict[str, Any], normalized: dict[str, Any]) -> dict[str, Any]:
     status = record.get("status", "active")
     if not isinstance(status, str) or status.strip().lower() not in _STATUSES:
@@ -125,6 +150,8 @@ def _contract_terms(record: dict[str, Any], normalized: dict[str, Any]) -> dict[
         terms["effective_to"] = record["effective_to"]
     if record.get("trading_hours") is not None:
         terms["trading_hours"] = _trading_hours(record["trading_hours"])
+    if record.get("halt_windows") is not None:
+        terms["halt_windows"] = _halt_windows(record["halt_windows"])
     return terms
 
 
@@ -677,6 +704,20 @@ class InstrumentMasterStore:
         if status != "active":
             base["reason"] = "instrument_inactive"
             return base
+        windows = metadata.get("halt_windows")
+        if windows:
+            if as_of is None:
+                base["reason"] = "instrument_halt_unspecified"
+                return base
+            instant = datetime.fromisoformat(cutoff)
+            for window in windows:
+                if (
+                    datetime.fromisoformat(window["start"])
+                    <= instant
+                    < datetime.fromisoformat(window["end"])
+                ):
+                    base["reason"] = "instrument_halted"
+                    return base
         tick = Decimal(metadata["tick_size"])
         lot = Decimal(metadata["lot_size"])
         price_precision = int(metadata.get("price_precision", _scale(tick)))
