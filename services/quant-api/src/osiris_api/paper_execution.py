@@ -2527,6 +2527,15 @@ def api_paper_counterparties(as_of: str):
     return _guard(paper_counterparty_exposure, as_of)
 
 
+@router.post("/paper/execution/stress")
+def api_paper_stress(p: dict = Body(...)):
+    """Shock canonical marks. The body cannot replace positions or prices."""
+    if not isinstance(p, dict) or set(p) - {"as_of", "shocks"}:
+        raise HTTPException(status_code=422, detail="stress_positions_not_accepted")
+    from .paper_stress import stress_paper_book
+    return _guard(stress_paper_book, p.get("as_of"), p.get("shocks"))
+
+
 @router.post("/paper/execution/initialize")
 def api_initialize(p: dict = Body(...)):
     limits = None
