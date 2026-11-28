@@ -2520,6 +2520,13 @@ def api_paper_surveillance():
     return review_paper_journal()
 
 
+@router.get("/paper/execution/counterparties")
+def api_paper_counterparties(as_of: str):
+    """Venue exposure from the paper book. Caller exposures are ignored."""
+    from .paper_counterparty import paper_counterparty_exposure
+    return _guard(paper_counterparty_exposure, as_of)
+
+
 @router.post("/paper/execution/initialize")
 def api_initialize(p: dict = Body(...)):
     limits = None
