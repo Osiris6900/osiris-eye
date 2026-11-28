@@ -24,14 +24,15 @@ from osiris_api.paper_execution_gate import PaperOrderContext, authorize_paper_o
 from osiris_api.risk import RiskLimits
 
 # Sunday 22 Nov 2026. The clock window does not know that the equity session is shut.
-INSIDE_AAPL = "2026-11-22T15:00:00+00:00"  # 10:00 America/New_York
-AAPL_OPEN = "2026-11-22T14:30:00+00:00"  # 09:30 America/New_York
-AAPL_LAST = "2026-11-22T20:59:00+00:00"  # 15:59 America/New_York
-AAPL_CLOSE = "2026-11-22T21:00:00+00:00"  # 16:00 America/New_York
-NSE_OPEN = "2026-11-22T03:45:00+00:00"  # 09:15 Asia/Kolkata
-NSE_LAST = "2026-11-22T09:59:00+00:00"  # 15:29 Asia/Kolkata
-NSE_CLOSE = "2026-11-22T10:00:00+00:00"  # 15:30 Asia/Kolkata
-NSE_AFTER = "2026-11-22T15:00:00+00:00"  # 20:30 Asia/Kolkata
+INSIDE_AAPL = "2026-11-23T15:00:00+00:00"  # Monday 10:00 America/New_York
+AAPL_OPEN = "2026-11-23T14:30:00+00:00"  # Monday 09:30 America/New_York
+AAPL_LAST = "2026-11-23T20:59:00+00:00"  # Monday 15:59 America/New_York
+AAPL_CLOSE = "2026-11-23T21:00:00+00:00"  # Monday 16:00 America/New_York
+AAPL_SUNDAY = "2026-11-22T15:00:00+00:00"  # Sunday 10:00 America/New_York
+NSE_OPEN = "2026-11-23T03:45:00+00:00"  # Monday 09:15 Asia/Kolkata
+NSE_LAST = "2026-11-23T09:59:00+00:00"  # Monday 15:29 Asia/Kolkata
+NSE_CLOSE = "2026-11-23T10:00:00+00:00"  # Monday 15:30 Asia/Kolkata
+NSE_AFTER = "2026-11-23T15:00:00+00:00"  # Monday 20:30 Asia/Kolkata
 
 
 @pytest.fixture
@@ -105,10 +106,13 @@ def test_aapl_at_the_close_does_not_fill(book):
     assert snapshot()["positions"] == []
 
 
-def test_sunday_inside_the_clock_is_not_a_holiday_check(book):
-    """2026-11-22 is a Sunday. The stored hours do not encode that close."""
-    result = _order("AAPL", INSIDE_AAPL, price="100.00", quantity="1", key="sunday")
-    assert result["status"] == "filled"
+def test_sunday_inside_the_clock_is_closed_for_an_exchange(book):
+    """2026-11-22 is a Sunday. The clock window is open; the exchange is not."""
+    result = _order("AAPL", AAPL_SUNDAY, price="100.00", quantity="1", key="sunday")
+    assert result["status"] == "instrument_rejected"
+    assert result["reason"] == "exchange_closed"
+    assert snapshot()["positions"] == []
+    assert snapshot()["cash"] == "100000"
 
 
 def test_fill_and_mark_outside_the_session_do_not_change_the_book(book):

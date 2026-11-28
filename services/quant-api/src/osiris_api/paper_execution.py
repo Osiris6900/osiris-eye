@@ -37,6 +37,7 @@ _INSTRUMENT_REASONS = frozenset({
     "outside_trading_hours",
     "trading_hours_unspecified",
     "trading_hours_unavailable",
+    "exchange_closed",
 })
 
 

@@ -182,6 +182,10 @@ def _session_reason(metadata: dict[str, Any], as_of: str | None, cutoff: str) ->
         local = datetime.fromisoformat(cutoff).astimezone(ZoneInfo(zone))
     except (ValueError, ZoneInfoNotFoundError, OverflowError, OSError):
         return "trading_hours_unavailable"
+    # Exchange sessions are closed Saturday and Sunday. Holidays still require
+    # a loaded exchange calendar; this is not that calendar.
+    if metadata.get("session_type") == "exchange" and local.weekday() >= 5:
+        return "exchange_closed"
     minute = f"{local.hour:02d}:{local.minute:02d}"
     if open_at <= minute < close_at:
         return None
