@@ -562,6 +562,19 @@ def _replay_corporate_action(cash, realized, positions, payload, *, exact: bool)
             or payload.get("cash_delta") != "0"
         ):
             raise ValueError("reconciliation_break")
+    elif payload["action_type"] == "symbol_change":
+        target = payload.get("new_symbol")
+        if (
+            not isinstance(target, str) or target == symbol or payload.get("cash_delta") != "0"
+            or payload["quantity_after"] != payload["quantity_before"]
+            or payload["average_cost_after"] != payload["average_cost_before"]
+            or (qty != 0 and target in positions)
+        ):
+            raise ValueError("reconciliation_break")
+        positions.pop(symbol, None)
+        if qty != 0:
+            positions[target] = (qty, avg)
+        return cash, realized, positions
     elif payload["action_type"] == "cash_dividend":
         credit = _finite_decimal(Fraction(qty) * Fraction(Decimal(payload["cash_per_share"])))
         new_qty, new_avg = qty, avg
