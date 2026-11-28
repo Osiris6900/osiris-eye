@@ -51,10 +51,10 @@ def book(tmp_path, monkeypatch):
     return tmp_path
 
 
-def _order(symbol, *, price="100", quantity="1", key="order-1"):
+def _order(symbol, *, price="100", quantity="1", key="order-1", now=NOW, observed_at=FRESH):
     return submit_paper_order(
         client_order_id=key, symbol=symbol, side="BUY", quantity=quantity, price=price,
-        fee="0", observed_at=FRESH, now=NOW, risk_service_available=True,
+        fee="0", observed_at=observed_at, now=now, risk_service_available=True,
         kill_switch_active=False,
     )
 
@@ -114,7 +114,11 @@ def test_inactive_and_not_yet_effective_instruments_are_rejected(book):
 
 
 def test_accepted_order_fill_and_mark_record_the_master_version(book):
-    opened = _order("RELIANCE", price="100.05", quantity="2", key="good")
+    # 04:30Z is 10:00 Asia/Kolkata, inside the stored 09:15–15:30 session.
+    nse_now, nse_fresh = "2026-11-22T04:30:00+00:00", "2026-11-22T04:29:30+00:00"
+    opened = _order(
+        "RELIANCE", price="100.05", quantity="2", key="good", now=nse_now, observed_at=nse_fresh,
+    )
     assert opened["status"] == "filled"
     assert opened["state"] == "filled"
     version = opened["instrument_master_version"]
@@ -128,14 +132,14 @@ def test_accepted_order_fill_and_mark_record_the_master_version(book):
         json.loads(row["payload"]) for row in snapshot()["audit"] if row["event"] == "fill_recorded"
     ]
     assert fills[-1]["instrument_master_version"] == version
-    marked = mark_to_market({"RELIANCE": "100.10"}, observed_at=FRESH, now=NOW)
+    marked = mark_to_market({"RELIANCE": "100.10"}, observed_at=nse_fresh, now=nse_now)
     assert marked["live_execution"] is False
     marks = [
         json.loads(row["payload"]) for row in snapshot()["audit"] if row["event"] == "mark_to_market"
     ]
     assert marks[-1]["instrument_master_version"] == version
     assert snapshot()["marks"] == [{
-        "symbol": "RELIANCE", "price": "100.1", "observed_at": FRESH,
+        "symbol": "RELIANCE", "price": "100.1", "observed_at": nse_fresh,
     }]
     assert reconcile()["passed"] is True
 
@@ -167,10 +171,13 @@ def test_mark_rejects_unknown_symbol_and_off_tick_price(book):
 
 
 def test_pretrade_gate_fails_closed_without_a_tradable_instrument():
+    # 2026-11-22T15:00Z is inside the equity clock window, so a halt stays a halt.
+    decision_time_ms = 1_795_359_600_000
     context = PaperOrderContext(
         quantity=2, price=100, current_position_notional=0, daily_pnl=0,
-        observation_time_ms=1_000, decision_time_ms=1_200, model_approved=True,
-        feed_authenticated=True, feed_entitled=True, kill_switch_active=False,
+        observation_time_ms=decision_time_ms - 200, decision_time_ms=decision_time_ms,
+        model_approved=True, feed_authenticated=True, feed_entitled=True,
+        kill_switch_active=False,
     )
     assert authorize_paper_order(context) == (False, "unknown_instrument")
     halted = replace(context, symbol="HALT", quantity=1, price=10)
@@ -222,7 +229,8 @@ def test_catalog_get_is_read_only_and_versions_match_across_databases(tmp_path, 
     assert body["live_trading_authorized"] is False
     assert body["exchange_connectivity_verified"] is False
     assert body["corporate_actions_applied_to_positions"] is False
-    assert body["trading_hours_enforced"] is False
+    assert body["trading_hours_enforced"] is True
+    assert body["exchange_holidays_enforced"] is False
     symbols = {item["instrument"]["symbol"] for item in body["instruments"]}
     assert {"AAPL", "RELIANCE", "BTC", "BTC-USD", "ETH", "ETH-USD", "TEST", "HALT", "SOON"} <= symbols
     actions = {item["action_type"] for item in body["corporate_actions"]}

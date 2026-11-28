@@ -3,6 +3,7 @@
 This module does not connect to brokers or place orders.
 """
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from .risk import RiskLimits, check_order
 
@@ -21,6 +22,16 @@ class PaperOrderContext:
     kill_switch_active: bool
     max_feed_age_ms: int = 5000
     symbol: str | None = None
+
+
+def _as_of(decision_time_ms: int) -> str | None:
+    """Decision instant for the instrument session. An unusable clock is omitted."""
+    if decision_time_ms > 253402300799000:
+        return None
+    try:
+        return datetime.fromtimestamp(decision_time_ms / 1000, timezone.utc).isoformat()
+    except (OverflowError, OSError, ValueError):
+        return None
 
 
 def authorize_paper_order(
@@ -63,7 +74,10 @@ def authorize_paper_order(
     # The paper gate names an instrument. A missing or inactive one cannot pass.
     from .instrument_master import assess_order
 
-    decision = assess_order(symbol, price=context.price, quantity=context.quantity)
+    decision = assess_order(
+        symbol, price=context.price, quantity=context.quantity,
+        as_of=_as_of(context.decision_time_ms),
+    )
     if not decision["ok"]:
         return False, decision["reason"]
     return check_order(
