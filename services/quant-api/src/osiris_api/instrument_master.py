@@ -1,7 +1,8 @@
 """Versioned SQLite instrument master with append-only metadata history.
 
 The checked-in fixture is the only seed. Nothing in this module fetches a
-vendor security master or authorizes a live order.
+vendor security master or authorizes a live order. Stored exchange trading
+hours are a half-open local clock window. They are not a holiday calendar.
 """
 from __future__ import annotations
 
@@ -148,6 +149,43 @@ def instrument_db_path() -> str:
         paper_path = Path(paper.strip())
         return str(paper_path.with_name(paper_path.stem + ".instruments.sqlite3"))
     return default_instrument_cache_path()
+
+
+def _continuous_civil_day(metadata: dict[str, Any], hours: dict[str, Any]) -> bool:
+    """A continuous book cannot store 24:00, so 00:00–23:59 means the whole civil day."""
+    return (
+        metadata.get("session_type") == "continuous"
+        and hours.get("open") == "00:00"
+        and hours.get("close") == "23:59"
+    )
+
+
+def _session_reason(metadata: dict[str, Any], as_of: str | None, cutoff: str) -> str | None:
+    """Reject an exchange session outside its stored clock window.
+
+    Hours are a half-open local-minute window: ``[open, close)``. A missing
+    clock fails closed for that window. Versions with no stored hours, and
+    continuous 00:00–23:59 books, are unchanged. This is not an exchange
+    holiday calendar.
+    """
+    hours = metadata.get("trading_hours")
+    if hours is None:
+        return None
+    if not isinstance(hours, dict) or _continuous_civil_day(metadata, hours):
+        return None if isinstance(hours, dict) else "trading_hours_unavailable"
+    if as_of is None:
+        return "trading_hours_unspecified"
+    open_at, close_at, zone = hours.get("open"), hours.get("close"), hours.get("timezone")
+    if not isinstance(open_at, str) or not isinstance(close_at, str) or not isinstance(zone, str):
+        return "trading_hours_unavailable"
+    try:
+        local = datetime.fromisoformat(cutoff).astimezone(ZoneInfo(zone))
+    except (ValueError, ZoneInfoNotFoundError, OverflowError, OSError):
+        return "trading_hours_unavailable"
+    minute = f"{local.hour:02d}:{local.minute:02d}"
+    if open_at <= minute < close_at:
+        return None
+    return "outside_trading_hours"
 
 
 def _timestamp(value: str | None) -> str:
@@ -655,6 +693,10 @@ class InstrumentMasterStore:
             or not _on_grid(quantity_amount, lot)
         ):
             base["reason"] = "invalid_lot_size"
+            return base
+        session_reason = _session_reason(metadata, as_of, cutoff)
+        if session_reason is not None:
+            base["reason"] = session_reason
             return base
         base["ok"] = True
         base["reason"] = "tradable"
