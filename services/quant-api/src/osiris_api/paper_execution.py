@@ -1223,8 +1223,9 @@ def _submit_new_order(
     conn: sqlite3.Connection, *, key: str, symbol: str, side: str,
     qty: Decimal, px: Decimal, cost: Decimal, qty_s: str, px_s: str, fee_s: str,
     observed_at: object, now: object, risk_service_available: object,
-    kill_switch_active: object, working: bool, simulate_crash: bool,
+    kill_switch_active: object,     working: bool, simulate_crash: bool,
     origin_reference: str | None = None,
+    strategy_id: str | None = None,
 ) -> dict[str, Any]:
     account = conn.execute("SELECT * FROM paper_exec_meta WHERE id=1").fetchone()
     effective_kill = bool(account["kill_switch"]) or kill_switch_active is not False
@@ -1314,6 +1315,8 @@ def _submit_new_order(
     }
     if origin_reference is not None:
         payload["origin_reference"] = origin_reference
+    if strategy_id is not None:
+        payload["strategy_id"] = strategy_id
     audit_seq, digest = _append_audit(conn, "order_decided", key, payload)
     if status == "filled":
         conn.execute(
@@ -1349,6 +1352,8 @@ def _submit_new_order(
     ).fetchone()
     body = _public(stored, _latest_fill(conn, key), replay=False)
     body.update(instrument_fields)
+    if strategy_id is not None:
+        body["strategy_id"] = strategy_id
     return body
 
 
@@ -1368,8 +1373,10 @@ def submit_paper_order(
     working: bool = False,
     simulate_crash: bool = False,
     origin_reference: str | None = None,
+    strategy_id: Any = None,
 ) -> dict[str, Any]:
     _refuse_live(live_execution)
+    strategy = _strategy_id(strategy_id)
     if origin_reference is not None and (
         not isinstance(origin_reference, str) or len(origin_reference) != 64
         or any(char not in "0123456789abcdef" for char in origin_reference)
@@ -1414,6 +1421,7 @@ def submit_paper_order(
                     prior["execution_mode"],
                 ) == (normalized_symbol, normalized_side, qty_s, px_s, fee_s, mode)
                 same = same and _order_origin_reference(conn, prior) == origin_reference
+                same = same and _order_strategy(conn, prior) == strategy
                 event = "idempotent_replay" if same else "idempotency_conflict"
                 _append_audit(conn, event, key, {
                     "original_risk_decision_id": prior["risk_decision_id"],
@@ -1427,6 +1435,8 @@ def submit_paper_order(
                     conflict = True
                 else:
                     result = _public(prior, _latest_fill(conn, key), replay=True)
+                    if strategy is not None:
+                        result["strategy_id"] = strategy
             else:
                 result = _submit_new_order(
                     conn, key=key, symbol=normalized_symbol, side=normalized_side,
@@ -1437,6 +1447,7 @@ def submit_paper_order(
                     working=working is True,
                     simulate_crash=simulate_crash,
                     origin_reference=origin_reference,
+                    strategy_id=strategy,
                 )
         except Exception:
             conn.rollback()
@@ -2085,12 +2096,34 @@ def snapshot() -> dict[str, Any]:
             conn.close()
 
 
-def _order_origin_reference(conn: sqlite3.Connection, order: sqlite3.Row) -> str | None:
+def _order_decision_payload(conn: sqlite3.Connection, order: sqlite3.Row) -> dict[str, Any]:
     row = conn.execute(
         "SELECT payload FROM paper_exec_audit WHERE row_hash=? AND event='order_decided' "
         "AND client_order_id=?", (order["risk_decision_id"], order["client_order_id"]),
     ).fetchone()
-    return json.loads(row[0]).get("origin_reference") if row else None
+    if row is None:
+        return {}
+    payload = json.loads(row[0])
+    return payload if isinstance(payload, dict) else {}
+
+
+def _order_origin_reference(conn: sqlite3.Connection, order: sqlite3.Row) -> str | None:
+    value = _order_decision_payload(conn, order).get("origin_reference")
+    return value if isinstance(value, str) else None
+
+
+def _order_strategy(conn: sqlite3.Connection, order: sqlite3.Row) -> str | None:
+    value = _order_decision_payload(conn, order).get("strategy_id")
+    return value if isinstance(value, str) else None
+
+
+def _strategy_id(value: Any) -> str | None:
+    if value is None:
+        return None
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"
+    if not isinstance(value, str) or not 1 <= len(value) <= 64 or any(ch not in alphabet for ch in value):
+        raise ValueError("invalid_strategy_id")
+    return value
 
 
 def get_paper_order(client_order_id: Any) -> dict[str, Any] | None:
@@ -2115,6 +2148,9 @@ def get_paper_order(client_order_id: Any) -> dict[str, Any] | None:
             origin = _order_origin_reference(conn, order)
             if origin is not None:
                 result["origin_reference"] = origin
+            strategy = _order_strategy(conn, order)
+            if strategy is not None:
+                result["strategy_id"] = strategy
             return result
         finally:
             conn.close()
@@ -2563,6 +2599,7 @@ def api_submit(p: dict = Body(...)):
         kill_switch_active=p.get("kill_switch_active") is True,
         live_execution=p.get("live_execution") is True,
         working=p.get("working") is True,
+        strategy_id=p.get("strategy_id"),
     )
 
 
