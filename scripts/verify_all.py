@@ -54,6 +54,7 @@ ENGINEERING_CHECKS = [
     ("receipt-artifact-integrity", ["python", "scripts/verify_receipt_paper_artifact.py", "--artifact-dir", "@artifacts@/receipt-paper", "--commit", "@commit@"], None),
     ("market-paper", ["python", "scripts/run_market_paper_acceptance.py", "--output", "@artifacts@/market-paper.json"], None),
     ("local-paper-dr", ["python", "scripts/run_paper_dr_exercise.py", "--output-dir", "@artifacts@/paper-dr"], None),
+    ("local-paper-service-dr", ["python", "scripts/run_paper_service_dr_exercise.py", "--output-dir", "@artifacts@/paper-service-dr"], None),
     ("local-dr-integrity", ["python", "scripts/verify_paper_dr_artifacts.py", "@artifacts@/paper-dr"], None),
     ("portable-recovery", ["python", "-m", "unittest", "discover", "-s", "scripts", "-p", "test_check_paper_cross_runner_restore.py"], None),
     ("paper-failures", ["python", "-m", "unittest", "discover", "-s", "scripts", "-p", "test_run_paper_failure_exercise.py"], None),
@@ -75,7 +76,7 @@ WORKSTREAM_CHECKS = {
     "W10": ["python-tests"], "W11": ["python-tests"], "W12": ["python-tests"],
     "W13": ["python-tests", "market-paper", "paper-failures"], "W14": ["python-tests", "browser"],
     "W15": ["python-tests", "browser"], "W16": ["python-tests", "market-paper", "receipt-paper"],
-    "W17": ["python-tests"], "W18": ["python-tests", "recovery-intakes", "local-paper-dr", "local-dr-integrity", "portable-recovery"],
+    "W17": ["python-tests"], "W18": ["python-tests", "recovery-intakes", "local-paper-dr", "local-paper-service-dr", "local-dr-integrity", "portable-recovery"],
     "W19": ["python-tests", "security-intake"], "W20": ["rust-native", "native-process", "python-tests"],
 }
 
@@ -93,7 +94,7 @@ RELEASE_GATE_CHECKS = {
     "T15": ["python-tests", "market-paper", "receipt-paper", "receipt-artifact-integrity"],
     "T16": ["python-tests", "paper-failures", "receipt-paper", "receipt-artifact-integrity"],
     "T17": ["browser", "peer-receipts", "python-tests"],
-    "T18": ["local-paper-dr", "local-dr-integrity", "portable-recovery", "recovery-intakes"],
+    "T18": ["local-paper-dr", "local-paper-service-dr", "local-dr-integrity", "portable-recovery", "recovery-intakes"],
     "T19": ["receipt-paper", "receipt-artifact-integrity", "market-paper", "peer-receipts", "paper-failures"],
     "T20": ["release-inventory", "release-evidence-contracts", "security-intake", "vendor-intake"],
 }
