@@ -27,6 +27,7 @@ def instrument_catalog():
         "corporate_actions": actions,
         "corporate_actions_applied_to_positions": False,
         "trading_hours_enforced": True,
+        "exchange_weekends_enforced": True,
         "exchange_holidays_enforced": False,
         "catalog_persisted": True,
         "exchange_connectivity_verified": False,

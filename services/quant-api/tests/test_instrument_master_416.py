@@ -29,8 +29,8 @@ from osiris_api.paper_execution_gate import PaperOrderContext, authorize_paper_o
 from osiris_api.paper_workflow import evaluate_paper_workflow
 from osiris_api.risk import RiskLimits, check_execution
 
-NOW = "2026-11-22T15:00:00+00:00"
-FRESH = "2026-11-22T14:59:30+00:00"
+NOW = "2026-11-23T15:00:00+00:00"  # Monday, 10:00 America/New_York
+FRESH = "2026-11-23T14:59:30+00:00"
 CLIENT = TestClient(app)
 
 
@@ -114,8 +114,8 @@ def test_inactive_and_not_yet_effective_instruments_are_rejected(book):
 
 
 def test_accepted_order_fill_and_mark_record_the_master_version(book):
-    # 04:30Z is 10:00 Asia/Kolkata, inside the stored 09:15–15:30 session.
-    nse_now, nse_fresh = "2026-11-22T04:30:00+00:00", "2026-11-22T04:29:30+00:00"
+    # Monday 04:30Z is 10:00 Asia/Kolkata, inside the stored 09:15–15:30 session.
+    nse_now, nse_fresh = "2026-11-23T04:30:00+00:00", "2026-11-23T04:29:30+00:00"
     opened = _order(
         "RELIANCE", price="100.05", quantity="2", key="good", now=nse_now, observed_at=nse_fresh,
     )
@@ -171,8 +171,8 @@ def test_mark_rejects_unknown_symbol_and_off_tick_price(book):
 
 
 def test_pretrade_gate_fails_closed_without_a_tradable_instrument():
-    # 2026-11-22T15:00Z is inside the equity clock window, so a halt stays a halt.
-    decision_time_ms = 1_795_359_600_000
+    # Monday 2026-11-23T15:00Z is inside the equity clock window, so a halt stays a halt.
+    decision_time_ms = 1_795_446_000_000
     context = PaperOrderContext(
         quantity=2, price=100, current_position_notional=0, daily_pnl=0,
         observation_time_ms=decision_time_ms - 200, decision_time_ms=decision_time_ms,
@@ -230,6 +230,7 @@ def test_catalog_get_is_read_only_and_versions_match_across_databases(tmp_path, 
     assert body["exchange_connectivity_verified"] is False
     assert body["corporate_actions_applied_to_positions"] is False
     assert body["trading_hours_enforced"] is True
+    assert body["exchange_weekends_enforced"] is True
     assert body["exchange_holidays_enforced"] is False
     symbols = {item["instrument"]["symbol"] for item in body["instruments"]}
     assert {"AAPL", "RELIANCE", "BTC", "BTC-USD", "ETH", "ETH-USD", "TEST", "HALT", "SOON"} <= symbols
