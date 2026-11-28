@@ -31,6 +31,15 @@ def main():
     key_file.chmod(0o600)
     ca_file.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
     tokens = {role: secrets.token_urlsafe(24) for role in ('analyst', 'operator', 'security_admin')}
+    # This isolated browser exercise owns synthetic clock input, just like its
+    # synthetic market bars. It does not attest the runtime host's NTP health.
+    clock_fixture = {'status': 'healthy', 'reason': 'synchronized',
+        'clock_source_id': 'osiris.browser-fixture', 'offset_ms': 0.0,
+        'uncertainty_ms': 1.0, 'orders_fail_closed': False,
+        'live_trading_authorized': False, 'network_probe': False}
+    os.environ['OSIRIS_CLOCK_HEALTH_JSON'] = json.dumps(clock_fixture)
+    from osiris_api.control_plane.clock import install_clock_health
+    install_clock_health(clock_fixture)
     os.environ.update(OSIRIS_CONTROL_DB=str(root / 'control.sqlite3'), OSIRIS_DB_PATH=str(root / 'research.sqlite3'),
         OSIRIS_PAPER_EXECUTION_DB=str(root / 'paper.sqlite3'), OSIRIS_PAPER_LEDGER_DB=str(root / 'legacy.sqlite3'),
         OSIRIS_CONTROL_MASTER_KEY=base64.b64encode(secrets.token_bytes(32)).decode(),
@@ -41,7 +50,8 @@ def main():
         OSIRIS_PUBLIC_BINANCE_ENABLED='false', OSIRIS_PUBLIC_STOOQ_ENABLED='false')
     fixture = root / 'fixture.json'
     fixture.write_text(json.dumps({'tokens': tokens, 'ca': str(ca_file), 'database': str(root / 'worker.sqlite3'),
-                                   'execution_database': str(root / 'paper.sqlite3')}))
+                                   'execution_database': str(root / 'paper.sqlite3'),
+                                   'clock_health_source': 'synthetic-browser-fixture'}))
     fixture.chmod(0o600)
     # Actual canonical accounting and gateway code, with disposable offline data.
     # No external adapter or real brokerage is enabled by this browser fixture.
@@ -60,16 +70,19 @@ def main():
 
     market_routes.market_data_gateway.register_adapter('browser-fixture', BrowserBars(),
         supported_asset_classes=['crypto'], entitlement_reference='offline-browser-fixture-only')
+    control_database = Database(str(root / 'control.sqlite3'))
     initialize_paper_account('1000')
     stamp = datetime.now(timezone.utc).isoformat()
-    submit_paper_order(client_order_id='browser-fixture-buy', symbol='BTC-USD', side='BUY',
-                      quantity='2', price='100', fee='2', observed_at=stamp, now=stamp)
+    seeded = submit_paper_order(client_order_id='browser-fixture-buy', symbol='BTC-USD', side='BUY',
+                               quantity='2', price='100', fee='2', observed_at=stamp, now=stamp)
+    if seeded['state'] != 'filled':
+        raise RuntimeError('browser_fixture_seed_rejected: ' + seeded['reason'])
     mark_to_market({'BTC-USD': '110'}, observed_at=stamp, now=stamp)
     sources = {'browser-fixture': {'mode': 'synthetic', 'rights_reference': 'offline-browser-fixture-only',
         'expires_at': (datetime.now(timezone.utc) + timedelta(days=1)).isoformat(),
         'kinds': ['options', 'news'], 'entities': ['NIFTY', 'GLOBAL'], 'max_age_seconds': 300}}
     os.environ['OSIRIS_MARKET_VIEW_SOURCES'] = json.dumps(sources)
-    views = MarketViews(Database(str(root / 'control.sqlite3')), sources)
+    views = MarketViews(control_database, sources)
     views.ingest({'id': 'fixture-option-chain', 'source': 'browser-fixture', 'kind': 'options', 'entity': 'NIFTY',
         'event_time': stamp, 'available_at': stamp, 'payload': {
             'underlying': 'NIFTY', 'expiry': (datetime.now(timezone.utc) + timedelta(days=7)).date().isoformat(),
