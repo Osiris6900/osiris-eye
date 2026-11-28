@@ -503,6 +503,7 @@ def test_execution_tca_api_requires_research_access(tmp_path, monkeypatch):
     from osiris_api.control_plane.api import router
 
     control = tmp_path / "control.db"
+    Database(str(control))
     monkeypatch.setenv("OSIRIS_CONTROL_DB", str(control))
     monkeypatch.setenv("OSIRIS_CONTROL_MASTER_KEY", base64.b64encode(os.urandom(32)).decode())
     monkeypatch.setenv("OSIRIS_CONTROL_MASTER_KEY_ID", "identity-master-1")

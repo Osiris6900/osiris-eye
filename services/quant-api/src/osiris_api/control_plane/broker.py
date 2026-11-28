@@ -6,11 +6,17 @@ No live hostname, automatic order activation or general-purpose broker proxy.
 from __future__ import annotations
 
 import json
+import os
 from decimal import Decimal, InvalidOperation
 from fractions import Fraction
 from urllib.parse import quote, urlencode
 
-from ..paper_execution import authorize_paper_submission
+from ..paper_broker_reservations import broker_binding, synchronize_broker_reservation
+from ..paper_execution import (
+    authorize_paper_submission,
+    broker_reservations_match,
+    recover_broker_intent,
+)
 from ..risk import RiskLimits
 from .database import Database, digest, identifier
 from .vendors import HttpJson
@@ -140,6 +146,18 @@ def _saved_broker_order(state: object, client_id: str) -> dict:
     return order
 
 
+def _retained_response(state: dict, order: dict) -> dict:
+    _saved_broker_order(state, order["client_order_id"])
+    if state["fingerprint"] != digest(order):
+        raise ValueError("order_id_conflict")
+    if state["order"] != order:
+        raise ValueError("broker_order_contract_required")
+    if state["status"] != "acknowledged":
+        raise ValueError("order_outcome_unknown_reconcile_first")
+    validate_broker_snapshot(order, state.get("response"))
+    return state["response"]
+
+
 class AlpacaPaperBroker:
     ORIGIN = "https://paper-api.alpaca.markets"
 
@@ -182,18 +200,12 @@ class AlpacaPaperBroker:
         # Exposure, P&L, limits, kill switch, and freshness come from the paper
         # ledger. These arguments cannot approve an order.
         _ = (limits, position, gross, daily_pnl, kill_switch, fresh)
-        try:
-            decision = authorize_paper_submission(
-                client_order_id=client_id, symbol=symbol, side=order["side"],
-                quantity=quantity, price=price,
-            )
-        except Exception:  # noqa: BLE001 - a gateway fault must not submit
-            raise ValueError("risk_service_unavailable") from None
-        if decision.get("approved") is not True:
-            raise ValueError(decision.get("reason") or "risk_service_unavailable")
         if not self.enabled:
             raise ValueError("paper_broker_not_enabled")
         fingerprint = digest(order)
+        binding = broker_binding(self.db.path, order)
+        replay_response = None
+        intents = []
         with self.db.transaction() as conn:
             row = conn.execute(
                 "SELECT body FROM cp_documents WHERE collection='broker-orders' AND id=?",
@@ -201,20 +213,69 @@ class AlpacaPaperBroker:
             ).fetchone()
             if row:
                 state = json.loads(row[0])
-                if state["fingerprint"] != fingerprint:
-                    raise ValueError("order_id_conflict")
-                if state.get("order") != order:
-                    raise ValueError("broker_order_contract_required")
-                if state["status"] != "acknowledged":
-                    raise ValueError("order_outcome_unknown_reconcile_first")
-                validate_broker_snapshot(order, state.get("response"))
-                return state["response"]
-            conn.execute(
-                "INSERT INTO cp_documents VALUES ('broker-orders',?,1,?)",
-                (client_id, json.dumps({
-                    "fingerprint": fingerprint, "status": "submitting", "order": order,
-                })),
+                replay_response = _retained_response(state, order)
+            else:
+                for retained in conn.execute(
+                    "SELECT id, body FROM cp_documents WHERE collection='broker-orders'"
+                ):
+                    try:
+                        saved = json.loads(retained["body"])
+                        intent = _saved_broker_order(saved, retained["id"])
+                        if saved.get("status") not in ("submitting", "acknowledged"):
+                            raise ValueError("invalid_saved_outcome")
+                        if saved["status"] == "acknowledged" or "response" in saved:
+                            validate_broker_snapshot(intent, saved.get("response"))
+                    except (ValueError, TypeError, RecursionError):
+                        raise ValueError("broker_order_contract_required") from None
+                    intents.append((broker_binding(self.db.path, intent), intent, saved.get("response")))
+        if replay_response is not None:
+            if os.getenv("OSIRIS_PAPER_EXECUTION_DB") and not broker_reservations_match(
+                [(binding, order, replay_response)]
+            ):
+                # Retained transport JSON is not fresh broker evidence and
+                # cannot release canonical capacity on an idempotent retry.
+                raise ValueError("order_outcome_unknown_reconcile_first")
+            return replay_response
+        # Do not nest control-DB and ledger transactions: both may share a
+        # SQLite file. The canonical commit precedes the durable send claim.
+        # A crash in between leaves capacity held, never permission to resend.
+        try:
+            if intents and not broker_reservations_match(intents):
+                raise ValueError("broker_reservation_required_reconcile_first")
+            decision = authorize_paper_submission(
+                client_order_id=client_id, symbol=symbol, side=order["side"],
+                quantity=quantity, price=price,
+                reservation_binding=binding, broker_order=order,
             )
+        except ValueError:
+            raise
+        except Exception:  # noqa: BLE001 - a gateway fault must not submit
+            raise ValueError("risk_service_unavailable") from None
+        if decision.get("approved") is not True:
+            raise ValueError(decision.get("reason") or "risk_service_unavailable")
+        reservation_replay = decision.get("reservation_replay") is True
+        if reservation_replay:
+            # A retry must not claim transport ownership from the process that
+            # just reserved capacity. Explicit reconciliation recovers orphans.
+            raise ValueError("order_outcome_unknown_reconcile_first")
+        with self.db.transaction() as conn:
+            row = conn.execute(
+                "SELECT body FROM cp_documents WHERE collection='broker-orders' AND id=?",
+                (client_id,),
+            ).fetchone()
+            if row:
+                replay_response = _retained_response(json.loads(row[0]), order)
+            else:
+                conn.execute(
+                    "INSERT INTO cp_documents VALUES ('broker-orders',?,1,?)",
+                    (client_id, json.dumps({
+                        "fingerprint": fingerprint, "status": "submitting", "order": order,
+                    })),
+                )
+        if replay_response is not None:
+            if not broker_reservations_match([(binding, order, replay_response)]):
+                raise ValueError("order_outcome_unknown_reconcile_first")
+            return replay_response
         body = {
             "client_order_id": client_id,
             "symbol": symbol,
@@ -236,6 +297,7 @@ class AlpacaPaperBroker:
              "order": order, "response": response},
             expected_version=1,
         )
+        synchronize_broker_reservation(binding, order, response)
         return response
 
     def reconcile(self, client_id: str):
@@ -246,7 +308,20 @@ class AlpacaPaperBroker:
         except (ValueError, RecursionError):
             raise ValueError("broker_order_contract_required") from None
         if prior is None:
-            raise ValueError("unknown_client_order")
+            order = (recover_broker_intent(self.db.path, client_id)
+                     if os.getenv("OSIRIS_PAPER_EXECUTION_DB") else None)
+            if order is None:
+                raise ValueError("unknown_client_order")
+            try:
+                self.db.put("broker-orders", client_id, {
+                    "fingerprint": digest(order), "status": "submitting", "order": order,
+                })
+            except ValueError as exc:
+                if str(exc) != "version_conflict":
+                    raise
+            prior = self.db.get("broker-orders", client_id)
+            if prior is None:
+                raise ValueError("order_outcome_unknown_reconcile_first")
         state = prior["value"]
         order = _saved_broker_order(state, client_id)
         if state.get("status") not in ("acknowledged", "submitting"):
@@ -266,6 +341,8 @@ class AlpacaPaperBroker:
             {**state, "status": "acknowledged", "response": response},
             expected_version=prior["version"],
         )
+        if os.getenv("OSIRIS_PAPER_EXECUTION_DB"):
+            synchronize_broker_reservation(broker_binding(self.db.path, order), order, response)
         return response
 
     def cancel(self, broker_order_id: str):

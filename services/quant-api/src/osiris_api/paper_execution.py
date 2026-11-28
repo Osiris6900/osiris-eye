@@ -302,6 +302,8 @@ def _connect() -> sqlite3.Connection:
         symbol TEXT PRIMARY KEY, source TEXT NOT NULL, sequence INTEGER,
         event_time_ms INTEGER NOT NULL, gap_open INTEGER NOT NULL DEFAULT 0)""")
     _migrate(conn)
+    from .paper_broker_reservations import ensure_schema
+    ensure_schema(conn)
     return conn
 
 
@@ -1054,6 +1056,8 @@ def _reconcile_breaks(conn: sqlite3.Connection) -> list[str]:
     from .paper_depth_execution import projection_breaks
     breaks.extend(projection_breaks(conn))
     breaks.extend(_broker_gate_breaks(conn))
+    from .paper_broker_reservations import projection_breaks as reservation_breaks
+    breaks.extend(reservation_breaks(conn))
     return breaks
 
 
@@ -1295,10 +1299,15 @@ def _reserved(conn: sqlite3.Connection) -> tuple[Decimal, dict[str, Decimal]]:
             cash = _finite_decimal(Fraction(cash) + Fraction(leaves) * Fraction(row["price"]) + Fraction(remaining_fee))
         else:
             sells[row["symbol"]] = _finite_decimal(Fraction(sells.get(row["symbol"], Decimal("0"))) + Fraction(leaves))
+    from .paper_broker_reservations import reserved
+    broker_cash, broker_sells = reserved(conn)
+    cash = _finite_decimal(Fraction(cash) + Fraction(broker_cash))
+    for symbol, quantity in broker_sells.items():
+        sells[symbol] = _finite_decimal(Fraction(sells.get(symbol, Decimal(0))) + Fraction(quantity))
     return cash, sells
 
 
-def _open_buy_exposure(conn: sqlite3.Connection, symbol: str) -> tuple[Decimal, Decimal]:
+def _open_buy_exposure(conn: sqlite3.Connection, symbol: str, now=None) -> tuple[Decimal, Decimal]:
     symbol_notional = Decimal("0")
     gross = Decimal("0")
     rows = conn.execute(
@@ -1307,6 +1316,17 @@ def _open_buy_exposure(conn: sqlite3.Connection, symbol: str) -> tuple[Decimal, 
     )
     for row in rows:
         notion = Fraction(row["leaves_quantity"]) * Fraction(row["price"])
+        gross = _finite_decimal(Fraction(gross) + notion)
+        if row["symbol"] == symbol:
+            symbol_notional = _finite_decimal(Fraction(symbol_notional) + notion)
+    from .paper_broker_reservations import exposure_orders
+    account = conn.execute("SELECT * FROM paper_exec_meta WHERE id=1").fetchone()
+    marks = _fresh_mark_prices(conn, account, now)
+    for row in exposure_orders(conn):
+        if row["side"] != "BUY":
+            continue
+        price = max(Decimal(row["price"]), marks.get(row["symbol"], Decimal(0)))
+        notion = Fraction(row["leaves_quantity"]) * Fraction(price)
         gross = _finite_decimal(Fraction(gross) + notion)
         if row["symbol"] == symbol:
             symbol_notional = _finite_decimal(Fraction(symbol_notional) + notion)
@@ -1334,7 +1354,7 @@ def execution_context(
             account = conn.execute("SELECT * FROM paper_exec_meta WHERE id=1").fetchone()
             position, gross = _book(conn, normalized, px)
             if side.upper() == "BUY":
-                pending_position, pending_gross = _open_buy_exposure(conn, normalized)
+                pending_position, pending_gross = _open_buy_exposure(conn, normalized, now)
                 position = _finite_decimal(Fraction(position) + Fraction(pending_position))
                 gross = _finite_decimal(Fraction(gross) + Fraction(pending_gross))
                 position, gross = _raise_buy_exposure(
@@ -1344,6 +1364,10 @@ def execution_context(
             adverse, _loss_reason = _adverse_daily_pnl(
                 conn, account, symbol=normalized, price=px, now=now,
             )
+            from .paper_broker_reservations import accounting_pending
+            pending = accounting_pending(conn)
+            if pending:
+                adverse = None
             return {
                 "current_position_notional": _canonical(position),
                 "current_gross_exposure": _canonical(gross),
@@ -1354,6 +1378,8 @@ def execution_context(
                 "adverse_daily_pnl": None if adverse is None else _canonical(adverse),
                 "daily_loss_ready": adverse is not None,
                 "daily_loss_basis": DAILY_LOSS_BASIS,
+                **({"new_risk_allowed": False, "reason": "broker_fills_require_accounting",
+                    "broker_accounting_pending": True} if pending else {}),
                 "cash": account["cash"],
                 "kill_switch_active": bool(account["kill_switch"]),
                 "limits": {
@@ -1380,7 +1406,7 @@ def _fill_risk_reason(
     """An accepted order is not a permanent exemption from current risk limits."""
     position, gross = _book(conn, order["symbol"], price)
     if order["side"] == "BUY":
-        pending_position, pending_gross = _open_buy_exposure(conn, order["symbol"])
+        pending_position, pending_gross = _open_buy_exposure(conn, order["symbol"], now)
         # Replace this fill's reservation with its actual execution notional.
         released = Fraction(quantity) * Fraction(order["price"])
         position = _finite_decimal(Fraction(position) + Fraction(pending_position) - released)
@@ -1579,7 +1605,7 @@ def _submission_exposures(conn, account, side, symbol, qty, price, now):
     filled_notional, filled_gross = _book(conn, symbol, price)
     if side != "BUY":
         return filled_notional, filled_gross
-    extra_symbol, extra_gross = _open_buy_exposure(conn, symbol)
+    extra_symbol, extra_gross = _open_buy_exposure(conn, symbol, now)
     position = _finite_decimal(Fraction(filled_notional) + Fraction(extra_symbol))
     gross = _finite_decimal(Fraction(filled_gross) + Fraction(extra_gross))
     return _raise_buy_exposure(conn, account, symbol, price, position, gross, qty, now)
@@ -1636,6 +1662,12 @@ def _decide_pretrade(
         market_data_fresh=market_data_fresh,
         risk_service_available=risk_service_available,
     )
+    from .paper_broker_reservations import accounting_pending, configured_inventory_reason
+    if accounting_pending(conn):
+        return False, "broker_fills_require_accounting", False, inputs
+    inventory_reason = configured_inventory_reason(conn)
+    if inventory_reason is not None:
+        return False, inventory_reason, False, inputs
     decision = instrument_decision(symbol, price=price, quantity=qty, as_of=now)
     inputs.update(_instrument_audit_fields(decision))
     if not decision["ok"]:
@@ -1677,20 +1709,63 @@ def _closed_pretrade(reason: str = "risk_service_unavailable") -> dict[str, Any]
     }
 
 
+def broker_reservations_match(intents: list[tuple[str, dict, object]]) -> bool:
+    """Refuse new sends until retained transport intents have canonical reserves.
+
+    Legacy transport rows are recovered by explicit broker reconciliation. A
+    missing row never means that a previously sent order ceased to exist.
+    """
+    from .paper_broker_reservations import read as read_reservation
+    with _lock:
+        conn = _connect()
+        try:
+            conn.execute("BEGIN")
+            _assert_ready(conn, allow_broker_break=True)
+            for binding, order, response in intents:
+                prior = read_reservation(conn, order["client_order_id"])
+                if (prior is None or prior["binding"] != binding or prior["order"] != order
+                        or prior["response"] != response):
+                    return False
+            return True
+        finally:
+            conn.close()
+
+
+def recover_broker_intent(control_db: str, client_order_id: str) -> dict | None:
+    """Recover only the immutable intent, never permission for another POST."""
+    from .paper_broker_reservations import broker_binding
+    from .paper_broker_reservations import read as read_reservation
+    with _lock:
+        conn = _connect()
+        try:
+            conn.execute("BEGIN")
+            _assert_ready(conn, allow_broker_break=True)
+            prior = read_reservation(conn, client_order_id)
+            if prior is None:
+                return None
+            if prior["binding"] != broker_binding(control_db, prior["order"]):
+                raise ValueError("broker_reservation_conflict")
+            return prior["order"]
+        finally:
+            conn.close()
+
+
 def authorize_paper_submission(
     *, client_order_id: str, symbol: str, side: str, quantity: Decimal, price: Decimal,
+    reservation_binding: str | None = None, broker_order: dict | None = None,
 ) -> dict[str, Any]:
     """Fail-closed pre-trade decision for one paper broker submission.
 
     Exposure, P&L, limits, the kill switch, and mark freshness are read from
     the paper ledger. Caller arguments are not accepted. A missing ledger, a
     check error, or a check that exceeds the in-process budget rejects the
-    order. The decision is appended to the paper audit when the ledger can
-    be written. This does not call a broker.
+    order. When a broker binding is supplied, approval and capacity reservation
+    commit together before transport. This does not call a broker.
     """
     try:
         if not isinstance(client_order_id, str):
             raise ValueError("invalid_client_order_id")
+        _refuse_live(False)
         _database()
     except Exception:  # noqa: BLE001 - no ledger means the check cannot run
         return _closed_pretrade()
@@ -1701,6 +1776,27 @@ def authorize_paper_submission(
             conn = _connect()
             conn.execute("BEGIN IMMEDIATE")
             _assert_ready(conn)
+            from .paper_broker_reservations import read as read_reservation
+            from .paper_broker_reservations import reserve
+            if reservation_binding is not None:
+                from .control_plane.broker import _saved_broker_order
+                from .control_plane.database import digest
+                _saved_broker_order({"order": broker_order, "fingerprint": digest(broker_order)},
+                                    client_order_id)
+                if (broker_order["symbol"].upper() != symbol.upper()
+                        or broker_order["side"].upper() != side.upper()
+                        or Decimal(broker_order["quantity"]) != quantity
+                        or Decimal(broker_order["limit_price"]) != price):
+                    return _closed_pretrade("broker_order_contract_required")
+                prior = read_reservation(conn, client_order_id)
+                if prior is not None:
+                    if prior["binding"] != reservation_binding or prior["order"] != broker_order:
+                        return _closed_pretrade("order_id_conflict")
+                    return {**_closed_pretrade(), "approved": True,
+                            "reason": "reservation_replay", "reservation_replay": True}
+                if conn.execute("SELECT 1 FROM paper_exec_orders WHERE client_order_id=?",
+                                (client_order_id,)).fetchone():
+                    return _closed_pretrade("order_id_conflict")
             account = conn.execute("SELECT * FROM paper_exec_meta WHERE id=1").fetchone()
             now = _broker_decision_clock()
             normalized = _normalize_symbol(symbol)
@@ -1733,11 +1829,26 @@ def authorize_paper_submission(
             if _pretrade_monotonic() - started > _PRETRADE_TIMEOUT_SECONDS:
                 approved, reason, evaluated = False, "risk_service_unavailable", False
                 inputs = {**inputs, "timeout": True}
+            if approved and reservation_binding is not None:
+                reserved_cash, reserved_sell = _reserved(conn)
+                held, _average = _position(conn, normalized)
+                if side_name == "BUY" and (
+                    Fraction(quantity) * Fraction(price)
+                    > Fraction(account["cash"]) - Fraction(reserved_cash)
+                ):
+                    approved, reason = False, "insufficient_paper_cash"
+                elif side_name == "SELL" and (
+                    Fraction(quantity) > Fraction(held)
+                    - Fraction(reserved_sell.get(normalized, Decimal(0)))
+                ):
+                    approved, reason = False, "insufficient_paper_position"
             payload = {
                 "approved": approved, "reason": reason, "limits_evaluated": evaluated,
                 "inputs": inputs, "live_execution": False, "broker_order_submitted": False,
             }
             seq, _digest = _append_audit(conn, PRETRADE_RISK_EVENT, client_order_id, payload)
+            if approved and reservation_binding is not None:
+                reserve(conn, client_order_id, reservation_binding, broker_order)
             _assert_ready(conn)
             _commit(conn)
             return {
@@ -1787,6 +1898,9 @@ def _submit_new_order(
     time_in_force: str = "day",
     venue: str = "",
 ) -> dict[str, Any]:
+    from .paper_broker_reservations import read as read_reservation
+    if read_reservation(conn, key) is not None:
+        raise ValueError("order_id_conflict")
     account = conn.execute("SELECT * FROM paper_exec_meta WHERE id=1").fetchone()
     effective_kill = bool(account["kill_switch"]) or kill_switch_active is not False
     fresh = _fresh(account, observed_at, now)
@@ -3158,6 +3272,22 @@ def _ledger_broker_view(conn: sqlite3.Connection) -> dict[str, Any]:
             "filled_quantity": Decimal(row["filled_quantity"]),
             "leaves_quantity": Decimal(row["leaves_quantity"]),
         })
+    from .control_plane.broker import TERMINAL_BROKER_STATES
+    from .paper_broker_reservations import rows as reservation_rows
+    for reservation in reservation_rows(conn):
+        order, response = reservation["order"], reservation["response"]
+        if response is not None and response["status"] in TERMINAL_BROKER_STATES:
+            continue
+        # Reservations are commitments, not evidence of executed fills. A
+        # broker-filled quantity remains an explicit accounting mismatch.
+        open_orders.append({
+            "client_order_id": reservation["client_order_id"],
+            "symbol": order["symbol"].upper(), "side": order["side"].upper(),
+            "quantity": Decimal(order["quantity"]),
+            "filled_quantity": Decimal(0),
+            "leaves_quantity": Decimal(order["quantity"]),
+        })
+    open_orders.sort(key=lambda order: order["client_order_id"])
     return {
         "cash": cash,
         "reserved_cash": reserved_cash,
@@ -3627,6 +3757,9 @@ def _snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
         "SELECT seq, client_order_id, event, payload, prev_hash, row_hash "
         "FROM paper_exec_audit ORDER BY seq"
     )]
+    from .paper_broker_reservations import accounting_pending
+    from .paper_broker_reservations import public as public_reservations
+    reserved_cash, reserved_sells = _reserved(conn)
     return {
         "initialized": True, "mode": "paper_only", "live_execution": False,
         "broker_order_submitted": False,
@@ -3637,6 +3770,11 @@ def _snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
         "fill_count": conn.execute("SELECT COUNT(*) FROM paper_exec_fills").fetchone()[0],
         "order_count": conn.execute("SELECT COUNT(*) FROM paper_exec_orders").fetchone()[0],
         "positions": positions,
+        "broker_reservations": public_reservations(conn),
+        "broker_accounting_pending": accounting_pending(conn),
+        "reserved_cash": _canonical(reserved_cash),
+        "available_cash": _canonical(_finite_decimal(Fraction(account["cash"]) - Fraction(reserved_cash))),
+        "reserved_sell_quantities": {key: _canonical(value) for key, value in reserved_sells.items()},
         "marks": [dict(row) for row in conn.execute(
             "SELECT symbol, price, observed_at FROM paper_exec_marks ORDER BY symbol"
         )],
@@ -3890,6 +4028,14 @@ def daily_loss_gate(*, now: object = None) -> dict[str, Any]:
             blank["reason"] = "not_initialized"
             return blank
         _verify_audit(connection)
+        from .paper_broker_reservations import accounting_pending, configured_inventory_reason
+        if accounting_pending(connection):
+            blank["reason"] = "broker_fills_require_accounting"
+            return blank
+        inventory_reason = configured_inventory_reason(connection)
+        if inventory_reason is not None:
+            blank["reason"] = inventory_reason
+            return blank
         if _reconcile_breaks(connection):
             blank["reason"] = "reconciliation_unavailable"
             return blank
@@ -3961,6 +4107,9 @@ def read_risk_limits() -> dict[str, Any]:
     if account.get("initialized") is not True:
         blank["reason"] = "not_initialized"
         return blank
+    if account.get("broker_accounting_pending") is True:
+        blank["reason"] = "broker_fills_require_accounting"
+        return blank
     if report.get("passed") is not True:
         blank["reason"] = "reconciliation_unavailable"
         return blank
@@ -4018,9 +4167,11 @@ def account_valuation(
 ) -> dict[str, Any]:
     """One valuation policy for every read-only view of the canonical account.
 
-    Cash and realized P&L remain known without marks. Equity, market value and
-    unrealized P&L require a fresh mark for every holding; partial totals stay null.
-    Callers must reconcile the account before using this projection.
+    Canonical cash and realized P&L remain known without marks. Equity, market
+    value and unrealized P&L require a fresh mark for every accounted holding.
+    Unaccounted broker fills make those totals unknown even with fresh marks;
+    external P&L is not inferred from the canonical realized figure. Callers
+    must reconcile the account before using this projection.
     """
     current = now or datetime.now(timezone.utc)
     if current.tzinfo is None or current.utcoffset() is None:
@@ -4029,6 +4180,14 @@ def account_valuation(
     if any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v)
            for v in policies) or max_age_seconds <= 0 or max_future_skew_seconds < 0:
         raise ValueError("invalid_valuation_policy")
+    if account.get("broker_accounting_pending") is True:
+        return {
+            "market_value": None,
+            "pnl": {"realized": account["realized_pnl"], "unrealized": None, "equity": None},
+            "valuation_warnings": ["broker_fills_require_accounting"],
+            "valuation_as_of": None,
+            "marks_available": False,
+        }
     marks = {row["symbol"]: row for row in account.get("marks", [])}
     market_value, times, warnings = Decimal("0"), [], []
     for position in account["positions"]:

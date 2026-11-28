@@ -21,6 +21,7 @@ from osiris_api.paper_execution import initialize_paper_account, mark_to_market,
 @pytest.fixture
 def api(tmp_path, monkeypatch):
     monkeypatch.setenv("OSIRIS_CONTROL_DB", str(tmp_path / "control.sqlite3"))
+    Database(str(tmp_path / "control.sqlite3"))
     monkeypatch.setenv("OSIRIS_CONTROL_MASTER_KEY", base64.b64encode(os.urandom(32)).decode())
     monkeypatch.setenv("OSIRIS_CONTROL_MASTER_KEY_ID", "identity-master-1")
     monkeypatch.setenv("OSIRIS_CONTROL_MASTER_KEY_VERSION", "1")
