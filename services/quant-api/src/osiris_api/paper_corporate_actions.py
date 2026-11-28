@@ -14,7 +14,7 @@ from typing import Any
 from .instrument_master import InstrumentMasterStore, instrument_db_path
 from . import paper_execution as ledger
 
-_SUPPORTED = frozenset({"split", "cash_dividend"})
+_SUPPORTED = frozenset({"split", "cash_dividend", "symbol_change"})
 
 
 def apply_paper_corporate_actions(as_of: object, *, simulate_crash: bool = False) -> dict[str, Any]:
@@ -99,19 +99,26 @@ def _apply_one(conn, store: InstrumentMasterStore, action: dict[str, Any]) -> st
     if instrument is None:
         return "instrument_not_in_master"
     symbol = instrument["instrument"]["symbol"]
+    new_symbol = _rename_target(store, action, symbol)
+    if isinstance(new_symbol, str) and new_symbol.startswith("symbol_change_"):
+        return new_symbol
+    symbols = (symbol,) if new_symbol is None else (symbol, new_symbol)
     decision = store.assess(symbol, as_of=action["effective_at"])
     if decision["reason"] == "ambiguous_instrument" or decision["instrument_id"] != action["instrument_id"]:
         return "ambiguous_instrument"
-    if conn.execute(
-        """SELECT 1 FROM paper_exec_orders
-           WHERE symbol=? AND state IN ('accepted', 'partially_filled')""",
-        (symbol,),
-    ).fetchone() is not None:
-        return "open_order_blocks_corporate_action"
-    if conn.execute(
-        "SELECT 1 FROM paper_exec_marks WHERE symbol=?", (symbol,),
-    ).fetchone() is not None:
-        return "mark_blocks_corporate_action"
+    if new_symbol is not None and ledger._position(conn, new_symbol)[0] != 0:
+        return "symbol_change_target_occupied"
+    for name in symbols:
+        if conn.execute(
+            """SELECT 1 FROM paper_exec_orders
+               WHERE symbol=? AND state IN ('accepted', 'partially_filled')""",
+            (name,),
+        ).fetchone() is not None:
+            return "open_order_blocks_corporate_action"
+        if conn.execute(
+            "SELECT 1 FROM paper_exec_marks WHERE symbol=?", (name,),
+        ).fetchone() is not None:
+            return "mark_blocks_corporate_action"
     held, average = ledger._position(conn, symbol)
     if held > 0 and not _position_predates(conn, symbol, action["effective_at"]):
         return "position_crosses_effective_time"
@@ -129,14 +136,17 @@ def _apply_one(conn, store: InstrumentMasterStore, action: dict[str, Any]) -> st
             (ledger._canonical(cash), ledger._canonical(realized)),
         )
     new_qty = Decimal(effect["quantity_after"])
-    if new_qty == 0:
+    destination = effect.get("new_symbol", symbol)
+    if destination != symbol:
         conn.execute("DELETE FROM paper_exec_positions WHERE symbol=?", (symbol,))
+    if new_qty == 0:
+        conn.execute("DELETE FROM paper_exec_positions WHERE symbol=?", (destination,))
     else:
         conn.execute(
             """INSERT INTO paper_exec_positions(symbol, quantity, average_cost)
                VALUES (?,?,?) ON CONFLICT(symbol) DO UPDATE SET
                quantity=excluded.quantity, average_cost=excluded.average_cost""",
-            (symbol, effect["quantity_after"], effect["average_cost_after"]),
+            (destination, effect["quantity_after"], effect["average_cost_after"]),
         )
     ledger._refresh_unrealized(conn)
     payload = {
@@ -178,8 +188,33 @@ def _position_predates(conn, symbol: str, effective_at: str) -> bool:
     return True
 
 
+def _rename_target(store: InstrumentMasterStore, action: dict[str, Any], symbol: str):
+    """Return the new symbol, None when this is not a rename, or a skip reason."""
+    if action.get("action_type") != "symbol_change":
+        return None
+    raw = action.get("new_symbol")
+    if not isinstance(raw, str) or not raw.strip() or raw.strip().upper() == symbol:
+        return "symbol_change_invalid"
+    target = raw.strip().upper()
+    decision = store.assess(target, as_of=action["effective_at"])
+    if decision.get("reason") == "ambiguous_instrument" or not decision.get("instrument_id"):
+        return "symbol_change_target_unknown"
+    if decision["instrument_id"] == action["instrument_id"]:
+        return "symbol_change_invalid"
+    return target
+
+
 def _effect(action: dict[str, Any], qty: Decimal, average: Decimal) -> dict[str, str]:
     before_qty, before_avg = ledger._canonical(qty), ledger._canonical(average)
+    if action["action_type"] == "symbol_change":
+        return {
+            "quantity_before": before_qty,
+            "quantity_after": before_qty,
+            "average_cost_before": before_avg,
+            "average_cost_after": before_avg,
+            "cash_delta": "0",
+            "new_symbol": str(action["new_symbol"]).strip().upper(),
+        }
     if action["action_type"] == "split":
         ratio = Decimal(action["ratio"])
         if ratio <= 0:
