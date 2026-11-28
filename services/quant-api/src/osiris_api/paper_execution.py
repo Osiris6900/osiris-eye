@@ -2499,6 +2499,13 @@ def _guard(fn, *args, **kwargs):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+@router.get("/paper/execution/surveillance")
+def api_paper_surveillance():
+    """Review the paper journal. Query parameters are not events and are ignored."""
+    from .paper_surveillance import review_paper_journal
+    return review_paper_journal()
+
+
 @router.post("/paper/execution/initialize")
 def api_initialize(p: dict = Body(...)):
     limits = None
