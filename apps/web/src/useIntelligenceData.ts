@@ -4,7 +4,13 @@ export interface IntelligenceOverview {
   mode: string;
   execution_enabled: boolean;
   satellite: { telemetry_connected: boolean; arbitrage_verified: boolean };
-  sentiment: { buffered_signals: number; weighted_sentiment: number; forecast_verified: boolean };
+  sentiment: {
+    buffered_signals: number;
+    weighted_sentiment: number;
+    forecast_verified: boolean;
+    source?: string;
+    timestamp?: string;
+  };
 }
 
 export function useIntelligenceData() {

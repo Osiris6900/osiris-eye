@@ -30,7 +30,7 @@ def main():
     key_file.write_bytes(private.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
     key_file.chmod(0o600)
     ca_file.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
-    tokens = {role: secrets.token_urlsafe(24) for role in ('analyst', 'operator', 'security_admin')}
+    tokens = {role: secrets.token_urlsafe(24) for role in ('viewer', 'analyst', 'operator', 'security_admin')}
     os.environ.update(OSIRIS_CONTROL_DB=str(root / 'control.sqlite3'), OSIRIS_DB_PATH=str(root / 'research.sqlite3'),
         OSIRIS_PAPER_EXECUTION_DB=str(root / 'paper.sqlite3'), OSIRIS_PAPER_LEDGER_DB=str(root / 'legacy.sqlite3'),
         OSIRIS_CONTROL_MASTER_KEY=base64.b64encode(secrets.token_bytes(32)).decode(), OSIRIS_ADMIN_TOKENS=json.dumps(tokens),

@@ -42,6 +42,10 @@ async function click(text) {
   const found = await evaluate(`(() => {const b = [...document.querySelectorAll('button')].find(b => b.textContent.trim().endsWith(${JSON.stringify(text)})); if (!b || b.disabled) return false; b.click(); return true;})()`);
   if (!found) throw new Error('Button unavailable: ' + text);
 }
+async function clickNav(page) {
+  const found = await evaluate(`(() => { const b = [...document.querySelectorAll('nav[aria-label="Workspace"] button')].find(b => b.textContent.includes(${JSON.stringify(page)})); if (!b) return false; b.click(); return true; })()`);
+  if (!found) throw new Error('Navigation unavailable: ' + page);
+}
 async function input(id, value) {
   await evaluate(`(() => { const e = document.getElementById(${JSON.stringify(id)}); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e, ${JSON.stringify(value)}); e.dispatchEvent(new Event('input',{bubbles:true})); e.dispatchEvent(new Event('change',{bubbles:true})); })()`);
 }
@@ -61,6 +65,24 @@ try {
   await call('Page.navigate', { url: `http://127.0.0.1:${process.env.OSIRIS_BROWSER_WEB_PORT || '15173'}` });
   await wait(`!!document.querySelector('.sidebar nav')`, 'app navigation');
   if (await evaluate(`document.body.textContent.includes('7,42,360') || document.body.textContent.includes('Database · Connected')`)) throw new Error('Synthetic dashboard claim visible');
+  const withheld = ['798', '1018', '7,42,360', 'Database · Connected', '24,198.60', '82%'];
+  for (const page of ['Dashboard', 'AI Signals', 'Paper Trading', 'Options Chain', 'News & Sentiment', 'Live Trading']) {
+    await clickNav(page);
+    for (const value of withheld) {
+      if (await evaluate(`document.body.textContent.includes(${JSON.stringify(value)})`)) throw new Error('Account or demo value visible before authorization on ' + page + ': ' + value);
+    }
+  }
+  if (!await evaluate(`[...document.querySelectorAll('button')].some(b => b.textContent.includes('Activate live trading') && b.disabled)`)) throw new Error('Live trading activation was offered');
+  checks.push('unauthenticated navigation withholds account values and keeps live activation disabled');
+  await clickNav('Dashboard');
+  await input('dashboard-auth', 'Bearer ' + fixture.tokens.viewer);
+  await click('Connect dashboard');
+  await wait(`document.body.textContent.includes('Access denied for this role')`, 'viewer research denial');
+  if (await evaluate(`document.body.textContent.includes('798') || document.body.textContent.includes('1018')`)) throw new Error('Viewer role received canonical balances');
+  await click('Disconnect dashboard');
+  await wait(`document.body.textContent.includes('Connect with configured authorization')`, 'dashboard disconnect');
+  if (await evaluate(`document.body.textContent.includes('Access denied for this role') || document.body.textContent.includes('798')`)) throw new Error('Disconnected dashboard kept a role or balance');
+  checks.push('viewer authorization is denied research balances and disconnect clears them');
   await input('dashboard-auth', 'Bearer ' + fixture.tokens.analyst);
   await click('Connect dashboard');
   await wait(`document.querySelector('[aria-label="Canonical paper account"]')?.textContent.includes('1018')`, 'canonical dashboard valuation');
