@@ -234,8 +234,10 @@ def test_catalog_get_is_read_only_and_versions_match_across_databases(tmp_path, 
     assert body["exchange_holidays_enforced"] is True
     calendar = body["exchange_holiday_calendar"]
     assert calendar["bse_seeded"] is False
-    assert calendar["early_closes_seeded"] is False
-    assert {row["venue"] for row in calendar["venues"]} == {"NSE", "XNYS"}
+    assert calendar["early_closes_seeded"] is True
+    assert {row["venue"]: row["early_close_count"] for row in calendar["venues"]} == {
+        "NSE": 0, "XNYS": 8,
+    }
     symbols = {item["instrument"]["symbol"] for item in body["instruments"]}
     assert {"AAPL", "RELIANCE", "BTC", "BTC-USD", "ETH", "ETH-USD", "TEST", "HALT", "SOON"} <= symbols
     actions = {item["action_type"] for item in body["corporate_actions"]}

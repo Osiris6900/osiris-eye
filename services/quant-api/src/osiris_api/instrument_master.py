@@ -166,7 +166,8 @@ def _session_reason(metadata: dict[str, Any], as_of: str | None, cutoff: str) ->
     Hours are a half-open local-minute window: ``[open, close)``. A missing
     clock fails closed for that window. Versions with no stored hours, and
     continuous 00:00–23:59 books, are unchanged. Exchange venues use the
-    seeded holiday calendar and fail closed outside its coverage.
+    seeded holiday calendar and fail closed outside its coverage. A seeded
+    early close replaces the stored close when it is earlier.
     """
     hours = metadata.get("trading_hours")
     if hours is None:
@@ -186,12 +187,17 @@ def _session_reason(metadata: dict[str, Any], as_of: str | None, cutoff: str) ->
     if metadata.get("session_type") == "exchange" and local.weekday() >= 5:
         return "exchange_closed"
     if metadata.get("session_type") == "exchange":
-        from .exchange_holiday_calendar import session_holiday_reason
+        from .exchange_holiday_calendar import session_early_close, session_holiday_reason
         holiday = session_holiday_reason(
             metadata.get("venue"), local.date(), datetime.fromisoformat(cutoff),
         )
         if holiday is not None:
             return holiday
+        early_close = session_early_close(
+            metadata.get("venue"), local.date(), datetime.fromisoformat(cutoff),
+        )
+        if early_close is not None and early_close < close_at:
+            close_at = early_close
     minute = f"{local.hour:02d}:{local.minute:02d}"
     if open_at <= minute < close_at:
         return None

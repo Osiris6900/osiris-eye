@@ -5,7 +5,7 @@ from datetime import date, datetime, timezone
 
 import pytest
 
-from osiris_api.exchange_holiday_calendar import session_holiday_reason, summary
+from osiris_api.exchange_holiday_calendar import session_early_close, session_holiday_reason, summary
 from osiris_api.paper_execution import (
     LIVE_EXECUTION_ENABLED,
     apply_paper_fill,
@@ -53,8 +53,10 @@ def test_sources_cite_the_exchange_documents():
     assert "https://nsearchives.nseindia.com/content/circulars/CMTR72260.pdf" in urls
     assert any("NYSE-Group-Announces-2024-2025-and-2026" in url for url in urls)
     assert body["bse_seeded"] is False
-    assert body["early_closes_seeded"] is False
+    assert body["early_closes_seeded"] is True
     assert body["live_calendar_feed"] is False
+    counts = {row["venue"]: row["early_close_count"] for row in body["venues"]}
+    assert counts == {"NSE": 0, "XNYS": 8}
 
 
 def test_nse_diwali_does_not_fill_and_a_later_monday_does(book):
@@ -118,6 +120,70 @@ def test_january_15_is_not_a_holiday_before_its_circular():
     assert session_holiday_reason("NSE", day, before) is None
     assert session_holiday_reason("NSE", day, after) == "exchange_holiday"
     assert session_holiday_reason("BSE", day, after) == "exchange_calendar_unavailable"
+
+
+def test_nyse_day_after_thanksgiving_closes_at_1300(book):
+    # 2026-11-27 is the Friday after Thanksgiving. 17:30Z is 12:30 ET; 18:00Z is 13:00 ET.
+    morning = _buy("AAPL", "2026-11-27T17:30:00+00:00", price="100.00", key="morning")
+    assert morning["status"] == "filled"
+    late = _buy("AAPL", "2026-11-27T18:00:00+00:00", price="100.00", key="late")
+    assert late["status"] == "instrument_rejected"
+    assert late["reason"] == "outside_trading_hours"
+    ordinary = _buy("AAPL", "2026-11-20T20:00:00+00:00", price="100.00", key="ordinary")
+    assert ordinary["status"] == "filled"
+
+
+def test_early_close_blocks_the_fill_and_the_mark(book):
+    opened = _buy(
+        "AAPL", "2026-11-27T17:30:00+00:00", price="100.00", quantity="2",
+        key="resting", working=True,
+    )
+    assert opened["state"] == "accepted"
+    before = snapshot()
+    with pytest.raises(ValueError, match="outside_trading_hours"):
+        apply_paper_fill(
+            client_order_id="resting", client_fill_id="late", quantity="1",
+            price="100.00", observed_at="2026-11-27T18:00:00+00:00",
+            now="2026-11-27T18:00:00+00:00",
+        )
+    with pytest.raises(ValueError, match="outside_trading_hours"):
+        mark_to_market(
+            {"AAPL": "101"}, observed_at="2026-11-27T18:00:00+00:00",
+            now="2026-11-27T18:00:00+00:00",
+        )
+    assert snapshot()["positions"] == before["positions"]
+    assert snapshot()["fill_count"] == 0
+    assert snapshot()["cash"] == before["cash"]
+
+
+def test_early_close_follows_the_source_publication_time():
+    day = date(2024, 7, 3)
+    before = datetime(2023, 11, 9, tzinfo=timezone.utc)
+    after = datetime(2024, 7, 3, 17, tzinfo=timezone.utc)
+    assert session_early_close("XNYS", day, before) is None
+    assert session_early_close("XNYS", day, after) == "13:00"
+    published = datetime(2026, 11, 27, 18, tzinfo=timezone.utc)
+    assert session_early_close("NSE", date(2026, 11, 27), published) is None
+    assert session_early_close("XNYS", date(2026, 7, 3), published) is None
+
+
+def test_pretrade_gate_uses_the_early_close():
+    late = int(datetime.fromisoformat("2026-11-27T18:00:00+00:00").timestamp() * 1000)
+    context = PaperOrderContext(
+        quantity=1, price=100, current_position_notional=0, daily_pnl=0,
+        observation_time_ms=late - 1000, decision_time_ms=late,
+        model_approved=True, feed_authenticated=True, feed_entitled=True,
+        kill_switch_active=False, symbol="AAPL",
+    )
+    assert authorize_paper_order(context) == (False, "outside_trading_hours")
+    morning = int(datetime.fromisoformat("2026-11-27T17:30:00+00:00").timestamp() * 1000)
+    open_session = PaperOrderContext(
+        quantity=1, price=100, current_position_notional=0, daily_pnl=0,
+        observation_time_ms=morning - 1000, decision_time_ms=morning,
+        model_approved=True, feed_authenticated=True, feed_entitled=True,
+        kill_switch_active=False, symbol="AAPL",
+    )
+    assert authorize_paper_order(open_session)[0] is True
 
 
 def test_pretrade_gate_uses_the_holiday_clock():
