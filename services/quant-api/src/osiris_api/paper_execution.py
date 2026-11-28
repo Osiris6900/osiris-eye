@@ -3,7 +3,8 @@
 Orders are risk-gated, idempotent, and stored in SQLite. A working order can
 fill in parts. Each move follows the paper state machine. A crash before commit
 leaves the previous state in place. Restart reads the same cash, positions,
-P&L, and audit chain. This is a simulation ledger, not a production trading system.
+P&L, and audit chain. A second writer token cannot commit while the current
+lease is unexpired. This is a simulation ledger, not a production trading system.
 """
 from __future__ import annotations
 
@@ -23,6 +24,7 @@ from fastapi import APIRouter, Body, HTTPException
 
 from .decimal_safety import bounded_decimal, validate_decimal_bounds
 from .instrument_master import assess_order
+from .paper_authority import authority_view, ensure_authority_table, hold_paper_authority
 from .risk import RiskLimits, check_execution
 
 _INSTRUMENT_REASONS = frozenset({
@@ -116,6 +118,7 @@ def _audit_live_refusal() -> None:
             if conn.execute("SELECT 1 FROM paper_exec_meta WHERE id=1").fetchone() is None:
                 conn.rollback()
                 return
+            hold_paper_authority(conn)
             _verify_audit(conn)
             if _reconcile_breaks(conn):
                 conn.rollback()
@@ -244,6 +247,7 @@ def _connect() -> sqlite3.Connection:
         payload TEXT NOT NULL, prev_hash TEXT NOT NULL, row_hash TEXT NOT NULL)""")
     conn.execute("""CREATE TABLE IF NOT EXISTS paper_exec_marks (
         symbol TEXT PRIMARY KEY, price TEXT NOT NULL, observed_at TEXT NOT NULL)""")
+    ensure_authority_table(conn)
     _migrate(conn)
     return conn
 
@@ -1133,6 +1137,7 @@ def initialize_paper_account(
         conn = _connect()
         try:
             conn.execute("BEGIN IMMEDIATE")
+            hold_paper_authority(conn)
             if conn.execute("SELECT 1 FROM paper_exec_meta WHERE id=1").fetchone():
                 raise ValueError("account_already_initialized")
             conn.execute(
@@ -1175,6 +1180,7 @@ def set_kill_switch(active: object) -> dict[str, Any]:
         conn = _connect()
         try:
             conn.execute("BEGIN IMMEDIATE")
+            hold_paper_authority(conn)
             _assert_ready(conn)
             conn.execute("UPDATE paper_exec_meta SET kill_switch=? WHERE id=1", (1 if active else 0,))
             seq, digest = _append_audit(conn, "kill_switch_set", None, {
@@ -1395,6 +1401,7 @@ def submit_paper_order(
         conn = _connect()
         try:
             conn.execute("BEGIN IMMEDIATE")
+            hold_paper_authority(conn)
             _assert_ready(conn)
             prior = conn.execute(
                 "SELECT * FROM paper_exec_orders WHERE client_order_id=?", (key,)
@@ -1507,6 +1514,7 @@ def _apply_paper_fill(
         conn = _connect()
         try:
             conn.execute("BEGIN IMMEDIATE")
+            hold_paper_authority(conn)
             _assert_ready(conn)
             order = conn.execute(
                 "SELECT * FROM paper_exec_orders WHERE client_order_id=?", (key,)
@@ -1724,6 +1732,7 @@ def cancel_paper_order(
         conn = _connect()
         try:
             conn.execute("BEGIN IMMEDIATE")
+            hold_paper_authority(conn)
             _assert_ready(conn)
             order = conn.execute(
                 "SELECT * FROM paper_exec_orders WHERE client_order_id=?", (key,)
@@ -1812,6 +1821,7 @@ def mark_to_market(marks: Any, *, observed_at: object, now: object) -> dict[str,
         conn = _connect()
         try:
             conn.execute("BEGIN IMMEDIATE")
+            hold_paper_authority(conn)
             _assert_ready(conn)
             account = conn.execute("SELECT * FROM paper_exec_meta WHERE id=1").fetchone()
             if not _fresh(account, observed_at, now):
@@ -1987,6 +1997,7 @@ def reconciliation_report(*, record_mismatch: bool = False) -> dict[str, Any]:
                     or last["event"] != "reconciliation_mismatch"
                     or last["payload"] != encoded
                 ):
+                    hold_paper_authority(conn)
                     _append_audit(conn, "reconciliation_mismatch", None, payload)
                 conn.commit()
             else:
@@ -2006,6 +2017,7 @@ def _snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
             "initialized": False, "mode": "paper_only", "live_execution": False,
             "broker_order_submitted": False, "fill_count": 0, "positions": [],
             "audit": [],
+            "authority": authority_view(conn),
         }
     positions = [
         {"symbol": row["symbol"], "quantity": row["quantity"], "average_cost": row["average_cost"]}
@@ -2058,6 +2070,7 @@ def _snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
             )
         ],
         "audit": audit,
+        "authority": authority_view(conn),
     }
 
 

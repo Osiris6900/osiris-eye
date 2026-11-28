@@ -49,13 +49,22 @@ def record_pipeline_run(result: dict) -> None:
     _validate_run(result)
     encoded = json.dumps(result, sort_keys=True, separators=(",", ":"), allow_nan=False)
     Path(path).parent.mkdir(parents=True, exist_ok=True)
-    with _lock, sqlite3.connect(path, timeout=15) as conn:
-        conn.execute("""CREATE TABLE IF NOT EXISTS paper_pipeline_runs (
-            id INTEGER PRIMARY KEY CHECK(id=1), result TEXT NOT NULL)""")
-        conn.execute(
-            "INSERT INTO paper_pipeline_runs(id,result) VALUES (1,?) "
-            "ON CONFLICT(id) DO UPDATE SET result=excluded.result", (encoded,),
-        )
+    with _lock, sqlite3.connect(path, timeout=15, isolation_level=None) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            from .paper_authority import hold_paper_authority
+
+            hold_paper_authority(conn)
+            conn.execute("""CREATE TABLE IF NOT EXISTS paper_pipeline_runs (
+                id INTEGER PRIMARY KEY CHECK(id=1), result TEXT NOT NULL)""")
+            conn.execute(
+                "INSERT INTO paper_pipeline_runs(id,result) VALUES (1,?) "
+                "ON CONFLICT(id) DO UPDATE SET result=excluded.result", (encoded,),
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
 
 
 def _read_pipeline_run() -> dict | None:
