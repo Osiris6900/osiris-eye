@@ -304,6 +304,8 @@ def _connect() -> sqlite3.Connection:
     _migrate(conn)
     from .paper_broker_reservations import ensure_schema
     ensure_schema(conn)
+    from .paper_broker_execution_store import ensure_schema as ensure_execution_evidence
+    ensure_execution_evidence(conn)
     return conn
 
 
@@ -1058,6 +1060,8 @@ def _reconcile_breaks(conn: sqlite3.Connection) -> list[str]:
     breaks.extend(_broker_gate_breaks(conn))
     from .paper_broker_reservations import projection_breaks as reservation_breaks
     breaks.extend(reservation_breaks(conn))
+    from .paper_broker_execution_store import projection_breaks as execution_evidence_breaks
+    breaks.extend(execution_evidence_breaks(conn))
     return breaks
 
 
@@ -3757,6 +3761,7 @@ def _snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
         "SELECT seq, client_order_id, event, payload, prev_hash, row_hash "
         "FROM paper_exec_audit ORDER BY seq"
     )]
+    from .paper_broker_execution_store import public as public_execution_evidence
     from .paper_broker_reservations import accounting_pending
     from .paper_broker_reservations import public as public_reservations
     reserved_cash, reserved_sells = _reserved(conn)
@@ -3771,6 +3776,7 @@ def _snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
         "order_count": conn.execute("SELECT COUNT(*) FROM paper_exec_orders").fetchone()[0],
         "positions": positions,
         "broker_reservations": public_reservations(conn),
+        "broker_execution_evidence": public_execution_evidence(conn),
         "broker_accounting_pending": accounting_pending(conn),
         "reserved_cash": _canonical(reserved_cash),
         "available_cash": _canonical(_finite_decimal(Fraction(account["cash"]) - Fraction(reserved_cash))),
