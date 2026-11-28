@@ -2,7 +2,7 @@
   "schema": "osiris.exchange-holiday-calendar.v1",
   "notes": [
     "Weekday full closes only. Saturday and Sunday closes are enforced separately.",
-    "Early closes are not full holidays and are not seeded.",
+    "XNYS early closes are 13:00 America/New_York cash-equity closes from the same NYSE notice. They are not full-day holidays. NSE has no seeded early close.",
     "NSE muhurat trading on 2026-11-08 was a Sunday with timings not fixed in the cited circular, so it is not a regular open.",
     "BSE is not an instrument-master venue and is not copied from the NSE circulars."
   ],
@@ -67,6 +67,16 @@
         {"date": "2026-09-07", "name": "Labor Day", "source": "nyse-ice-2023-11-10"},
         {"date": "2026-11-26", "name": "Thanksgiving Day", "source": "nyse-ice-2023-11-10"},
         {"date": "2026-12-25", "name": "Christmas Day", "source": "nyse-ice-2023-11-10"}
+      ],
+      "early_closes": [
+        {"date": "2024-07-03", "name": "Day before Independence Day", "close": "13:00", "source": "nyse-ice-2023-11-10"},
+        {"date": "2024-11-29", "name": "Day after Thanksgiving", "close": "13:00", "source": "nyse-ice-2023-11-10"},
+        {"date": "2024-12-24", "name": "Christmas Eve", "close": "13:00", "source": "nyse-ice-2023-11-10"},
+        {"date": "2025-07-03", "name": "Day before Independence Day", "close": "13:00", "source": "nyse-ice-2023-11-10"},
+        {"date": "2025-11-28", "name": "Day after Thanksgiving", "close": "13:00", "source": "nyse-ice-2023-11-10"},
+        {"date": "2025-12-24", "name": "Christmas Eve", "close": "13:00", "source": "nyse-ice-2023-11-10"},
+        {"date": "2026-11-27", "name": "Day after Thanksgiving", "close": "13:00", "source": "nyse-ice-2023-11-10"},
+        {"date": "2026-12-24", "name": "Christmas Eve", "close": "13:00", "source": "nyse-ice-2023-11-10"}
       ]
     },
     "NSE": {

@@ -1,8 +1,9 @@
-"""Sourced, versioned holiday closes for instrument-master exchange venues.
+"""Sourced, versioned holiday and early closes for instrument-master venues.
 
 A date inside a venue's seeded coverage is closed only when a cited source
 was already published. A date outside that coverage fails closed. This is not
-a live circular feed. Early closes are not full-day holidays.
+a live circular feed. An early close shortens the session; it is not a
+full-day holiday.
 """
 from __future__ import annotations
 
@@ -49,7 +50,42 @@ def _load() -> dict[str, Any]:
                 "source": source_id,
                 "effective_at": datetime.fromisoformat(source["published"]).replace(tzinfo=timezone.utc),
             })
-        compiled[venue] = {"start": start, "end": end, "holidays": holidays}
+        early_closes = []
+        early_seen = set()
+        for row in body.get("early_closes", []):
+            session_day = date.fromisoformat(row["date"])
+            close_at = row["close"]
+            source_id = row["source"]
+            source = sources.get(source_id)
+            if (
+                not isinstance(close_at, str)
+                or len(close_at) != 5
+                or close_at[2] != ":"
+                or not close_at[:2].isdigit()
+                or not close_at[3:].isdigit()
+                or not 0 <= int(close_at[:2]) <= 23
+                or not 0 <= int(close_at[3:]) <= 59
+                or close_at in {"00:00", "24:00"}
+            ):
+                raise ValueError("invalid_exchange_holiday_calendar")
+            if not isinstance(source, dict) or not source.get("url") or not source.get("published"):
+                raise ValueError("invalid_exchange_holiday_calendar")
+            if (
+                not start <= session_day <= end
+                or session_day in seen
+                or session_day in early_seen
+                or session_day.weekday() >= 5
+            ):
+                raise ValueError("invalid_exchange_holiday_calendar")
+            early_seen.add(session_day)
+            early_closes.append({
+                "date": session_day,
+                "name": row["name"],
+                "close": close_at,
+                "source": source_id,
+                "effective_at": datetime.fromisoformat(source["published"]).replace(tzinfo=timezone.utc),
+            })
+        compiled[venue] = {"start": start, "end": end, "holidays": holidays, "early_closes": early_closes}
     return {
         "sha256": hashlib.sha256(raw).hexdigest(),
         "sources": sources,
@@ -74,6 +110,7 @@ def summary() -> dict[str, Any]:
             "coverage_start": body["start"].isoformat(),
             "coverage_end": body["end"].isoformat(),
             "holiday_count": len(body["holidays"]),
+            "early_close_count": len(body["early_closes"]),
         })
     return {
         "schema": "osiris.exchange-holiday-calendar.v1",
@@ -83,7 +120,7 @@ def summary() -> dict[str, Any]:
             {"id": key, "title": value.get("title"), "published": value.get("published"), "url": value["url"]}
             for key, value in sorted(loaded["sources"].items())
         ],
-        "early_closes_seeded": False,
+        "early_closes_seeded": any(body["early_closes"] for body in loaded["venues"].values()),
         "bse_seeded": False,
         "live_calendar_feed": False,
     }
@@ -109,4 +146,26 @@ def session_holiday_reason(venue: object, local_day: date, as_of: datetime) -> s
     for holiday in body["holidays"]:
         if holiday["date"] == local_day and holiday["effective_at"] <= known:
             return "exchange_holiday"
+    return None
+
+
+def session_early_close(venue: object, local_day: date, as_of: datetime) -> str | None:
+    """Return the local HH:MM early close, or None when the full session stands.
+
+    Calendar errors belong to ``session_holiday_reason``. This returns None
+    when the venue is unknown, the date is outside coverage, or the source
+    was not yet published.
+    """
+    if not isinstance(venue, str) or not venue.strip():
+        return None
+    if as_of.tzinfo is None or as_of.utcoffset() is None:
+        return None
+    loaded = calendar()
+    body = loaded["venues"].get(venue.strip().upper())
+    if body is None or local_day < body["start"] or local_day > body["end"]:
+        return None
+    known = as_of.astimezone(timezone.utc)
+    for row in body["early_closes"]:
+        if row["date"] == local_day and row["effective_at"] <= known:
+            return row["close"]
     return None
