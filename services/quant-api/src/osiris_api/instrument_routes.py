@@ -3,6 +3,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
+from .exchange_holiday_calendar import summary as holiday_calendar_summary
 from .instrument_master import InstrumentMasterStore, instrument_db_path
 
 router = APIRouter(tags=["instrument-master"])
@@ -28,7 +29,8 @@ def instrument_catalog():
         "corporate_actions_applied_to_positions": False,
         "trading_hours_enforced": True,
         "exchange_weekends_enforced": True,
-        "exchange_holidays_enforced": False,
+        "exchange_holidays_enforced": True,
+        "exchange_holiday_calendar": holiday_calendar_summary(),
         "catalog_persisted": True,
         "exchange_connectivity_verified": False,
         "live_execution": False,
