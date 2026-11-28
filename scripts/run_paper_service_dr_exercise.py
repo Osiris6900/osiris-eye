@@ -109,7 +109,11 @@ class Service:
         self.port = port
 
     def start(self) -> None:
+        from osiris_api.control_plane.database import Database
+
         self.directory.mkdir(mode=0o700)
+        # The configured inventory must exist before new paper risk is admitted.
+        Database(str(self.directory / "control.sqlite3"))
         self.log = (self.directory / "service.log").open("xb")
         os.chmod(self.directory / "service.log", 0o600)
         # SIGKILL must target the process serving the API. Inherited Uvicorn
