@@ -2527,6 +2527,13 @@ def api_paper_counterparties(as_of: str):
     return _guard(paper_counterparty_exposure, as_of)
 
 
+@router.get("/paper/execution/attribution")
+def api_paper_attribution(as_of: str):
+    """Symbol P&L from the paper book. Caller strategy and slippage are ignored."""
+    from .paper_attribution import paper_book_attribution
+    return _guard(paper_book_attribution, as_of)
+
+
 @router.post("/paper/execution/initialize")
 def api_initialize(p: dict = Body(...)):
     limits = None
