@@ -2563,6 +2563,13 @@ def api_paper_counterparties(as_of: str):
     return _guard(paper_counterparty_exposure, as_of)
 
 
+@router.get("/paper/execution/strategy-pnl")
+def api_paper_strategy_pnl():
+    """Realized P&L by the stored strategy tag. Caller totals are ignored."""
+    from .paper_strategy_pnl import paper_strategy_pnl
+    return paper_strategy_pnl()
+
+
 @router.post("/paper/execution/initialize")
 def api_initialize(p: dict = Body(...)):
     limits = None
