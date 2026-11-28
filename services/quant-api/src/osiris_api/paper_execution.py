@@ -2527,6 +2527,13 @@ def api_paper_counterparties(as_of: str):
     return _guard(paper_counterparty_exposure, as_of)
 
 
+@router.get("/paper/execution/routes")
+def api_paper_routes():
+    """Paper execution records. This route does not send an order."""
+    from .paper_routes import paper_route_records
+    return paper_route_records()
+
+
 @router.post("/paper/execution/initialize")
 def api_initialize(p: dict = Body(...)):
     limits = None
