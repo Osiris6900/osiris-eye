@@ -2520,6 +2520,13 @@ def api_paper_surveillance():
     return review_paper_journal()
 
 
+@router.get("/paper/execution/asset-exposure")
+def api_paper_asset_exposure(as_of: str):
+    """Classify paper holdings by master asset class. Correlations are not estimated."""
+    from .paper_asset_exposure import paper_asset_exposure
+    return _guard(paper_asset_exposure, as_of)
+
+
 @router.get("/paper/execution/counterparties")
 def api_paper_counterparties(as_of: str):
     """Venue exposure from the paper book. Caller exposures are ignored."""
